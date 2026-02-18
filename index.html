@@ -3,37 +3,73 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Calculator App</title>
+    <title>Notes to Calendar</title>
     <link rel="stylesheet" href="styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 </head>
 <body>
-    <div class="calculator">
-        <div class="display" id="display">0</div>
-        <div class="buttons">
-            <button class="btn btn-function" onclick="clearDisplay()">C</button>
-            <button class="btn btn-function" onclick="deleteChar()">DEL</button>
-            <button class="btn btn-operator" onclick="appendOperator('/')">/</button>
-            <button class="btn btn-operator" onclick="appendOperator('*')">×</button>
+    <div class="app">
+        <header>
+            <h1>Notes to Calendar</h1>
+            <p class="subtitle">Upload handwritten notes, organize your day 9&ndash;5</p>
+        </header>
 
-            <button class="btn btn-number" onclick="appendNumber('7')">7</button>
-            <button class="btn btn-number" onclick="appendNumber('8')">8</button>
-            <button class="btn btn-number" onclick="appendNumber('9')">9</button>
-            <button class="btn btn-operator" onclick="appendOperator('-')">-</button>
+        <!-- Step 1: Upload -->
+        <section id="step-upload" class="step active">
+            <h2>1. Upload Your Notes</h2>
+            <div id="drop-zone" class="drop-zone">
+                <div class="drop-zone-content">
+                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                        <polyline points="17 8 12 3 7 8"/>
+                        <line x1="12" y1="3" x2="12" y2="15"/>
+                    </svg>
+                    <p>Drag &amp; drop an image here, or click to browse</p>
+                    <span class="hint">Supports JPG, PNG, WEBP</span>
+                </div>
+                <input type="file" id="file-input" accept="image/*" hidden>
+            </div>
+            <div id="preview-container" class="preview-container hidden">
+                <img id="preview-img" alt="Uploaded notes preview">
+                <button id="btn-clear-image" class="btn-icon" title="Remove image">&times;</button>
+            </div>
+            <div id="ocr-progress" class="progress-bar hidden">
+                <div id="ocr-progress-fill" class="progress-fill"></div>
+                <span id="ocr-status">Initializing OCR...</span>
+            </div>
+            <div class="step-actions">
+                <button id="btn-scan" class="btn btn-primary" disabled>Scan Notes</button>
+                <button id="btn-manual" class="btn btn-secondary">Enter Tasks Manually</button>
+            </div>
+        </section>
 
-            <button class="btn btn-number" onclick="appendNumber('4')">4</button>
-            <button class="btn btn-number" onclick="appendNumber('5')">5</button>
-            <button class="btn btn-number" onclick="appendNumber('6')">6</button>
-            <button class="btn btn-operator" onclick="appendOperator('+')">+</button>
+        <!-- Step 2: Edit Tasks -->
+        <section id="step-edit" class="step hidden">
+            <h2>2. Review &amp; Edit Tasks</h2>
+            <p class="section-hint">Edit task names, set durations, and reorder as needed.</p>
+            <div id="task-list" class="task-list"></div>
+            <button id="btn-add-task" class="btn btn-secondary btn-small">+ Add Task</button>
+            <div class="step-actions">
+                <button id="btn-back-upload" class="btn btn-secondary">Back</button>
+                <button id="btn-schedule" class="btn btn-primary">Schedule Tasks</button>
+            </div>
+        </section>
 
-            <button class="btn btn-number" onclick="appendNumber('1')">1</button>
-            <button class="btn btn-number" onclick="appendNumber('2')">2</button>
-            <button class="btn btn-number" onclick="appendNumber('3')">3</button>
-            <button class="btn btn-equals" onclick="calculate()">=</button>
-
-            <button class="btn btn-number btn-zero" onclick="appendNumber('0')">0</button>
-            <button class="btn btn-number" onclick="appendNumber('.')">.</button>
-        </div>
+        <!-- Step 3: Schedule & Download -->
+        <section id="step-schedule" class="step hidden">
+            <h2>3. Your Schedule</h2>
+            <div class="date-picker-row">
+                <label for="schedule-date">Date:</label>
+                <input type="date" id="schedule-date">
+            </div>
+            <div id="timeline" class="timeline"></div>
+            <div class="step-actions">
+                <button id="btn-back-edit" class="btn btn-secondary">Back to Edit</button>
+                <button id="btn-download" class="btn btn-primary">Download .ics File</button>
+            </div>
+        </section>
     </div>
+
     <script src="script.js"></script>
 </body>
 </html>

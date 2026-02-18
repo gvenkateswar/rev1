@@ -2,6 +2,10 @@
     'use strict';
 
     // --- DOM refs ---
+    const apiKeyInput = document.getElementById('api-key-input');
+    const btnSaveKey = document.getElementById('btn-save-key');
+    const keyStatus = document.getElementById('key-status');
+
     const dropZone = document.getElementById('drop-zone');
     const fileInput = document.getElementById('file-input');
     const previewContainer = document.getElementById('preview-container');
@@ -28,9 +32,39 @@
     const btnDownload = document.getElementById('btn-download');
 
     // --- State ---
-    let uploadedImageData = null;
+    let uploadedImageData = null; // base64 data URL
     let tasks = []; // { name: string, duration: number (minutes) }
     let scheduledEvents = []; // computed from tasks
+
+    // --- API Key management ---
+    var STORAGE_KEY = 'ntc_openai_api_key';
+
+    function loadApiKey() {
+        var saved = localStorage.getItem(STORAGE_KEY);
+        if (saved) {
+            apiKeyInput.value = saved;
+            keyStatus.textContent = 'Saved';
+            keyStatus.classList.remove('error');
+        }
+    }
+
+    function getApiKey() {
+        return apiKeyInput.value.trim();
+    }
+
+    btnSaveKey.addEventListener('click', function () {
+        var key = getApiKey();
+        if (!key) {
+            keyStatus.textContent = 'Enter a key';
+            keyStatus.classList.add('error');
+            return;
+        }
+        localStorage.setItem(STORAGE_KEY, key);
+        keyStatus.textContent = 'Saved';
+        keyStatus.classList.remove('error');
+    });
+
+    loadApiKey();
 
     // --- Navigation ---
     function showStep(step) {
@@ -92,34 +126,30 @@
         fileInput.value = '';
     });
 
-    // --- OCR ---
+    // --- OCR via OpenAI Vision API ---
     btnScan.addEventListener('click', async function () {
         if (!uploadedImageData) return;
+
+        var apiKey = getApiKey();
+        if (!apiKey) {
+            keyStatus.textContent = 'Key required';
+            keyStatus.classList.add('error');
+            apiKeyInput.focus();
+            return;
+        }
 
         btnScan.disabled = true;
         btnManual.disabled = true;
         ocrProgress.classList.remove('hidden');
-        ocrProgressFill.style.width = '0%';
-        ocrStatus.textContent = 'Initializing OCR engine...';
+        ocrProgressFill.style.width = '30%';
+        ocrStatus.textContent = 'Sending image to OpenAI...';
 
         try {
-            const result = await Tesseract.recognize(uploadedImageData, 'eng', {
-                logger: function (m) {
-                    if (m.status === 'recognizing text') {
-                        var pct = Math.round(m.progress * 100);
-                        ocrProgressFill.style.width = pct + '%';
-                        ocrStatus.textContent = 'Recognizing text... ' + pct + '%';
-                    } else if (m.status) {
-                        ocrStatus.textContent = m.status + '...';
-                    }
-                }
-            });
-
+            var responseText = await callOpenAIVision(apiKey, uploadedImageData);
             ocrProgressFill.style.width = '100%';
             ocrStatus.textContent = 'Done!';
 
-            var extractedText = result.data.text;
-            tasks = parseTasksFromText(extractedText);
+            tasks = parseGPTResponse(responseText);
 
             if (tasks.length === 0) {
                 tasks = [{ name: 'New task', duration: 30 }];
@@ -128,14 +158,93 @@
             renderTaskList();
             showStep(stepEdit);
         } catch (err) {
-            ocrStatus.textContent = 'OCR failed: ' + err.message;
+            ocrProgressFill.style.width = '0%';
+            ocrStatus.textContent = 'Error: ' + err.message;
         } finally {
             btnScan.disabled = false;
             btnManual.disabled = false;
         }
     });
 
-    // --- Parse tasks from raw text ---
+    async function callOpenAIVision(apiKey, imageDataUrl) {
+        var response = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ' + apiKey
+            },
+            body: JSON.stringify({
+                model: 'gpt-4o',
+                messages: [
+                    {
+                        role: 'system',
+                        content: 'You read handwritten notes and extract tasks/to-do items. ' +
+                            'Return ONLY a JSON array of objects, each with "name" (string) and "duration" (integer, in minutes). ' +
+                            'If a duration is mentioned in the notes, use it. Otherwise estimate a reasonable duration (15-120 min). ' +
+                            'Do not include any text outside the JSON array. Example: [{"name":"Write report","duration":60}]'
+                    },
+                    {
+                        role: 'user',
+                        content: [
+                            {
+                                type: 'text',
+                                text: 'Read the handwritten notes in this image and extract all tasks/to-do items as a JSON array.'
+                            },
+                            {
+                                type: 'image_url',
+                                image_url: { url: imageDataUrl }
+                            }
+                        ]
+                    }
+                ],
+                max_tokens: 1024,
+                temperature: 0.2
+            })
+        });
+
+        if (!response.ok) {
+            var errBody = await response.text();
+            var errMsg = 'API error ' + response.status;
+            try {
+                var errJson = JSON.parse(errBody);
+                if (errJson.error && errJson.error.message) {
+                    errMsg = errJson.error.message;
+                }
+            } catch (_) {}
+            throw new Error(errMsg);
+        }
+
+        var data = await response.json();
+        return data.choices[0].message.content;
+    }
+
+    // --- Parse GPT JSON response into tasks ---
+    function parseGPTResponse(text) {
+        // Try to extract JSON array from the response
+        var jsonStr = text.trim();
+        // Strip markdown code fences if present
+        jsonStr = jsonStr.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+
+        try {
+            var arr = JSON.parse(jsonStr);
+            if (!Array.isArray(arr)) throw new Error('Not an array');
+            return arr
+                .filter(function (item) {
+                    return item && typeof item.name === 'string' && item.name.trim().length > 0;
+                })
+                .map(function (item) {
+                    var dur = parseInt(item.duration, 10);
+                    if (isNaN(dur) || dur < 5) dur = 30;
+                    if (dur > 480) dur = 480;
+                    return { name: item.name.trim(), duration: dur };
+                });
+        } catch (e) {
+            // Fallback: try line-by-line parsing
+            return parseTasksFromText(text);
+        }
+    }
+
+    // --- Fallback: parse tasks from raw text ---
     function parseTasksFromText(text) {
         var lines = text.split('\n')
             .map(function (l) { return l.trim(); })
@@ -144,18 +253,15 @@
         var parsed = [];
         for (var i = 0; i < lines.length; i++) {
             var line = lines[i];
-            // Strip common list prefixes: bullets, dashes, numbers, checkboxes
             var cleaned = line
-                .replace(/^[\u2022\u2023\u25E6\u2043\u2219\-\*\+]\s*/, '')    // bullets
-                .replace(/^\d+[\.\)]\s*/, '')                                    // numbered
-                .replace(/^\[[ x]?\]\s*/i, '')                                   // checkboxes
+                .replace(/^[\u2022\u2023\u25E6\u2043\u2219\-\*\+]\s*/, '')
+                .replace(/^\d+[\.\)]\s*/, '')
+                .replace(/^\[[ x]?\]\s*/i, '')
                 .trim();
 
             if (cleaned.length < 2) continue;
 
-            // Try to detect inline duration hints like "(30 min)", "(1 hr)", "(1h)", "(2 hours)"
             var duration = estimateDuration(cleaned);
-            // Remove duration hint from the name
             var name = cleaned
                 .replace(/\(?\s*\d+\s*(min(utes?)?|hrs?|hours?)\s*\)?/i, '')
                 .replace(/\s{2,}/g, ' ')
@@ -170,17 +276,13 @@
     }
 
     function estimateDuration(text) {
-        // Look for explicit duration markers
         var match = text.match(/(\d+)\s*(min(utes?)?|hrs?|hours?)/i);
         if (match) {
             var val = parseInt(match[1], 10);
             var unit = match[2].toLowerCase();
-            if (unit.startsWith('h')) {
-                return val * 60;
-            }
+            if (unit.startsWith('h')) return val * 60;
             return val;
         }
-        // Default: 30 min
         return 30;
     }
 
@@ -211,12 +313,10 @@
         row.draggable = true;
         row.dataset.index = index;
 
-        // Drag handle
         var handle = document.createElement('span');
         handle.className = 'drag-handle';
         handle.textContent = '\u2630';
 
-        // Name input
         var nameInput = document.createElement('input');
         nameInput.type = 'text';
         nameInput.value = task.name;
@@ -225,19 +325,15 @@
             tasks[index].name = nameInput.value;
         });
 
-        // Duration select
         var durationSelect = document.createElement('select');
         var durations = [15, 30, 45, 60, 90, 120, 180, 240];
         for (var d = 0; d < durations.length; d++) {
             var opt = document.createElement('option');
             opt.value = durations[d];
             opt.textContent = formatDuration(durations[d]);
-            if (durations[d] === task.duration) {
-                opt.selected = true;
-            }
+            if (durations[d] === task.duration) opt.selected = true;
             durationSelect.appendChild(opt);
         }
-        // If current duration is not in the list, add it
         if (durations.indexOf(task.duration) === -1) {
             var customOpt = document.createElement('option');
             customOpt.value = task.duration;
@@ -249,7 +345,6 @@
             tasks[index].duration = parseInt(durationSelect.value, 10);
         });
 
-        // Remove button
         var removeBtn = document.createElement('button');
         removeBtn.className = 'btn-remove';
         removeBtn.textContent = '\u00d7';
@@ -263,7 +358,6 @@
         row.appendChild(durationSelect);
         row.appendChild(removeBtn);
 
-        // Drag-and-drop reordering
         row.addEventListener('dragstart', function (e) {
             e.dataTransfer.setData('text/plain', index.toString());
             row.style.opacity = '0.5';
@@ -291,11 +385,8 @@
     btnAddTask.addEventListener('click', function () {
         tasks.push({ name: '', duration: 30 });
         renderTaskList();
-        // Focus the newly added input
         var inputs = taskList.querySelectorAll('input[type="text"]');
-        if (inputs.length > 0) {
-            inputs[inputs.length - 1].focus();
-        }
+        if (inputs.length > 0) inputs[inputs.length - 1].focus();
     });
 
     btnBackUpload.addEventListener('click', function () {
@@ -304,7 +395,6 @@
 
     // --- Step 3: Schedule ---
     btnSchedule.addEventListener('click', function () {
-        // Filter out empty tasks
         var validTasks = tasks.filter(function (t) { return t.name.trim().length > 0; });
         if (validTasks.length === 0) {
             alert('Please add at least one task with a name.');
@@ -312,7 +402,6 @@
         }
         tasks = validTasks;
 
-        // Default date to today
         if (!scheduleDate.value) {
             var today = new Date();
             scheduleDate.value = today.getFullYear() + '-' +
@@ -330,8 +419,8 @@
 
     function buildSchedule() {
         scheduledEvents = [];
-        var startMinutes = 9 * 60;  // 9:00 AM
-        var endMinutes = 17 * 60;   // 5:00 PM
+        var startMinutes = 9 * 60;
+        var endMinutes = 17 * 60;
         var currentMinutes = startMinutes;
         var overflow = [];
 
@@ -346,7 +435,6 @@
                 });
                 currentMinutes += task.duration;
 
-                // Insert a 10-minute break between tasks if there's room
                 if (i < tasks.length - 1 && currentMinutes + 10 <= endMinutes) {
                     scheduledEvents.push({
                         name: 'Break',
@@ -358,7 +446,6 @@
                     currentMinutes += 10;
                 }
             } else if (currentMinutes < endMinutes) {
-                // Partially fits — fill remaining time
                 var remaining = endMinutes - currentMinutes;
                 scheduledEvents.push({
                     name: task.name,
@@ -387,7 +474,7 @@
 
             var timeEl = document.createElement('div');
             timeEl.className = 'timeline-time';
-            timeEl.textContent = minutesToTimeStr(ev.startMinutes) + ' – ' +
+            timeEl.textContent = minutesToTimeStr(ev.startMinutes) + ' \u2013 ' +
                 minutesToTimeStr(ev.startMinutes + ev.duration);
 
             var taskEl = document.createElement('div');
@@ -400,9 +487,7 @@
 
             slot.appendChild(timeEl);
             slot.appendChild(taskEl);
-            if (!ev.isBreak) {
-                slot.appendChild(durEl);
-            }
+            if (!ev.isBreak) slot.appendChild(durEl);
             timeline.appendChild(slot);
         }
 

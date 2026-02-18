@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Notes to Calendar</title>
     <link rel="stylesheet" href="styles.css">
-    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 </head>
 <body>
     <div class="app">
@@ -13,6 +12,14 @@
             <h1>Notes to Calendar</h1>
             <p class="subtitle">Upload handwritten notes, organize your day 9&ndash;5</p>
         </header>
+
+        <!-- API Key -->
+        <div class="api-key-bar">
+            <label for="api-key-input">OpenAI API Key:</label>
+            <input type="password" id="api-key-input" placeholder="sk-...">
+            <button id="btn-save-key" class="btn btn-small btn-secondary">Save</button>
+            <span id="key-status" class="key-status"></span>
+        </div>
 
         <!-- Step 1: Upload -->
         <section id="step-upload" class="step active">

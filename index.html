@@ -1,38 +1,52 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="hi">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Calculator App</title>
+    <title>Hindi Song Lyric Generator</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <div class="calculator">
-        <div class="display" id="display">0</div>
-        <div class="buttons">
-            <button class="btn btn-function" onclick="clearDisplay()">C</button>
-            <button class="btn btn-function" onclick="deleteChar()">DEL</button>
-            <button class="btn btn-operator" onclick="appendOperator('/')">/</button>
-            <button class="btn btn-operator" onclick="appendOperator('*')">×</button>
+    <div class="container">
+        <header>
+            <h1>Hindi Gaana Lyrics Generator</h1>
+            <p class="subtitle">Create random Hindi song lyrics instantly</p>
+        </header>
 
-            <button class="btn btn-number" onclick="appendNumber('7')">7</button>
-            <button class="btn btn-number" onclick="appendNumber('8')">8</button>
-            <button class="btn btn-number" onclick="appendNumber('9')">9</button>
-            <button class="btn btn-operator" onclick="appendOperator('-')">-</button>
-
-            <button class="btn btn-number" onclick="appendNumber('4')">4</button>
-            <button class="btn btn-number" onclick="appendNumber('5')">5</button>
-            <button class="btn btn-number" onclick="appendNumber('6')">6</button>
-            <button class="btn btn-operator" onclick="appendOperator('+')">+</button>
-
-            <button class="btn btn-number" onclick="appendNumber('1')">1</button>
-            <button class="btn btn-number" onclick="appendNumber('2')">2</button>
-            <button class="btn btn-number" onclick="appendNumber('3')">3</button>
-            <button class="btn btn-equals" onclick="calculate()">=</button>
-
-            <button class="btn btn-number btn-zero" onclick="appendNumber('0')">0</button>
-            <button class="btn btn-number" onclick="appendNumber('.')">.</button>
+        <div class="controls">
+            <div class="control-group">
+                <label for="mood">Mood / Rasa</label>
+                <select id="mood">
+                    <option value="romantic">Romantic (Shringar)</option>
+                    <option value="sad">Sad (Karuna)</option>
+                    <option value="happy">Happy (Hasya)</option>
+                    <option value="devotional">Devotional (Bhakti)</option>
+                    <option value="patriotic">Patriotic (Deshbhakti)</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <label for="structure">Song Structure</label>
+                <select id="structure">
+                    <option value="full">Full Song (Mukhda + 2 Antara)</option>
+                    <option value="mukhda">Mukhda Only</option>
+                    <option value="single">Single Antara</option>
+                </select>
+            </div>
         </div>
+
+        <button id="generate-btn" onclick="generateLyrics()">Naya Gaana Banao</button>
+
+        <div id="lyrics-output" class="lyrics-output hidden">
+            <div id="lyrics-content"></div>
+            <div class="actions">
+                <button class="action-btn" onclick="copyLyrics()">Copy Lyrics</button>
+                <button class="action-btn" onclick="generateLyrics()">Try Again</button>
+            </div>
+        </div>
+
+        <footer>
+            <p>Randomly generated lyrics for creative inspiration</p>
+        </footer>
     </div>
     <script src="script.js"></script>
 </body>

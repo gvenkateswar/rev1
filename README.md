@@ -1,37 +1,98 @@
-# Calculator App
+# Mac EXE Runner
 
-A modern, responsive calculator application built with HTML, CSS, and JavaScript.
+Run Windows `.exe` files on macOS — no Windows installation required.
 
-## Features
+Uses [Wine](https://www.winehq.org), an open-source compatibility layer that translates Windows API calls into macOS equivalents in real-time.
 
-- Basic arithmetic operations (addition, subtraction, multiplication, division)
-- Clean and modern user interface
-- Responsive design
-- Keyboard support
-- Delete and clear functions
-- Decimal number support
-- Error handling (division by zero)
+## Quick Start
 
-## How to Use
+```bash
+# 1. First-time setup (installs Homebrew + Wine if needed)
+./setup.sh
 
-1. Open `index.html` in your web browser
-2. Click buttons or use your keyboard to perform calculations
+# 2. Run any .exe file
+./mac-exe-runner.sh run MyApp.exe
+```
 
-### Keyboard Shortcuts
+That's it. The setup handles everything automatically.
 
-- **Numbers (0-9)**: Enter numbers
-- **Operators (+, -, *, /)**: Perform operations
-- **Enter or =**: Calculate result
-- **Escape**: Clear display
-- **Backspace**: Delete last character
-- **.**: Add decimal point
+## Commands
 
-## Files
+| Command | Description |
+|---------|-------------|
+| `./mac-exe-runner.sh run <file.exe> [args]` | Run a Windows .exe file |
+| `./mac-exe-runner.sh setup` | Install all dependencies |
+| `./mac-exe-runner.sh status` | Check what's installed |
+| `./mac-exe-runner.sh config winecfg` | Configure Wine (Windows version, etc.) |
+| `./mac-exe-runner.sh config regedit` | Open Windows registry editor |
+| `./mac-exe-runner.sh kill` | Stop all Wine processes |
+| `./mac-exe-runner.sh reset` | Delete Wine prefix and start fresh |
+| `./mac-exe-runner.sh help` | Show full help |
 
-- `index.html` - Main HTML structure
-- `styles.css` - Styling and layout
-- `script.js` - Calculator logic and functionality
+## Examples
 
-## Browser Compatibility
+```bash
+# Run an exe
+./mac-exe-runner.sh run ~/Downloads/installer.exe
 
-Works on all modern browsers including Chrome, Firefox, Safari, and Edge.
+# Run with arguments
+./mac-exe-runner.sh run setup.exe /S /D=C:\\MyApp
+
+# Shortcut: pass .exe directly (auto-detected)
+./mac-exe-runner.sh game.exe
+
+# Use a separate Wine prefix for an app
+WINE_PREFIX=~/my-app-wine ./mac-exe-runner.sh run app.exe
+
+# Change the emulated Windows version
+./mac-exe-runner.sh config winecfg
+```
+
+## What Gets Installed
+
+The setup script installs two things via [Homebrew](https://brew.sh):
+
+1. **Homebrew** (if not present) — the macOS package manager
+2. **Wine** — the Windows compatibility layer (~1-2 GB)
+
+A **Wine prefix** (`~/.wine`) is also created, which acts as a virtual `C:\` drive (~500 MB). You can delete it anytime with `./mac-exe-runner.sh reset`.
+
+## How It Works
+
+Wine is **not** an emulator or virtual machine. It implements the Windows API (Win32) natively on macOS, translating Windows system calls to macOS equivalents on the fly. This means:
+
+- No Windows license needed
+- No performance overhead from virtualization
+- Most Windows apps run at near-native speed
+- ~80% of Windows applications work (check [Wine AppDB](https://appdb.winehq.org) for compatibility)
+
+## Compatibility
+
+- **macOS**: Intel and Apple Silicon (M1/M2/M3/M4) Macs
+- **Works well with**: Most desktop apps, games, installers, utilities
+- **May not work with**: Apps requiring very recent Windows APIs, kernel-level drivers, or anti-cheat software
+
+## Troubleshooting
+
+**App won't start?**
+- Try changing the Windows version: `./mac-exe-runner.sh config winecfg` → set to Windows 10
+- Check the log file: `.exe-runner.log` in this directory
+
+**Graphics issues?**
+- Some apps need specific DLLs. Consider installing [Winetricks](https://github.com/Winetricks/winetricks) for additional libraries:
+  ```bash
+  brew install winetricks
+  winetricks vcrun2019 dotnet48
+  ```
+
+**Want a completely fresh start?**
+```bash
+./mac-exe-runner.sh reset
+./mac-exe-runner.sh setup
+```
+
+## Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `WINE_PREFIX` | `~/.wine` | Path to Wine prefix (virtual Windows environment) |

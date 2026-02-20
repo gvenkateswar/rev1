@@ -155,7 +155,10 @@ init_wine_prefix() {
 run_exe() {
     local exe_path="$1"
     shift
-    local extra_args=("$@")
+    local extra_args=()
+    if [[ $# -gt 0 ]]; then
+        extra_args=("$@")
+    fi
 
     # Resolve to absolute path
     if [[ ! "$exe_path" = /* ]]; then
@@ -188,7 +191,11 @@ run_exe() {
     log "Running: $exe_path with args: ${extra_args[*]:-none}"
 
     # Run the exe through Wine
-    WINEPREFIX="$WINE_PREFIX" $wine_cmd "$exe_path" "${extra_args[@]}" 2>&1 | tee -a "$LOG_FILE"
+    if [[ ${#extra_args[@]} -gt 0 ]]; then
+        WINEPREFIX="$WINE_PREFIX" $wine_cmd "$exe_path" "${extra_args[@]}" 2>&1 | tee -a "$LOG_FILE"
+    else
+        WINEPREFIX="$WINE_PREFIX" $wine_cmd "$exe_path" 2>&1 | tee -a "$LOG_FILE"
+    fi
     local exit_code=${PIPESTATUS[0]}
 
     echo ""

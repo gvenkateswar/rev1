@@ -3,36 +3,195 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Calculator App</title>
+    <title>Daily Device Usage Tracker</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <div class="calculator">
-        <div class="display" id="display">0</div>
-        <div class="buttons">
-            <button class="btn btn-function" onclick="clearDisplay()">C</button>
-            <button class="btn btn-function" onclick="deleteChar()">DEL</button>
-            <button class="btn btn-operator" onclick="appendOperator('/')">/</button>
-            <button class="btn btn-operator" onclick="appendOperator('*')">×</button>
+    <div class="app">
+        <header>
+            <h1>Daily Device Usage</h1>
+            <div class="date-picker">
+                <button id="prev-day" aria-label="Previous day">&larr;</button>
+                <input type="date" id="date-input">
+                <button id="next-day" aria-label="Next day">&rarr;</button>
+            </div>
+        </header>
 
-            <button class="btn btn-number" onclick="appendNumber('7')">7</button>
-            <button class="btn btn-number" onclick="appendNumber('8')">8</button>
-            <button class="btn btn-number" onclick="appendNumber('9')">9</button>
-            <button class="btn btn-operator" onclick="appendOperator('-')">-</button>
+        <main>
+            <!-- 24-Hour Timeline -->
+            <section class="timeline-section">
+                <h2>24-Hour Timeline</h2>
+                <div class="timeline-container">
+                    <div class="timeline-hours" id="timeline-hours"></div>
+                    <div class="timeline-tracks" id="timeline-tracks">
+                        <div class="track" data-device="macbook">
+                            <span class="track-label">MacBook</span>
+                            <div class="track-bar" id="track-macbook"></div>
+                        </div>
+                        <div class="track" data-device="iphone">
+                            <span class="track-label">iPhone</span>
+                            <div class="track-bar" id="track-iphone"></div>
+                        </div>
+                        <div class="track" data-device="ipad">
+                            <span class="track-label">iPad</span>
+                            <div class="track-bar" id="track-ipad"></div>
+                        </div>
+                        <div class="track" data-device="apple-watch">
+                            <span class="track-label">Watch</span>
+                            <div class="track-bar" id="track-apple-watch"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="timeline-legend" id="timeline-legend"></div>
+            </section>
 
-            <button class="btn btn-number" onclick="appendNumber('4')">4</button>
-            <button class="btn btn-number" onclick="appendNumber('5')">5</button>
-            <button class="btn btn-number" onclick="appendNumber('6')">6</button>
-            <button class="btn btn-operator" onclick="appendOperator('+')">+</button>
+            <!-- Summary Stats -->
+            <section class="summary-section">
+                <h2>Daily Summary</h2>
+                <div class="summary-cards" id="summary-cards">
+                    <div class="summary-card" data-device="macbook">
+                        <div class="card-icon">&#128187;</div>
+                        <div class="card-title">MacBook</div>
+                        <div class="card-value" id="summary-macbook">0h 0m</div>
+                    </div>
+                    <div class="summary-card" data-device="iphone">
+                        <div class="card-icon">&#128241;</div>
+                        <div class="card-title">iPhone</div>
+                        <div class="card-value" id="summary-iphone">0h 0m</div>
+                    </div>
+                    <div class="summary-card" data-device="ipad">
+                        <div class="card-icon">&#128195;</div>
+                        <div class="card-title">iPad</div>
+                        <div class="card-value" id="summary-ipad">0h 0m</div>
+                    </div>
+                    <div class="summary-card" data-device="apple-watch">
+                        <div class="card-icon">&#8986;</div>
+                        <div class="card-title">Apple Watch</div>
+                        <div class="card-value" id="summary-watch">0h 0m</div>
+                    </div>
+                    <div class="summary-card total">
+                        <div class="card-icon">&#128338;</div>
+                        <div class="card-title">Total Screen Time</div>
+                        <div class="card-value" id="summary-total">0h 0m</div>
+                    </div>
+                </div>
+            </section>
 
-            <button class="btn btn-number" onclick="appendNumber('1')">1</button>
-            <button class="btn btn-number" onclick="appendNumber('2')">2</button>
-            <button class="btn btn-number" onclick="appendNumber('3')">3</button>
-            <button class="btn btn-equals" onclick="calculate()">=</button>
+            <!-- Activity Breakdown -->
+            <section class="breakdown-section">
+                <h2>Activity Breakdown</h2>
+                <div class="breakdown-bars" id="breakdown-bars"></div>
+            </section>
 
-            <button class="btn btn-number btn-zero" onclick="appendNumber('0')">0</button>
-            <button class="btn btn-number" onclick="appendNumber('.')">.</button>
-        </div>
+            <!-- Apple Watch Health -->
+            <section class="health-section">
+                <h2>Apple Watch Activity</h2>
+                <div class="health-rings">
+                    <div class="ring-card">
+                        <div class="ring move" id="ring-move">
+                            <svg viewBox="0 0 100 100">
+                                <circle class="ring-bg" cx="50" cy="50" r="42"/>
+                                <circle class="ring-fill" cx="50" cy="50" r="42" id="ring-move-fill"/>
+                            </svg>
+                            <div class="ring-value" id="ring-move-value">0</div>
+                        </div>
+                        <div class="ring-label">Move (cal)</div>
+                        <input type="number" class="health-input" id="health-calories" placeholder="0" min="0">
+                        <span class="health-goal">/ <input type="number" class="goal-input" id="goal-calories" placeholder="500" min="0"> cal</span>
+                    </div>
+                    <div class="ring-card">
+                        <div class="ring exercise" id="ring-exercise">
+                            <svg viewBox="0 0 100 100">
+                                <circle class="ring-bg" cx="50" cy="50" r="42"/>
+                                <circle class="ring-fill" cx="50" cy="50" r="42" id="ring-exercise-fill"/>
+                            </svg>
+                            <div class="ring-value" id="ring-exercise-value">0</div>
+                        </div>
+                        <div class="ring-label">Exercise (min)</div>
+                        <input type="number" class="health-input" id="health-exercise" placeholder="0" min="0">
+                        <span class="health-goal">/ <input type="number" class="goal-input" id="goal-exercise" placeholder="30" min="0"> min</span>
+                    </div>
+                    <div class="ring-card">
+                        <div class="ring stand" id="ring-stand">
+                            <svg viewBox="0 0 100 100">
+                                <circle class="ring-bg" cx="50" cy="50" r="42"/>
+                                <circle class="ring-fill" cx="50" cy="50" r="42" id="ring-stand-fill"/>
+                            </svg>
+                            <div class="ring-value" id="ring-stand-value">0</div>
+                        </div>
+                        <div class="ring-label">Stand (hrs)</div>
+                        <input type="number" class="health-input" id="health-stand" placeholder="0" min="0" max="24">
+                        <span class="health-goal">/ <input type="number" class="goal-input" id="goal-stand" placeholder="12" min="0" max="24"> hrs</span>
+                    </div>
+                    <div class="ring-card">
+                        <div class="ring steps" id="ring-steps">
+                            <svg viewBox="0 0 100 100">
+                                <circle class="ring-bg" cx="50" cy="50" r="42"/>
+                                <circle class="ring-fill" cx="50" cy="50" r="42" id="ring-steps-fill"/>
+                            </svg>
+                            <div class="ring-value" id="ring-steps-value">0</div>
+                        </div>
+                        <div class="ring-label">Steps</div>
+                        <input type="number" class="health-input" id="health-steps" placeholder="0" min="0">
+                        <span class="health-goal">/ <input type="number" class="goal-input" id="goal-steps" placeholder="10000" min="0"> steps</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Add Usage Entry -->
+            <section class="entry-section">
+                <h2>Log Device Usage</h2>
+                <form id="usage-form">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="entry-device">Device</label>
+                            <select id="entry-device">
+                                <option value="macbook">MacBook</option>
+                                <option value="iphone">iPhone</option>
+                                <option value="ipad">iPad</option>
+                                <option value="apple-watch">Apple Watch</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="entry-category">Activity</label>
+                            <select id="entry-category">
+                                <option value="work">Work</option>
+                                <option value="browsing">Browsing</option>
+                                <option value="social-media">Social Media</option>
+                                <option value="communication">Communication</option>
+                                <option value="entertainment">Entertainment</option>
+                                <option value="fitness">Fitness</option>
+                                <option value="reading">Reading</option>
+                                <option value="creative">Creative</option>
+                                <option value="gaming">Gaming</option>
+                                <option value="other">Other</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="entry-start">Start Time</label>
+                            <input type="time" id="entry-start" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="entry-end">End Time</label>
+                            <input type="time" id="entry-end" required>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="entry-notes">Notes (optional)</label>
+                        <input type="text" id="entry-notes" placeholder="What were you doing?">
+                    </div>
+                    <button type="submit" class="btn-add">Add Entry</button>
+                </form>
+            </section>
+
+            <!-- Entries List -->
+            <section class="entries-section">
+                <h2>Today's Entries</h2>
+                <div id="entries-list" class="entries-list"></div>
+            </section>
+        </main>
     </div>
     <script src="script.js"></script>
 </body>

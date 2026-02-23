@@ -182,13 +182,18 @@ run_exe() {
     local wine_cmd
     wine_cmd=$(get_wine_cmd)
 
+    local args_display="none"
+    if [[ ${#extra_args[@]} -gt 0 ]]; then
+        args_display="${extra_args[*]}"
+    fi
+
     step "Running: $(basename "$exe_path")"
     info "Wine command: $wine_cmd"
     info "Wine prefix: $WINE_PREFIX"
-    info "Arguments: ${extra_args[*]:-none}"
+    info "Arguments: $args_display"
     echo ""
 
-    log "Running: $exe_path with args: ${extra_args[*]:-none}"
+    log "Running: $exe_path with args: $args_display"
 
     # Run the exe through Wine
     if [[ ${#extra_args[@]} -gt 0 ]]; then

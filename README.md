@@ -50,10 +50,13 @@ WINE_PREFIX=~/my-app-wine ./mac-exe-runner.sh run app.exe
 
 ## What Gets Installed
 
-The setup script installs two things via [Homebrew](https://brew.sh):
+The setup script installs via [Homebrew](https://brew.sh):
 
 1. **Homebrew** (if not present) — the macOS package manager
-2. **Wine** — the Windows compatibility layer (~1-2 GB)
+2. **Rosetta 2** (Apple Silicon only) — Apple's x86 translation layer
+3. **Wine CrossOver** (Apple Silicon) or **Wine Stable** (Intel) — the Windows compatibility layer (~1-2 GB)
+
+On Apple Silicon Macs, the script automatically installs **wine-crossover** instead of wine-stable. This is required because standard Wine cannot run 32-bit Windows apps through Rosetta 2 (it hits an unsupported CPU feature called LDT). Wine CrossOver includes a special `wine32on64` thunking layer that solves this.
 
 A **Wine prefix** (`~/.wine`) is also created, which acts as a virtual `C:\` drive (~500 MB). You can delete it anytime with `./mac-exe-runner.sh reset`.
 
@@ -73,6 +76,14 @@ Wine is **not** an emulator or virtual machine. It implements the Windows API (W
 - **May not work with**: Apps requiring very recent Windows APIs, kernel-level drivers, or anti-cheat software
 
 ## Troubleshooting
+
+**"rosetta error: LDT not supported" on Apple Silicon?**
+- You're using `wine-stable` which can't run 32-bit apps on Apple Silicon. Run setup to switch:
+  ```bash
+  ./mac-exe-runner.sh reset
+  ./mac-exe-runner.sh setup
+  ```
+  This will install `wine-crossover` which supports 32-bit apps.
 
 **App won't start?**
 - Try changing the Windows version: `./mac-exe-runner.sh config winecfg` → set to Windows 10

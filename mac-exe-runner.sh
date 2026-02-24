@@ -7,7 +7,7 @@
 
 set -euo pipefail
 
-VERSION="1.0.0"
+VERSION="1.1.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_FILE="$SCRIPT_DIR/.exe-runner.log"
 WINE_PREFIX="${WINE_PREFIX:-$HOME/.wine}"
@@ -41,6 +41,11 @@ log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG_FILE"
 }
 
+# --------------- Architecture Detection ---------------
+is_apple_silicon() {
+    [[ "$(uname -m)" == "arm64" ]]
+}
+
 # --------------- Dependency Checks ---------------
 check_macos() {
     if [[ "$(uname -s)" != "Darwin" ]]; then
@@ -48,7 +53,37 @@ check_macos() {
         error "On Linux, you can install Wine directly via your package manager."
         exit 1
     fi
-    success "Running on macOS $(sw_vers -productVersion)"
+    local arch_info=""
+    if is_apple_silicon; then
+        arch_info=" (Apple Silicon)"
+    else
+        arch_info=" (Intel)"
+    fi
+    success "Running on macOS $(sw_vers -productVersion)${arch_info}"
+}
+
+check_rosetta() {
+    if is_apple_silicon; then
+        if /usr/bin/pgrep -q oahd 2>/dev/null || arch -x86_64 /usr/bin/true 2>/dev/null; then
+            success "Rosetta 2 is installed"
+            return 0
+        else
+            return 1
+        fi
+    fi
+    return 0
+}
+
+install_rosetta() {
+    step "Installing Rosetta 2 (required for Wine on Apple Silicon)..."
+    softwareupdate --install-rosetta --agree-to-license
+    if check_rosetta; then
+        success "Rosetta 2 installed"
+    else
+        error "Rosetta 2 installation failed."
+        error "Try manually: softwareupdate --install-rosetta --agree-to-license"
+        exit 1
+    fi
 }
 
 check_homebrew() {
@@ -93,30 +128,78 @@ check_wine() {
     fi
 }
 
-install_wine() {
-    step "Installing Wine via Homebrew..."
-    info "This may take several minutes on first install."
-    echo ""
+# Check if current Wine install supports 32-bit apps on Apple Silicon
+check_wine_32bit_support() {
+    local wine_cmd
+    wine_cmd=$(command -v wine64 || command -v wine || echo "")
+    if [[ -z "$wine_cmd" ]]; then
+        return 1
+    fi
+    local wine_ver
+    wine_ver=$($wine_cmd --version 2>/dev/null || echo "")
+    # wine-crossover builds include "crossover" or are from the CrossOver source
+    # They support 32-bit via wine32on64 thunking
+    if echo "$wine_ver" | grep -qi "crossover"; then
+        return 0
+    fi
+    # Check if it's a Gcenx wine-crossover build (may just say wine-X.X)
+    # Look for the wine32on64 binary as a definitive check
+    local wine_dir
+    wine_dir="$(dirname "$wine_cmd")"
+    if [[ -f "$wine_dir/wine32on64" ]]; then
+        return 0
+    fi
+    # Check in the Wine Stable.app bundle
+    if [[ -d "/Applications/Wine Crossover.app" ]]; then
+        return 0
+    fi
+    return 1
+}
 
-    # Tap the cask versions for wine-stable
-    brew install --cask --no-quarantine wine-stable 2>/dev/null \
-        || brew install --cask --no-quarantine wine-staging 2>/dev/null \
-        || brew install wine-crossover 2>/dev/null \
-        || {
-            warn "Standard Wine install failed, trying alternative tap..."
-            brew tap gcenx/wine 2>/dev/null || true
-            brew install --cask --no-quarantine gcenx-wine-stable 2>/dev/null \
-                || brew install --cask --no-quarantine wine-crossover 2>/dev/null \
-                || {
-                    error "Could not install Wine automatically."
-                    error "Please try installing manually:"
-                    error "  brew tap gcenx/wine"
-                    error "  brew install --cask --no-quarantine wine-crossover"
-                    error ""
-                    error "Or visit: https://wiki.winehq.org/Download"
-                    exit 1
-                }
-        }
+install_wine() {
+    if is_apple_silicon; then
+        step "Installing Wine CrossOver for Apple Silicon..."
+        info "This version supports both 32-bit and 64-bit Windows apps."
+        info "This may take several minutes on first install."
+        echo ""
+
+        # On Apple Silicon, wine-crossover is required for 32-bit .exe support
+        # First, remove wine-stable if present (it can't run 32-bit apps)
+        if brew list --cask wine-stable &>/dev/null 2>&1; then
+            warn "Removing wine-stable (does not support 32-bit apps on Apple Silicon)..."
+            brew uninstall --cask wine-stable 2>/dev/null || true
+        fi
+
+        brew tap gcenx/wine 2>/dev/null || true
+        brew install --cask --no-quarantine wine-crossover 2>/dev/null \
+            || {
+                error "Could not install wine-crossover automatically."
+                error "Please try installing manually:"
+                error "  brew tap gcenx/wine"
+                error "  brew install --cask --no-quarantine wine-crossover"
+                exit 1
+            }
+    else
+        step "Installing Wine via Homebrew..."
+        info "This may take several minutes on first install."
+        echo ""
+
+        # On Intel Macs, wine-stable works fine for both 32-bit and 64-bit
+        brew install --cask --no-quarantine wine-stable 2>/dev/null \
+            || {
+                brew tap gcenx/wine 2>/dev/null || true
+                brew install --cask --no-quarantine wine-crossover 2>/dev/null \
+                    || {
+                        error "Could not install Wine automatically."
+                        error "Please try installing manually:"
+                        error "  brew tap gcenx/wine"
+                        error "  brew install --cask --no-quarantine wine-crossover"
+                        error ""
+                        error "Or visit: https://wiki.winehq.org/Download"
+                        exit 1
+                    }
+            }
+    fi
 
     if check_wine; then
         success "Wine installed successfully!"
@@ -222,14 +305,29 @@ cmd_setup() {
 
     check_macos
 
+    # On Apple Silicon, ensure Rosetta 2 is installed
+    if is_apple_silicon; then
+        if ! check_rosetta; then
+            install_rosetta
+        fi
+    fi
+
     if ! check_homebrew; then
         install_homebrew
     fi
 
     if ! check_wine; then
         install_wine
+    elif is_apple_silicon && ! check_wine_32bit_support; then
+        echo ""
+        warn "Current Wine install does NOT support 32-bit apps on Apple Silicon."
+        warn "You need wine-crossover for 32-bit .exe support."
+        info "Switching to wine-crossover..."
+        echo ""
+        install_wine
     fi
 
+    # Reset wine prefix when switching Wine versions
     init_wine_prefix
 
     echo ""
@@ -262,8 +360,23 @@ cmd_status() {
 
     if check_wine; then
         info "  Location: $(which wine64 2>/dev/null || which wine)"
+        if is_apple_silicon; then
+            if check_wine_32bit_support; then
+                success "32-bit app support: YES (wine-crossover/wine32on64)"
+            else
+                warn "32-bit app support: NO (need wine-crossover, run: $0 setup)"
+            fi
+        fi
     else
         warn "Wine is NOT installed"
+    fi
+
+    if is_apple_silicon; then
+        if check_rosetta; then
+            : # already printed above
+        else
+            warn "Rosetta 2 is NOT installed (required for Wine on Apple Silicon)"
+        fi
     fi
 
     echo ""
@@ -378,9 +491,15 @@ main() {
                 echo "Usage: $0 run <file.exe> [args...]"
                 exit 1
             fi
-            # Auto-setup if Wine isn't installed
+            # Auto-setup if Wine isn't installed or lacks 32-bit support
             if ! check_wine 2>/dev/null; then
                 warn "Wine is not installed. Running setup first..."
+                echo ""
+                cmd_setup
+                echo ""
+            elif is_apple_silicon && ! check_wine_32bit_support 2>/dev/null; then
+                warn "Current Wine does not support 32-bit apps on Apple Silicon."
+                warn "Running setup to install wine-crossover..."
                 echo ""
                 cmd_setup
                 echo ""
@@ -416,6 +535,12 @@ main() {
             if [[ "$command" == *.exe || "$command" == *.EXE ]]; then
                 if ! check_wine 2>/dev/null; then
                     warn "Wine is not installed. Running setup first..."
+                    echo ""
+                    cmd_setup
+                    echo ""
+                elif is_apple_silicon && ! check_wine_32bit_support 2>/dev/null; then
+                    warn "Current Wine does not support 32-bit apps on Apple Silicon."
+                    warn "Running setup to install wine-crossover..."
                     echo ""
                     cmd_setup
                     echo ""

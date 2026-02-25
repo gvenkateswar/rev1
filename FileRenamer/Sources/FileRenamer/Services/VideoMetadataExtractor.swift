@@ -42,14 +42,10 @@ struct VideoMetadataExtractor: MetadataExtracting {
             metadata.duration = CMTimeGetSeconds(duration)
 
             // Video resolution from tracks
-            let tracks = try await asset.load(.tracks)
-            for track in tracks {
-                let mediaType = try await track.load(.mediaType)
-                if mediaType == .video {
-                    let size = try await track.load(.naturalSize)
-                    metadata.resolution = size
-                    break
-                }
+            let videoTracks = try await asset.loadTracks(withMediaType: .video)
+            if let videoTrack = videoTracks.first {
+                let size = try await videoTrack.load(.naturalSize)
+                metadata.resolution = size
             }
 
             // Get creation date from asset

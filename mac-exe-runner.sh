@@ -7,7 +7,7 @@
 
 set -euo pipefail
 
-VERSION="1.1.0"
+VERSION="1.2.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_FILE="$SCRIPT_DIR/.exe-runner.log"
 WINE_PREFIX="${WINE_PREFIX:-$HOME/.wine}"
@@ -221,6 +221,163 @@ get_wine_cmd() {
     fi
 }
 
+# --------------- DOSBox-X Support ---------------
+check_dosbox() {
+    if command -v dosbox-x &>/dev/null; then
+        success "DOSBox-X is installed"
+        return 0
+    # Check common macOS app bundle location
+    elif [[ -d "/Applications/dosbox-x.app" ]]; then
+        success "DOSBox-X is installed (app bundle)"
+        return 0
+    else
+        return 1
+    fi
+}
+
+get_dosbox_cmd() {
+    if command -v dosbox-x &>/dev/null; then
+        echo "dosbox-x"
+    elif [[ -d "/Applications/dosbox-x.app" ]]; then
+        echo "open -a dosbox-x --args"
+    else
+        echo ""
+    fi
+}
+
+install_dosbox() {
+    step "Installing DOSBox-X (for 16-bit/DOS Windows apps)..."
+    info "This may take a few minutes."
+    echo ""
+
+    brew install --cask --no-quarantine dosbox-x 2>/dev/null \
+        || {
+            error "Could not install DOSBox-X automatically."
+            error "Please try installing manually:"
+            error "  brew install --cask dosbox-x"
+            exit 1
+        }
+
+    if check_dosbox; then
+        success "DOSBox-X installed successfully!"
+    else
+        error "DOSBox-X was installed but could not be found."
+        error "Try restarting your terminal and running this script again."
+        exit 1
+    fi
+}
+
+# Detect if an exe is 16-bit (NE format) vs 32/64-bit (PE format)
+# Returns: "16bit", "32bit", "64bit", or "unknown"
+detect_exe_type() {
+    local exe_path="$1"
+
+    # Read the MZ header to find the PE/NE offset
+    # Bytes at offset 0x3C-0x3D contain the offset to the PE/NE signature
+    local magic
+    magic=$(xxd -l 2 -p "$exe_path" 2>/dev/null || echo "")
+
+    # Check for MZ header
+    if [[ "$magic" != "4d5a" && "$magic" != "5a4d" ]]; then
+        # Not a standard MZ executable - could be a COM file or raw DOS
+        echo "dos"
+        return
+    fi
+
+    # Read the offset to the new header (at 0x3C, little-endian 32-bit)
+    local offset_hex
+    offset_hex=$(xxd -s 60 -l 4 -p "$exe_path" 2>/dev/null || echo "")
+    if [[ -z "$offset_hex" ]]; then
+        echo "unknown"
+        return
+    fi
+
+    # Convert little-endian hex to decimal offset
+    local b0 b1 b2 b3 offset
+    b0=$((16#${offset_hex:0:2}))
+    b1=$((16#${offset_hex:2:2}))
+    b2=$((16#${offset_hex:4:2}))
+    b3=$((16#${offset_hex:6:2}))
+    offset=$(( b0 + b1 * 256 + b2 * 65536 + b3 * 16777216 ))
+
+    # Read the signature at that offset
+    local sig
+    sig=$(xxd -s "$offset" -l 4 -p "$exe_path" 2>/dev/null || echo "")
+
+    if [[ "$sig" == "50450000" ]]; then
+        # PE signature ("PE\0\0") - 32-bit or 64-bit
+        # Read the machine type (2 bytes after PE signature)
+        local machine
+        machine=$(xxd -s $((offset + 4)) -l 2 -p "$exe_path" 2>/dev/null || echo "")
+        if [[ "$machine" == "6486" || "$machine" == "8664" ]]; then
+            echo "64bit"
+        else
+            echo "32bit"
+        fi
+    elif [[ "${sig:0:4}" == "4e45" ]]; then
+        # NE signature ("NE") - 16-bit Windows (Win16)
+        echo "16bit"
+    elif [[ "${sig:0:4}" == "4c45" ]]; then
+        # LE signature ("LE") - mixed 16/32-bit (VxD drivers, some DOS extenders)
+        echo "16bit"
+    else
+        # No PE or NE header found - likely a plain DOS .exe (MZ only)
+        echo "dos"
+    fi
+}
+
+run_with_dosbox() {
+    local exe_path="$1"
+    local exe_dir
+    exe_dir="$(dirname "$exe_path")"
+    local exe_name
+    exe_name="$(basename "$exe_path")"
+
+    step "Running via DOSBox-X: $exe_name"
+    info "Mounting $(dirname "$exe_path") as C:\\"
+    echo ""
+
+    log "Running via DOSBox-X: $exe_path"
+
+    local dosbox_cmd
+    dosbox_cmd=$(get_dosbox_cmd)
+
+    # Create a temporary DOSBox config that mounts the exe's directory and runs it
+    local tmp_conf
+    tmp_conf=$(mktemp /tmp/dosbox-runner-XXXXXX.conf)
+
+    cat > "$tmp_conf" <<DOSBOXEOF
+[sdl]
+autolock=false
+
+[dosbox]
+title=Mac EXE Runner - $exe_name
+
+[autoexec]
+@echo off
+mount c "$exe_dir"
+c:
+$exe_name
+pause
+exit
+DOSBOXEOF
+
+    $dosbox_cmd -conf "$tmp_conf" 2>&1 | tee -a "$LOG_FILE"
+    local exit_code=${PIPESTATUS[0]}
+
+    rm -f "$tmp_conf"
+
+    echo ""
+    if [[ $exit_code -eq 0 ]]; then
+        success "DOSBox-X exited normally"
+    else
+        warn "DOSBox-X exited with code $exit_code"
+    fi
+
+    log "DOSBox-X exit code: $exit_code"
+    return $exit_code
+}
+
 # --------------- Wine Prefix Management ---------------
 init_wine_prefix() {
     local wine_cmd
@@ -260,6 +417,31 @@ run_exe() {
             info "Aborted."
             exit 0
         fi
+    fi
+
+    # Detect exe type and use DOSBox-X for 16-bit/DOS apps
+    local exe_type
+    exe_type=$(detect_exe_type "$exe_path")
+    info "Detected exe type: $exe_type"
+
+    if [[ "$exe_type" == "16bit" || "$exe_type" == "dos" ]]; then
+        warn "This is a ${exe_type} application (not 32/64-bit)."
+        warn "Wine cannot run 16-bit/DOS apps on Apple Silicon."
+        info "Switching to DOSBox-X..."
+        echo ""
+
+        if ! check_dosbox 2>/dev/null; then
+            warn "DOSBox-X is not installed. Installing now..."
+            echo ""
+            if ! check_homebrew; then
+                install_homebrew
+            fi
+            install_dosbox
+            echo ""
+        fi
+
+        run_with_dosbox "$exe_path"
+        return $?
     fi
 
     local wine_cmd
@@ -327,6 +509,10 @@ cmd_setup() {
         install_wine
     fi
 
+    if ! check_dosbox; then
+        install_dosbox
+    fi
+
     # Reset wine prefix when switching Wine versions
     init_wine_prefix
 
@@ -334,6 +520,8 @@ cmd_setup() {
     success "Setup complete! You can now run .exe files with:"
     echo ""
     echo -e "    ${BOLD}./mac-exe-runner.sh run <file.exe>${NC}"
+    echo ""
+    info "Supports: 64-bit, 32-bit, 16-bit, and DOS executables"
     echo ""
 }
 
@@ -369,6 +557,14 @@ cmd_status() {
         fi
     else
         warn "Wine is NOT installed"
+    fi
+
+    if check_dosbox; then
+        local dosbox_cmd
+        dosbox_cmd=$(get_dosbox_cmd)
+        info "  16-bit/DOS app support: YES (DOSBox-X)"
+    else
+        warn "DOSBox-X is NOT installed (needed for 16-bit/DOS apps, run: $0 setup)"
     fi
 
     if is_apple_silicon; then
@@ -453,8 +649,8 @@ usage() {
     echo "  $0 <command> [options]"
     echo ""
     echo -e "${BOLD}COMMANDS:${NC}"
-    echo "  run <file.exe> [args...]   Run a Windows .exe file"
-    echo "  setup                      Install dependencies (Homebrew + Wine)"
+    echo "  run <file.exe> [args...]   Run a Windows .exe file (auto-detects 16/32/64-bit)"
+    echo "  setup                      Install dependencies (Homebrew + Wine + DOSBox-X)"
     echo "  status                     Check if everything is installed"
     echo "  config [tool]              Open Wine config tools (winecfg, regedit, etc.)"
     echo "  kill                       Stop all running Wine processes"
@@ -472,11 +668,13 @@ usage() {
     echo "  WINE_PREFIX   Custom Wine prefix path (default: ~/.wine)"
     echo ""
     echo -e "${BOLD}HOW IT WORKS:${NC}"
-    echo "  This tool uses Wine, an open-source compatibility layer that translates"
-    echo "  Windows API calls into macOS equivalents in real-time. No Windows license"
-    echo "  or installation is needed. Most Windows applications work out of the box."
+    echo "  This tool automatically detects what kind of .exe you have:"
+    echo "    - 32-bit/64-bit apps: Runs via Wine (Windows API compatibility layer)"
+    echo "    - 16-bit/DOS apps:    Runs via DOSBox-X (full x86 + DOS emulation)"
     echo ""
-    echo "  Learn more: https://www.winehq.org"
+    echo "  No Windows license or installation needed."
+    echo ""
+    echo "  Learn more: https://www.winehq.org | https://dosbox-x.com"
     echo ""
 }
 

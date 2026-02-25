@@ -11,11 +11,18 @@ let package = Package(
         .executableTarget(
             name: "FileRenamer",
             path: "Sources/FileRenamer",
+            exclude: ["Resources/Info.plist"],
             linkerSettings: [
                 .linkedFramework("PDFKit"),
                 .linkedFramework("AVFoundation"),
                 .linkedFramework("CoreServices"),
                 .linkedFramework("QuartzCore"),
+                .unsafeFlags([
+                    "-Xlinker", "-sectcreate",
+                    "-Xlinker", "__TEXT",
+                    "-Xlinker", "__info_plist",
+                    "-Xlinker", "Sources/FileRenamer/Resources/Info.plist",
+                ]),
             ]
         )
     ]

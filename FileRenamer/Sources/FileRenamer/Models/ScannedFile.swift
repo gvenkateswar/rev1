@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 
 /// Confidence level for a rename suggestion
 enum SuggestionConfidence: Comparable {
@@ -50,6 +51,7 @@ enum RenameAction: Equatable {
 }
 
 /// A file discovered during scanning, with its metadata and rename suggestion
+@available(macOS 10.15, *)
 class ScannedFile: Identifiable, ObservableObject {
     let id = UUID()
     let originalURL: URL

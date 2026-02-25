@@ -1,6 +1,7 @@
 import SwiftUI
 
 /// Scrollable list of scanned files with their rename suggestions
+@available(macOS 14.0, *)
 struct FileListView: View {
     @EnvironmentObject var appState: AppState
 

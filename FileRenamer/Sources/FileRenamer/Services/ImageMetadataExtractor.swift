@@ -3,6 +3,7 @@ import ImageIO
 import CoreGraphics
 
 /// Extracts metadata from image files using ImageIO (EXIF, TIFF, etc.)
+@available(macOS 13.0, *)
 struct ImageMetadataExtractor: MetadataExtracting {
     func extract(from url: URL) async -> FileMetadata {
         var metadata = SpotlightMetadataReader.readMetadata(from: url)

@@ -1,6 +1,7 @@
 import SwiftUI
 
 /// A single row displaying a file with its original name, suggested name, and action controls
+@available(macOS 14.0, *)
 struct FileRowView: View {
     @ObservedObject var file: ScannedFile
     @State private var showingEditor = false

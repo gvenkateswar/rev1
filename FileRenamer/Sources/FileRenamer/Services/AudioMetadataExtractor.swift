@@ -2,6 +2,7 @@ import Foundation
 import AVFoundation
 
 /// Extracts metadata from audio files using AVFoundation
+@available(macOS 13.0, *)
 struct AudioMetadataExtractor: MetadataExtracting {
     func extract(from url: URL) async -> FileMetadata {
         var metadata = SpotlightMetadataReader.readMetadata(from: url)

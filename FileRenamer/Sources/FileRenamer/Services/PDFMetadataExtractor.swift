@@ -2,6 +2,7 @@ import Foundation
 import PDFKit
 
 /// Extracts metadata from PDF files using PDFKit
+@available(macOS 13.0, *)
 struct PDFMetadataExtractor: MetadataExtracting {
     func extract(from url: URL) async -> FileMetadata {
         // Start with Spotlight metadata as a baseline

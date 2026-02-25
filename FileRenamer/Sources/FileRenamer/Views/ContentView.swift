@@ -1,6 +1,7 @@
 import SwiftUI
 
 /// Root view of the application
+@available(macOS 14.0, *)
 struct ContentView: View {
     @EnvironmentObject var appState: AppState
 

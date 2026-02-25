@@ -1,6 +1,7 @@
 import SwiftUI
 
 /// Post-rename summary showing results
+@available(macOS 14.0, *)
 struct SummaryView: View {
     let results: [RenameResult]
     @EnvironmentObject var appState: AppState

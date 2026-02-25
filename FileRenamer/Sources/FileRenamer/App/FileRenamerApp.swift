@@ -1,6 +1,7 @@
 import SwiftUI
 
 /// Main entry point for the FileRenamer application
+@available(macOS 14.0, *)
 @main
 struct FileRenamerApp: App {
     @StateObject private var appState = AppState()

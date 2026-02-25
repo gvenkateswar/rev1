@@ -1,6 +1,7 @@
 import SwiftUI
 
 /// Modal sheet for manually editing a proposed filename
+@available(macOS 14.0, *)
 struct RenameEditorSheet: View {
     @ObservedObject var file: ScannedFile
     @Environment(\.dismiss) private var dismiss

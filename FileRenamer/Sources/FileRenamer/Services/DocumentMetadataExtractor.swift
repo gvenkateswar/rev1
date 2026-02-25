@@ -2,6 +2,7 @@ import Foundation
 
 /// Extracts metadata from document files (Word, text, RTF, spreadsheets, presentations)
 /// Relies primarily on Spotlight metadata and direct file reading for plain text formats
+@available(macOS 13.0, *)
 struct DocumentMetadataExtractor: MetadataExtracting {
     func extract(from url: URL) async -> FileMetadata {
         var metadata = SpotlightMetadataReader.readMetadata(from: url)

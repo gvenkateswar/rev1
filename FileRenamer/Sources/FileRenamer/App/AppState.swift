@@ -2,6 +2,7 @@ import Foundation
 import SwiftUI
 
 /// Central application state that orchestrates scanning, extraction, suggestion, and renaming
+@available(macOS 14.0, *)
 @MainActor
 class AppState: ObservableObject {
     // MARK: - Published state

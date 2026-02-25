@@ -3,6 +3,7 @@ import AVFoundation
 import CoreGraphics
 
 /// Extracts metadata from video files using AVFoundation
+@available(macOS 13.0, *)
 struct VideoMetadataExtractor: MetadataExtracting {
     func extract(from url: URL) async -> FileMetadata {
         var metadata = SpotlightMetadataReader.readMetadata(from: url)

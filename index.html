@@ -3,37 +3,165 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Calculator App</title>
+    <title>KDP Ads Optimizer - Low Content Books</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <div class="calculator">
-        <div class="display" id="display">0</div>
-        <div class="buttons">
-            <button class="btn btn-function" onclick="clearDisplay()">C</button>
-            <button class="btn btn-function" onclick="deleteChar()">DEL</button>
-            <button class="btn btn-operator" onclick="appendOperator('/')">/</button>
-            <button class="btn btn-operator" onclick="appendOperator('*')">×</button>
+    <header>
+        <h1>KDP Ads Optimizer</h1>
+        <p class="subtitle">Reduce cost per sale for low content books</p>
+    </header>
 
-            <button class="btn btn-number" onclick="appendNumber('7')">7</button>
-            <button class="btn btn-number" onclick="appendNumber('8')">8</button>
-            <button class="btn btn-number" onclick="appendNumber('9')">9</button>
-            <button class="btn btn-operator" onclick="appendOperator('-')">-</button>
+    <main>
+        <!-- Book Profitability Settings -->
+        <section class="card" id="settings-section">
+            <h2>Book Profitability Settings</h2>
+            <p class="section-desc">Set your book's economics so we can calculate true profitability per campaign.</p>
+            <div class="settings-grid">
+                <div class="field">
+                    <label for="bookPrice">Book List Price ($)</label>
+                    <input type="number" id="bookPrice" value="6.99" step="0.01" min="0">
+                </div>
+                <div class="field">
+                    <label for="printCost">Print Cost ($)</label>
+                    <input type="number" id="printCost" value="2.15" step="0.01" min="0">
+                </div>
+                <div class="field">
+                    <label for="royaltyRate">Royalty Rate (%)</label>
+                    <input type="number" id="royaltyRate" value="60" step="1" min="0" max="100">
+                </div>
+                <div class="field">
+                    <label for="royaltyPerSale">Royalty Per Sale ($)</label>
+                    <input type="number" id="royaltyPerSale" value="" step="0.01" min="0" placeholder="Auto-calculated">
+                </div>
+            </div>
+        </section>
 
-            <button class="btn btn-number" onclick="appendNumber('4')">4</button>
-            <button class="btn btn-number" onclick="appendNumber('5')">5</button>
-            <button class="btn btn-number" onclick="appendNumber('6')">6</button>
-            <button class="btn btn-operator" onclick="appendOperator('+')">+</button>
+        <!-- Data Input -->
+        <section class="card" id="input-section">
+            <h2>Campaign Data</h2>
+            <p class="section-desc">Paste your Amazon Ads bulk report data (CSV) or add campaigns manually.</p>
 
-            <button class="btn btn-number" onclick="appendNumber('1')">1</button>
-            <button class="btn btn-number" onclick="appendNumber('2')">2</button>
-            <button class="btn btn-number" onclick="appendNumber('3')">3</button>
-            <button class="btn btn-equals" onclick="calculate()">=</button>
+            <div class="input-tabs">
+                <button class="tab active" data-tab="csv">Paste CSV</button>
+                <button class="tab" data-tab="manual">Manual Entry</button>
+            </div>
 
-            <button class="btn btn-number btn-zero" onclick="appendNumber('0')">0</button>
-            <button class="btn btn-number" onclick="appendNumber('.')">.</button>
-        </div>
-    </div>
+            <div id="csv-tab" class="tab-content active">
+                <textarea id="csvInput" rows="8" placeholder="Paste your Amazon Ads CSV export here...
+Example format:
+Campaign Name,Impressions,Clicks,Spend,Orders,Sales
+Notebook - Exact,12000,85,34.00,5,34.95
+Journal - Broad,25000,200,95.00,6,41.94"></textarea>
+                <button class="btn btn-primary" onclick="parseCSV()">Analyze CSV Data</button>
+            </div>
+
+            <div id="manual-tab" class="tab-content">
+                <div class="manual-form">
+                    <div class="field">
+                        <label for="campaignName">Campaign Name</label>
+                        <input type="text" id="campaignName" placeholder="e.g., Notebook - Exact Match">
+                    </div>
+                    <div class="manual-grid">
+                        <div class="field">
+                            <label for="impressions">Impressions</label>
+                            <input type="number" id="impressions" min="0" placeholder="0">
+                        </div>
+                        <div class="field">
+                            <label for="clicks">Clicks</label>
+                            <input type="number" id="clicks" min="0" placeholder="0">
+                        </div>
+                        <div class="field">
+                            <label for="spend">Spend ($)</label>
+                            <input type="number" id="spend" step="0.01" min="0" placeholder="0.00">
+                        </div>
+                        <div class="field">
+                            <label for="orders">Orders</label>
+                            <input type="number" id="orders" min="0" placeholder="0">
+                        </div>
+                        <div class="field">
+                            <label for="sales">Sales Revenue ($)</label>
+                            <input type="number" id="sales" step="0.01" min="0" placeholder="0.00">
+                        </div>
+                    </div>
+                    <button class="btn btn-primary" onclick="addManualCampaign()">Add Campaign</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Demo Data -->
+        <section class="card" id="demo-section">
+            <button class="btn btn-secondary" onclick="loadDemoData()">Load Demo Data</button>
+            <span class="demo-hint">Try the optimizer with sample KDP campaign data</span>
+        </section>
+
+        <!-- Results Dashboard -->
+        <section class="card hidden" id="results-section">
+            <h2>Optimization Dashboard</h2>
+
+            <!-- Summary Metrics -->
+            <div class="metrics-grid" id="summaryMetrics"></div>
+
+            <!-- Campaign Table -->
+            <div class="table-container">
+                <h3>Campaign Performance</h3>
+                <div class="table-controls">
+                    <label>Sort by:
+                        <select id="sortSelect" onchange="renderTable()">
+                            <option value="acos">ACoS (Worst First)</option>
+                            <option value="spend">Spend (Highest First)</option>
+                            <option value="profit">Profit (Lowest First)</option>
+                            <option value="cpc">CPC (Highest First)</option>
+                            <option value="convRate">Conversion Rate (Lowest First)</option>
+                        </select>
+                    </label>
+                </div>
+                <div class="table-scroll">
+                    <table id="campaignTable">
+                        <thead>
+                            <tr>
+                                <th>Campaign</th>
+                                <th>Impressions</th>
+                                <th>Clicks</th>
+                                <th>CTR</th>
+                                <th>CPC</th>
+                                <th>Spend</th>
+                                <th>Orders</th>
+                                <th>Conv %</th>
+                                <th>ACoS</th>
+                                <th>ROAS</th>
+                                <th>Profit</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="campaignTableBody"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Optimization Recommendations -->
+            <div id="recommendations">
+                <h3>Optimization Recommendations</h3>
+                <div id="recommendationsList"></div>
+            </div>
+
+            <!-- Bid Suggestions -->
+            <div id="bidSuggestions">
+                <h3>Suggested Bid Adjustments</h3>
+                <p class="section-desc">Based on your target ACoS and current performance:</p>
+                <div class="field inline-field">
+                    <label for="targetAcos">Target ACoS (%)</label>
+                    <input type="number" id="targetAcos" value="35" step="1" min="1" max="100" onchange="recalculate()">
+                </div>
+                <div id="bidList"></div>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <p>KDP Ads Optimizer &mdash; All calculations are local. No data is sent to any server.</p>
+    </footer>
+
     <script src="script.js"></script>
 </body>
 </html>

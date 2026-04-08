@@ -422,7 +422,87 @@ def export_clip(video_path: str, segment: Segment,
 
 
 # ---------------------------------------------------------------------------
-# Main
+# High-level pipeline (used by both CLI and GUI)
+# ---------------------------------------------------------------------------
+
+def analyze_video(
+    video_path: str,
+    top_n: int = 5,
+    min_duration: float = 15.0,
+    max_duration: float = 60.0,
+    whisper_model: str = "base",
+    on_progress=None,
+):
+    """
+    Full analysis pipeline.  Returns (top_segments, whisper_result, analysis).
+
+    on_progress(step, total, message) is an optional callback for UI updates.
+    """
+    def _progress(step, total, msg):
+        if on_progress:
+            on_progress(step, total, msg)
+
+    check_ffmpeg()
+
+    # 1 ── duration
+    _progress(1, 5, "Reading video metadata ...")
+    total_duration = get_video_duration(video_path)
+
+    # 2 ── extract audio
+    _progress(2, 5, "Extracting audio ...")
+    tmp_dir = tempfile.mkdtemp(prefix="shorts_gen_")
+    audio_path = extract_audio(video_path, tmp_dir)
+
+    # 3 ── audio features
+    _progress(3, 5, "Analyzing audio features ...")
+    samples, sr = load_audio_np(audio_path)
+    hop = 0.5
+    energy = compute_energy_profile(samples, sr, hop)
+    centroid = compute_spectral_centroid(samples, sr, hop)
+    silence = detect_silence(energy)
+
+    # 4 ── transcribe
+    _progress(4, 5, "Transcribing speech (this may take a while) ...")
+    whisper_result = transcribe_audio(audio_path, whisper_model)
+    speech_timeline = build_speech_timeline(whisper_result, total_duration, hop)
+
+    # 5 ── score
+    _progress(5, 5, "Scoring candidate segments ...")
+    all_segments = score_segments(
+        energy, centroid, silence, speech_timeline,
+        total_duration,
+        hop_seconds=hop,
+        min_duration=min_duration,
+        max_duration=max_duration,
+    )
+
+    top_segments = select_top_non_overlapping(all_segments, top_n)
+
+    for seg in top_segments:
+        seg.transcript = get_transcript_for_range(
+            whisper_result, seg.start, seg.end
+        )
+
+    # cleanup
+    try:
+        os.remove(audio_path)
+        os.rmdir(tmp_dir)
+    except OSError:
+        pass
+
+    analysis = {
+        "total_duration": total_duration,
+        "energy": energy,
+        "silence_ratio": float(silence.mean()),
+        "n_speech_segments": len(whisper_result.get("segments", [])),
+        "n_candidates_evaluated": len(all_segments),
+    }
+
+    return top_segments, whisper_result, analysis
+
+
+# ---------------------------------------------------------------------------
+# CLI
 # ---------------------------------------------------------------------------
 
 def print_banner():
@@ -474,55 +554,24 @@ def main():
         sys.exit(1)
 
     print_banner()
-    check_ffmpeg()
 
-    # --- Step 1: Get duration ---
-    print("\n[1/5] Reading video metadata ...")
-    total_duration = get_video_duration(args.video)
-    print(f"  Video duration: {int(total_duration // 60)}m {int(total_duration % 60)}s")
+    def cli_progress(step, total, msg):
+        print(f"\n[{step}/{total}] {msg}")
 
-    # --- Step 2: Extract audio ---
-    print("\n[2/5] Extracting audio ...")
-    tmp_dir = tempfile.mkdtemp(prefix="shorts_gen_")
-    audio_path = extract_audio(args.video, tmp_dir)
-
-    # --- Step 3: Analyse audio features ---
-    print("\n[3/5] Analyzing audio features ...")
-    samples, sr = load_audio_np(audio_path)
-    hop = 0.5  # seconds per analysis frame
-
-    energy = compute_energy_profile(samples, sr, hop)
-    centroid = compute_spectral_centroid(samples, sr, hop)
-    silence = detect_silence(energy)
-
-    print(f"  Computed {len(energy)} energy frames ({hop}s resolution)")
-    print(f"  Silence ratio: {silence.mean():.1%}")
-
-    # --- Step 4: Transcribe ---
-    print("\n[4/5] Transcribing speech ...")
-    whisper_result = transcribe_audio(audio_path, args.whisper_model)
-    speech_timeline = build_speech_timeline(whisper_result, total_duration, hop)
-    n_segments = len(whisper_result.get("segments", []))
-    print(f"  Found {n_segments} speech segments")
-
-    # --- Step 5: Score and rank ---
-    print("\n[5/5] Scoring candidate segments ...")
-    all_segments = score_segments(
-        energy, centroid, silence, speech_timeline,
-        total_duration,
-        hop_seconds=hop,
+    top_segments, whisper_result, analysis = analyze_video(
+        video_path=args.video,
+        top_n=args.top,
         min_duration=args.min_duration,
         max_duration=args.max_duration,
+        whisper_model=args.whisper_model,
+        on_progress=cli_progress,
     )
-    print(f"  Evaluated {len(all_segments)} candidate windows")
 
-    top_segments = select_top_non_overlapping(all_segments, args.top)
-
-    # Attach transcripts
-    for seg in top_segments:
-        seg.transcript = get_transcript_for_range(
-            whisper_result, seg.start, seg.end
-        )
+    total_duration = analysis["total_duration"]
+    print(f"  Video duration: {int(total_duration // 60)}m {int(total_duration % 60)}s")
+    print(f"  Silence ratio: {analysis['silence_ratio']:.1%}")
+    print(f"  Speech segments found: {analysis['n_speech_segments']}")
+    print(f"  Candidate windows evaluated: {analysis['n_candidates_evaluated']}")
 
     # --- Output ---
     if args.json:

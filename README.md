@@ -31,7 +31,18 @@ pip install -r requirements.txt
 
 ## Usage
 
-### Basic (find top 5 clips)
+### Web GUI (recommended)
+```bash
+streamlit run gui.py
+```
+This opens a browser UI where you can:
+- Upload a video (or point to a local file)
+- Adjust settings with sliders/dropdowns
+- See an audio energy waveform
+- Browse ranked clip cards with transcripts and score breakdowns
+- Export selected clips and download them as a zip
+
+### CLI — Basic (find top 5 clips)
 ```bash
 python shorts_generator.py my_video.mp4
 ```

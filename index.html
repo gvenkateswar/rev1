@@ -3,37 +3,280 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Calculator App</title>
+    <title>Word Processor</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <div class="calculator">
-        <div class="display" id="display">0</div>
-        <div class="buttons">
-            <button class="btn btn-function" onclick="clearDisplay()">C</button>
-            <button class="btn btn-function" onclick="deleteChar()">DEL</button>
-            <button class="btn btn-operator" onclick="appendOperator('/')">/</button>
-            <button class="btn btn-operator" onclick="appendOperator('*')">×</button>
+    <div class="app">
+        <!-- Title Bar -->
+        <div class="title-bar">
+            <div class="title-left">
+                <span class="app-icon">&#9998;</span>
+                <input type="text" id="doc-title" class="doc-title" value="Untitled Document" spellcheck="false">
+            </div>
+            <div class="title-right">
+                <span id="save-status" class="save-status">All changes saved</span>
+            </div>
+        </div>
 
-            <button class="btn btn-number" onclick="appendNumber('7')">7</button>
-            <button class="btn btn-number" onclick="appendNumber('8')">8</button>
-            <button class="btn btn-number" onclick="appendNumber('9')">9</button>
-            <button class="btn btn-operator" onclick="appendOperator('-')">-</button>
+        <!-- Menu Bar -->
+        <div class="menu-bar">
+            <div class="menu-item" id="menu-file">
+                File
+                <div class="dropdown" id="dropdown-file">
+                    <button onclick="newDocument()">New</button>
+                    <button onclick="openDocumentPicker()">Open...</button>
+                    <div class="dropdown-divider"></div>
+                    <button onclick="saveDocument()">Save</button>
+                    <button onclick="saveAsNew()">Save As...</button>
+                    <div class="dropdown-divider"></div>
+                    <button onclick="exportHTML()">Export as HTML</button>
+                    <button onclick="exportText()">Export as Text</button>
+                    <div class="dropdown-divider"></div>
+                    <button onclick="printDocument()">Print</button>
+                </div>
+            </div>
+            <div class="menu-item" id="menu-edit">
+                Edit
+                <div class="dropdown" id="dropdown-edit">
+                    <button onclick="document.execCommand('undo')">Undo</button>
+                    <button onclick="document.execCommand('redo')">Redo</button>
+                    <div class="dropdown-divider"></div>
+                    <button onclick="document.execCommand('cut')">Cut</button>
+                    <button onclick="document.execCommand('copy')">Copy</button>
+                    <button onclick="document.execCommand('paste')">Paste</button>
+                    <div class="dropdown-divider"></div>
+                    <button onclick="document.execCommand('selectAll')">Select All</button>
+                </div>
+            </div>
+            <div class="menu-item" id="menu-insert">
+                Insert
+                <div class="dropdown" id="dropdown-insert">
+                    <button onclick="insertLink()">Link...</button>
+                    <button onclick="insertImage()">Image...</button>
+                    <button onclick="insertHorizontalRule()">Horizontal Rule</button>
+                    <button onclick="insertTable()">Table...</button>
+                </div>
+            </div>
+            <div class="menu-item" id="menu-format">
+                Format
+                <div class="dropdown" id="dropdown-format">
+                    <button onclick="clearAllFormatting()">Clear Formatting</button>
+                    <div class="dropdown-divider"></div>
+                    <button onclick="toggleDarkMode()">Toggle Dark Mode</button>
+                </div>
+            </div>
+        </div>
 
-            <button class="btn btn-number" onclick="appendNumber('4')">4</button>
-            <button class="btn btn-number" onclick="appendNumber('5')">5</button>
-            <button class="btn btn-number" onclick="appendNumber('6')">6</button>
-            <button class="btn btn-operator" onclick="appendOperator('+')">+</button>
+        <!-- Toolbar -->
+        <div class="toolbar">
+            <div class="toolbar-group">
+                <button class="tool-btn" onclick="document.execCommand('undo')" title="Undo (Ctrl+Z)">&#8630;</button>
+                <button class="tool-btn" onclick="document.execCommand('redo')" title="Redo (Ctrl+Y)">&#8631;</button>
+            </div>
 
-            <button class="btn btn-number" onclick="appendNumber('1')">1</button>
-            <button class="btn btn-number" onclick="appendNumber('2')">2</button>
-            <button class="btn btn-number" onclick="appendNumber('3')">3</button>
-            <button class="btn btn-equals" onclick="calculate()">=</button>
+            <div class="toolbar-divider"></div>
 
-            <button class="btn btn-number btn-zero" onclick="appendNumber('0')">0</button>
-            <button class="btn btn-number" onclick="appendNumber('.')">.</button>
+            <div class="toolbar-group">
+                <select id="font-family" class="tool-select" onchange="changeFont(this.value)" title="Font Family">
+                    <option value="Arial">Arial</option>
+                    <option value="Georgia">Georgia</option>
+                    <option value="Times New Roman">Times New Roman</option>
+                    <option value="Courier New">Courier New</option>
+                    <option value="Verdana">Verdana</option>
+                    <option value="Trebuchet MS">Trebuchet MS</option>
+                    <option value="Palatino Linotype">Palatino</option>
+                    <option value="Garamond">Garamond</option>
+                    <option value="Comic Sans MS">Comic Sans</option>
+                    <option value="Impact">Impact</option>
+                </select>
+                <select id="font-size" class="tool-select tool-select-sm" onchange="changeFontSize(this.value)" title="Font Size">
+                    <option value="1">8</option>
+                    <option value="2">10</option>
+                    <option value="3" selected>12</option>
+                    <option value="4">14</option>
+                    <option value="5">18</option>
+                    <option value="6">24</option>
+                    <option value="7">36</option>
+                </select>
+            </div>
+
+            <div class="toolbar-divider"></div>
+
+            <div class="toolbar-group">
+                <select id="heading-select" class="tool-select tool-select-md" onchange="changeHeading(this.value)" title="Heading">
+                    <option value="p">Normal</option>
+                    <option value="h1">Heading 1</option>
+                    <option value="h2">Heading 2</option>
+                    <option value="h3">Heading 3</option>
+                    <option value="h4">Heading 4</option>
+                </select>
+            </div>
+
+            <div class="toolbar-divider"></div>
+
+            <div class="toolbar-group">
+                <button class="tool-btn" id="btn-bold" onclick="execCmd('bold')" title="Bold (Ctrl+B)"><b>B</b></button>
+                <button class="tool-btn" id="btn-italic" onclick="execCmd('italic')" title="Italic (Ctrl+I)"><i>I</i></button>
+                <button class="tool-btn" id="btn-underline" onclick="execCmd('underline')" title="Underline (Ctrl+U)"><u>U</u></button>
+                <button class="tool-btn" id="btn-strikethrough" onclick="execCmd('strikeThrough')" title="Strikethrough"><s>S</s></button>
+            </div>
+
+            <div class="toolbar-divider"></div>
+
+            <div class="toolbar-group">
+                <div class="color-wrapper" title="Text Color">
+                    <button class="tool-btn color-btn" id="btn-text-color" onclick="this.nextElementSibling.click()">A</button>
+                    <input type="color" id="text-color" value="#000000" onchange="changeFontColor(this.value)">
+                    <div class="color-indicator" id="text-color-indicator"></div>
+                </div>
+                <div class="color-wrapper" title="Highlight Color">
+                    <button class="tool-btn color-btn" id="btn-highlight" onclick="this.nextElementSibling.click()">
+                        <span class="highlight-icon">H</span>
+                    </button>
+                    <input type="color" id="highlight-color" value="#ffff00" onchange="changeHighlightColor(this.value)">
+                    <div class="color-indicator highlight-indicator" id="highlight-color-indicator"></div>
+                </div>
+            </div>
+
+            <div class="toolbar-divider"></div>
+
+            <div class="toolbar-group">
+                <button class="tool-btn" id="btn-align-left" onclick="execCmd('justifyLeft')" title="Align Left">&#8676;</button>
+                <button class="tool-btn" id="btn-align-center" onclick="execCmd('justifyCenter')" title="Align Center">&#8596;</button>
+                <button class="tool-btn" id="btn-align-right" onclick="execCmd('justifyRight')" title="Align Right">&#8677;</button>
+                <button class="tool-btn" id="btn-align-justify" onclick="execCmd('justifyFull')" title="Justify">&#9776;</button>
+            </div>
+
+            <div class="toolbar-divider"></div>
+
+            <div class="toolbar-group">
+                <button class="tool-btn" onclick="execCmd('insertUnorderedList')" title="Bullet List">&#8226; List</button>
+                <button class="tool-btn" onclick="execCmd('insertOrderedList')" title="Numbered List">1. List</button>
+            </div>
+
+            <div class="toolbar-divider"></div>
+
+            <div class="toolbar-group">
+                <button class="tool-btn" onclick="execCmd('indent')" title="Increase Indent">&#8594;|</button>
+                <button class="tool-btn" onclick="execCmd('outdent')" title="Decrease Indent">|&#8592;</button>
+            </div>
+
+            <div class="toolbar-divider"></div>
+
+            <div class="toolbar-group">
+                <button class="tool-btn" onclick="execCmd('subscript')" title="Subscript">X<sub>2</sub></button>
+                <button class="tool-btn" onclick="execCmd('superscript')" title="Superscript">X<sup>2</sup></button>
+            </div>
+        </div>
+
+        <!-- Ruler -->
+        <div class="ruler" id="ruler"></div>
+
+        <!-- Editor Area -->
+        <div class="editor-container">
+            <div class="page" id="editor" contenteditable="true" spellcheck="true">
+                <h1>Welcome to Word Processor</h1>
+                <p>Start typing to create your document. Use the toolbar above to format your text.</p>
+                <p>Features include:</p>
+                <ul>
+                    <li><b>Rich text formatting</b> &mdash; bold, italic, underline, strikethrough</li>
+                    <li><b>Font customization</b> &mdash; family, size, color, and highlight</li>
+                    <li><b>Paragraph styles</b> &mdash; headings, alignment, lists, and indentation</li>
+                    <li><b>Insert media</b> &mdash; links, images, tables, and horizontal rules</li>
+                    <li><b>File management</b> &mdash; save, open, and export documents</li>
+                    <li><b>Word &amp; character count</b> &mdash; tracked in the status bar</li>
+                    <li><b>Auto-save</b> &mdash; your work is saved automatically</li>
+                    <li><b>Keyboard shortcuts</b> &mdash; Ctrl+B, Ctrl+I, Ctrl+U, Ctrl+S, and more</li>
+                    <li><b>Dark mode</b> &mdash; toggle via the Format menu</li>
+                </ul>
+                <p>Happy writing!</p>
+            </div>
+        </div>
+
+        <!-- Status Bar -->
+        <div class="status-bar">
+            <div class="status-left">
+                <span id="word-count">Words: 0</span>
+                <span class="status-divider">|</span>
+                <span id="char-count">Characters: 0</span>
+                <span class="status-divider">|</span>
+                <span id="line-count">Lines: 0</span>
+            </div>
+            <div class="status-right">
+                <span id="cursor-pos">Ln 1, Col 1</span>
+            </div>
         </div>
     </div>
+
+    <!-- Modal Overlay -->
+    <div class="modal-overlay" id="modal-overlay" onclick="closeModal()"></div>
+
+    <!-- Open Document Modal -->
+    <div class="modal" id="open-modal">
+        <div class="modal-header">
+            <h3>Open Document</h3>
+            <button class="modal-close" onclick="closeModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div id="saved-docs-list" class="saved-docs-list">
+                <p class="no-docs">No saved documents found.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Save As Modal -->
+    <div class="modal" id="saveas-modal">
+        <div class="modal-header">
+            <h3>Save As</h3>
+            <button class="modal-close" onclick="closeModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <label for="saveas-name">Document Name:</label>
+            <input type="text" id="saveas-name" class="modal-input" placeholder="Enter document name">
+            <div class="modal-actions">
+                <button class="modal-btn modal-btn-primary" onclick="confirmSaveAs()">Save</button>
+                <button class="modal-btn" onclick="closeModal()">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Table Insert Modal -->
+    <div class="modal" id="table-modal">
+        <div class="modal-header">
+            <h3>Insert Table</h3>
+            <button class="modal-close" onclick="closeModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <label for="table-rows">Rows:</label>
+            <input type="number" id="table-rows" class="modal-input" value="3" min="1" max="20">
+            <label for="table-cols">Columns:</label>
+            <input type="number" id="table-cols" class="modal-input" value="3" min="1" max="10">
+            <div class="modal-actions">
+                <button class="modal-btn modal-btn-primary" onclick="confirmInsertTable()">Insert</button>
+                <button class="modal-btn" onclick="closeModal()">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Find & Replace Bar -->
+    <div class="find-bar" id="find-bar">
+        <div class="find-row">
+            <label>Find:</label>
+            <input type="text" id="find-input" class="find-input" placeholder="Search..." oninput="findInDocument()">
+            <button class="find-btn" onclick="findPrev()" title="Previous">&uarr;</button>
+            <button class="find-btn" onclick="findNext()" title="Next">&darr;</button>
+            <span id="find-count" class="find-count"></span>
+        </div>
+        <div class="find-row">
+            <label>Replace:</label>
+            <input type="text" id="replace-input" class="find-input" placeholder="Replace with...">
+            <button class="find-btn" onclick="replaceOne()">Replace</button>
+            <button class="find-btn" onclick="replaceAll()">All</button>
+            <button class="find-close" onclick="closeFindBar()">&times;</button>
+        </div>
+    </div>
+
     <script src="script.js"></script>
 </body>
 </html>

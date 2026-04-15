@@ -512,6 +512,27 @@ def _detect_face_center_x(video_path: str, start: float, end: float,
         cap.release()
 
 
+def _get_video_dimensions(video_path: str) -> tuple[int | None, int | None]:
+    """Return (width, height) of the source video in pixels, or (None, None)
+    if OpenCV isn't available or the file can't be opened."""
+    try:
+        import cv2
+    except ImportError:
+        return None, None
+
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        return None, None
+    try:
+        w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        if w <= 0 or h <= 0:
+            return None, None
+        return w, h
+    finally:
+        cap.release()
+
+
 # ---------------------------------------------------------------------------
 # Clip export
 # ---------------------------------------------------------------------------
@@ -555,28 +576,39 @@ def export_clip(video_path: str, segment: Segment,
     ]
 
     if vertical:
-        # Width of crop window in source pixels = min(iw, ih*9/16).
-        # Using min() handles both landscape sources (crop off sides) and
-        # already-portrait sources (use full width, scale down).
-        crop_w = "min(iw,ih*9/16)"
+        # Compute the crop rectangle in Python (using integer pixel values)
+        # rather than as an ffmpeg expression. ffmpeg's filtergraph parser
+        # treats commas as filter separators, so expressions like
+        # min(iw,ih*9/16) inside a filter argument are ambiguous and
+        # routinely break on the command line. Integer literals avoid
+        # that whole class of bug.
+        src_w, src_h = _get_video_dimensions(video_path)
 
-        center_x_expr = "iw/2"  # fallback: center of frame
-        if smart_crop:
-            face_cx = _detect_face_center_x(
-                video_path, segment.start, segment.end,
+        if src_w and src_h:
+            # 9:16 crop window width in source pixels. If the source is
+            # already taller-than-9:16, take the full width.
+            crop_w = min(src_w, int(round(src_h * 9 / 16)))
+
+            center_x = src_w // 2  # fallback: frame center
+            if smart_crop:
+                face_cx = _detect_face_center_x(
+                    video_path, segment.start, segment.end,
+                )
+                if face_cx is not None:
+                    center_x = int(round(face_cx))
+
+            # Clamp so the crop rectangle stays fully inside the frame.
+            crop_x = max(0, min(src_w - crop_w, center_x - crop_w // 2))
+
+            vf = (
+                f"crop={crop_w}:{src_h}:{crop_x}:0,"
+                f"scale=1080:1920:force_original_aspect_ratio=decrease,"
+                f"pad=1080:1920:(ow-iw)/2:(oh-ih)/2"
             )
-            if face_cx is not None:
-                center_x_expr = f"{face_cx:.1f}"
-
-        # Clamp the crop rectangle so it stays inside the frame.
-        crop_x_expr = f"max(0,min(iw-{crop_w},{center_x_expr}-({crop_w})/2))"
-
-        vf = (
-            f"crop={crop_w}:ih:{crop_x_expr}:0,"
-            f"scale=1080:1920:force_original_aspect_ratio=decrease,"
-            f"pad=1080:1920:(ow-iw)/2:(oh-ih)/2"
-        )
-        cmd += ["-vf", vf]
+            cmd += ["-vf", vf]
+        # If we couldn't read dimensions, skip the vertical filter and
+        # fall through to a plain cut — better to produce a landscape
+        # clip than to fail the whole export.
 
     cmd += [
         "-c:v", "libx264", "-preset", "fast", "-crf", "20",
@@ -586,7 +618,16 @@ def export_clip(video_path: str, segment: Segment,
         out_path,
     ]
 
-    subprocess.run(cmd, capture_output=True, check=True)
+    try:
+        subprocess.run(cmd, capture_output=True, check=True, text=True)
+    except subprocess.CalledProcessError as e:
+        # Surface the actual ffmpeg error instead of a bare CalledProcessError.
+        stderr_tail = (e.stderr or "").strip().splitlines()[-10:]
+        raise RuntimeError(
+            f"ffmpeg failed (exit {e.returncode}) while cutting clip {index + 1}.\n"
+            f"command: {' '.join(e.cmd)}\n"
+            f"stderr (last 10 lines):\n  " + "\n  ".join(stderr_tail)
+        ) from None
     return out_path
 
 

@@ -1,0 +1,11 @@
+# NOTE: numpy is pinned <2 because the current torch wheel (2.2.x) was
+# compiled against NumPy 1.x and crashes on NumPy 2.x. Remove the cap once
+# you upgrade torch to >= 2.3.
+openai-whisper>=20231117
+numpy>=1.24.0,<2
+scipy>=1.11.0
+librosa>=0.10.0
+soundfile>=0.12.0
+streamlit>=1.30.0
+# For the smart face-tracking 9:16 crop. Ships its own Haar cascade data.
+opencv-python-headless>=4.8,<5

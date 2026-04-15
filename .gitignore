@@ -1,0 +1,22 @@
+# Working files -- downloaded videos, extracted clips, cached analysis.
+# Everything in work/ is derived; only source code is tracked.
+work/
+*.mp4
+*.mkv
+*.webm
+*.m4a
+*.wav
+*.mp3
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.env
+
+# Editors
+.vscode/
+.idea/
+.DS_Store

@@ -1,8 +1,12 @@
 # NOTE: numpy is pinned <2 because the current torch wheel (2.2.x) was
 # compiled against NumPy 1.x and crashes on NumPy 2.x. Remove the cap once
 # you upgrade torch to >= 2.3.
+# pandas is pinned <2.2 because pandas 2.2+ wheels are built against
+# NumPy 2.x headers and fail with "numpy.dtype size changed" against
+# NumPy 1.x. Drop this cap when you lift the numpy cap.
 openai-whisper>=20231117
 numpy>=1.24.0,<2
+pandas>=1.4,<2.2
 scipy>=1.11.0
 librosa>=0.10.0
 soundfile>=0.12.0

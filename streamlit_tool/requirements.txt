@@ -1,0 +1,18 @@
+# Three packages are capped below their latest versions because torch 2.2.x
+# (what openai-whisper pulls in on Python 3.9) needs numpy<2, and numpy 2.x
+# cascaded incompatibilities to everything else:
+#   - torch 2.2.x wheels crash on numpy 2.x  -> numpy<2
+#   - pandas 2.2+ wheels built against numpy 2.x headers, fail "numpy.dtype
+#     size changed" against numpy 1.x          -> pandas<2.2
+#   - opencv-python{,-headless} 4.11+ wheels declare numpy>=2 as required
+#                                              -> opencv-python-headless<4.11
+# Drop all three caps together once you can move torch to >= 2.3.
+openai-whisper>=20231117
+numpy>=1.24.0,<2
+pandas>=1.4,<2.2
+scipy>=1.11.0
+librosa>=0.10.0
+soundfile>=0.12.0
+streamlit>=1.30.0
+# For the smart face-tracking 9:16 crop. Ships its own Haar cascade data.
+opencv-python-headless>=4.8,<4.11

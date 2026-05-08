@@ -1,0 +1,8 @@
+# Redirects to the Streamlit tool's pinned requirements.
+# Run: pip install -r requirements.txt
+# Or:  pip install -r streamlit_tool/requirements.txt
+#
+# The pins (numpy<2, pandas<2.2, opencv<4.11) exist because torch 2.2.x
+# (pulled in by openai-whisper on Python 3.9) needs numpy 1.x, and
+# newer pandas/opencv wheels are compiled against numpy 2.x.
+-r streamlit_tool/requirements.txt

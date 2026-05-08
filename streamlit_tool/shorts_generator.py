@@ -671,12 +671,46 @@ def auto_fontsize(lines: list[str]) -> int:
     return 74
 
 
-def _escape_drawtext(s: str) -> str:
-    """Escape characters that are special inside ffmpeg's drawtext filter."""
-    for ch, repl in [("\\", "\\\\\\\\"), (":", "\\\\:"),
-                     ("'", "'\\\\\\''"), ("%", "\\\\%")]:
-        s = s.replace(ch, repl)
-    return s
+def _render_caption_png(
+    lines: list[str],
+    width: int,
+    height: int,
+    fontsize: int,
+    y_center: int,
+    border: int,
+    font_path: str,
+) -> str:
+    """Render caption lines onto a transparent PNG using Pillow.
+
+    Returns the path to a temp PNG file. Caller is responsible for cleanup.
+    """
+    from PIL import Image, ImageDraw, ImageFont
+
+    img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+
+    try:
+        pil_font = ImageFont.truetype(font_path, fontsize) if font_path else ImageFont.load_default()
+    except (OSError, IOError):
+        pil_font = ImageFont.load_default()
+
+    line_h = int(fontsize * 1.18)
+    total_h = len(lines) * line_h
+    y_start = y_center - total_h // 2
+
+    for i, line in enumerate(lines):
+        y = y_start + i * line_h
+        bbox = draw.textbbox((0, 0), line, font=pil_font)
+        text_w = bbox[2] - bbox[0]
+        x = (width - text_w) // 2
+        draw.text(
+            (x, y), line, font=pil_font,
+            fill=(255, 255, 255, 255),
+            stroke_width=border,
+            stroke_fill=(0, 0, 0, 255),
+        )
+
+    return img
 
 
 def _detect_face_y_on_clip(
@@ -813,14 +847,16 @@ def caption_clip(
 ) -> str:
     """Burn multi-line caption onto a clip.
 
-    Each entry in `lines` becomes a separate drawtext filter, stacked
-    vertically and centered horizontally. Font size auto-selects from
-    line length when fontsize=0. Font path auto-detects when font=''.
+    Renders text with Pillow onto a transparent PNG, then composites it
+    onto the video using ffmpeg's ``overlay`` filter. This avoids the
+    ``drawtext`` filter entirely — drawtext requires ffmpeg to be compiled
+    with ``--enable-libfreetype``, which many Homebrew builds lack.
+    The ``overlay`` filter is always available.
 
     Caption position is fully automatic when y_center=0 (default):
       - Detects faces in the clip
-      - Places caption opposite the face (face top → caption bottom,
-        face bottom → caption top)
+      - Places caption opposite the face (face top -> caption bottom,
+        face bottom -> caption top)
       - If the face moves into the caption zone mid-clip, the caption
         flips to the other third for that time range
 
@@ -840,61 +876,83 @@ def caption_clip(
     if fontsize <= 0:
         fontsize = auto_fontsize(lines)
 
-    line_h = int(fontsize * 1.18)
-    total_h = len(lines) * line_h
-
-    font_safe = font.replace("\\", "\\\\").replace(":", "\\:")
+    # Get video dimensions for the PNG overlay.
+    src_w, src_h = _get_video_dimensions(input_path)
+    if not src_w or not src_h:
+        src_w, src_h = 1080, 1920
 
     # Determine caption position segments.
     if face_aware:
         face_samples, clip_dur = _detect_face_y_on_clip(input_path)
         if clip_dur <= 0:
-            clip_dur = 300.0  # safe fallback
+            clip_dur = 300.0
         segments = _compute_caption_segments(face_samples, clip_dur, y_center)
     else:
-        segments = [(0.0, 999999.0, y_center)]
+        segments = [(0.0, 999999.0, y_center if y_center else 1500)]
 
-    single_segment = len(segments) == 1
-
-    clauses: list[str] = []
+    # Collect unique Y positions and which time ranges use each.
+    pos_times: dict[int, list[tuple[float, float]]] = {}
     for seg_start, seg_end, seg_y in segments:
-        y_start = seg_y - total_h // 2
-        for i, line in enumerate(lines):
-            y = y_start + i * line_h
-            enable = ""
-            if not single_segment:
-                enable = f":enable='between(t,{seg_start:.2f},{seg_end:.2f})'"
-            clauses.append(
-                f"drawtext=fontfile='{font_safe}'"
-                f":text='{_escape_drawtext(line)}'"
-                f":fontsize={fontsize}"
-                f":fontcolor=white"
-                f":borderw={border}:bordercolor=black"
-                f":x=(w-text_w)/2:y={y}"
-                f"{enable}"
-            )
+        pos_times.setdefault(seg_y, []).append((seg_start, seg_end))
 
-    vf = ",".join(clauses)
-
-    cmd = [
-        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-        "-i", str(input_path),
-        "-vf", vf,
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
-        "-pix_fmt", "yuv420p",
-        "-c:a", "copy",
-        "-movflags", "+faststart",
-        str(output_path),
-    ]
-
+    # Render one transparent PNG per unique Y position.
+    tmp_dir = tempfile.mkdtemp(prefix="caption_")
     try:
-        subprocess.run(cmd, capture_output=True, check=True, text=True)
-    except subprocess.CalledProcessError as e:
-        stderr_tail = (e.stderr or "").strip().splitlines()[-10:]
-        raise RuntimeError(
-            f"ffmpeg caption burn failed (exit {e.returncode}).\n"
-            f"stderr:\n  " + "\n  ".join(stderr_tail)
-        ) from None
+        positions = sorted(pos_times.keys())
+        png_paths: list[str] = []
+        for y_pos in positions:
+            img = _render_caption_png(
+                lines, src_w, src_h, fontsize, y_pos, border, font,
+            )
+            png_path = os.path.join(tmp_dir, f"caption_{y_pos}.png")
+            img.save(png_path)
+            png_paths.append(png_path)
+
+        # Build ffmpeg command using overlay (always available, no freetype).
+        inputs: list[str] = ["-i", str(input_path)]
+        for p in png_paths:
+            inputs += ["-i", p]
+
+        if len(positions) == 1:
+            filter_complex = "[0][1]overlay=0:0"
+        else:
+            # Chain overlays: [0][1]overlay=enable=EXPR1[t0];[t0][2]overlay=enable=EXPR2
+            chains: list[str] = []
+            for i, y_pos in enumerate(positions):
+                times = pos_times[y_pos]
+                enable_parts = [f"between(t,{s:.2f},{e:.2f})" for s, e in times]
+                enable_expr = "+".join(enable_parts)
+                src_label = "0" if i == 0 else f"t{i - 1}"
+                inp_idx = i + 1
+                out_label = f"[t{i}]" if i < len(positions) - 1 else ""
+                chains.append(
+                    f"[{src_label}][{inp_idx}]overlay=0:0"
+                    f":enable='{enable_expr}'{out_label}"
+                )
+            filter_complex = ";".join(chains)
+
+        cmd = [
+            "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+        ] + inputs + [
+            "-filter_complex", filter_complex,
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
+            "-pix_fmt", "yuv420p",
+            "-c:a", "copy",
+            "-movflags", "+faststart",
+            str(output_path),
+        ]
+
+        try:
+            subprocess.run(cmd, capture_output=True, check=True, text=True)
+        except subprocess.CalledProcessError as e:
+            stderr_tail = (e.stderr or "").strip().splitlines()[-10:]
+            raise RuntimeError(
+                f"ffmpeg caption burn failed (exit {e.returncode}).\n"
+                f"stderr:\n  " + "\n  ".join(stderr_tail)
+            ) from None
+    finally:
+        _shutil.rmtree(tmp_dir, ignore_errors=True)
+
     return output_path
 
 

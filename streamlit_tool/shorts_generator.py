@@ -632,6 +632,251 @@ def export_clip(video_path: str, segment: Segment,
 
 
 # ---------------------------------------------------------------------------
+# Caption burn
+# ---------------------------------------------------------------------------
+
+_FONT_CANDIDATES = [
+    # User-installed (macOS)
+    os.path.expanduser("~/Library/Fonts/Poppins-Bold.ttf"),
+    "/Library/Fonts/Poppins-Bold.ttf",
+    # macOS system
+    "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+    "/Library/Fonts/Arial Bold.ttf",
+    "/System/Library/Fonts/Supplemental/Futura Bold.ttf",
+    # Linux
+    "/usr/share/fonts/truetype/google-fonts/Poppins-Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+    # Windows
+    "C:/Windows/Fonts/arialbd.ttf",
+]
+
+
+def find_caption_font() -> str:
+    """Find a bold sans-serif font suitable for captions. Returns an empty
+    string if nothing is found (caller should warn or skip captions)."""
+    for f in _FONT_CANDIDATES:
+        if os.path.isfile(f):
+            return f
+    return ""
+
+
+def auto_fontsize(lines: list[str]) -> int:
+    """Pick a fontsize for a 1080-wide canvas based on the longest line."""
+    max_chars = max((len(line) for line in lines), default=10)
+    if max_chars <= 16:
+        return 92
+    elif max_chars <= 19:
+        return 78
+    return 74
+
+
+def _escape_drawtext(s: str) -> str:
+    """Escape characters that are special inside ffmpeg's drawtext filter."""
+    for ch, repl in [("\\", "\\\\\\\\"), (":", "\\\\:"),
+                     ("'", "'\\\\\\''"), ("%", "\\\\%")]:
+        s = s.replace(ch, repl)
+    return s
+
+
+def _detect_face_y_on_clip(
+    clip_path: str, sample_interval: float = 2.0,
+) -> tuple[list[tuple[float, float | None]], float]:
+    """Sample frames of an already-cut clip, detect the largest face's
+    Y center per sample.
+
+    Returns (samples, duration) where samples is
+    [(offset_sec, face_center_y_or_None), ...] with Y in clip pixel coords.
+    """
+    try:
+        import cv2
+    except ImportError:
+        return [], 0.0
+
+    cap = cv2.VideoCapture(clip_path)
+    if not cap.isOpened():
+        return [], 0.0
+
+    try:
+        cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+        face_cascade = cv2.CascadeClassifier(cascade_path)
+        if face_cascade.empty():
+            return [], 0.0
+
+        fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        duration = total_frames / fps if fps > 0 else 0
+
+        samples: list[tuple[float, float | None]] = []
+        t = 0.0
+        while t < duration:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, int(t * fps))
+            ok, frame = cap.read()
+            if not ok:
+                break
+            h, w = frame.shape[:2]
+            scale = 480.0 / max(h, w) if max(h, w) > 480 else 1.0
+            small = cv2.resize(frame, None, fx=scale, fy=scale) if scale != 1.0 else frame
+            gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+            faces = face_cascade.detectMultiScale(
+                gray, scaleFactor=1.1, minNeighbors=4, minSize=(30, 30),
+            )
+            if len(faces) > 0:
+                fx, fy, fw, fh = max(faces, key=lambda f: f[2] * f[3])
+                samples.append((t, (fy + fh / 2.0) / scale))
+            else:
+                samples.append((t, None))
+            t += sample_interval
+        return samples, duration
+    finally:
+        cap.release()
+
+
+def _compute_caption_segments(
+    face_samples: list[tuple[float, float | None]],
+    clip_duration: float,
+    default_y_center: int,
+) -> list[tuple[float, float, int]]:
+    """Given per-second face Y samples, return time segments with the
+    y_center the caption should use. Flips to the opposite third when
+    the face enters the caption zone.
+
+    Returns [(start, end, y_center), ...].
+    """
+    LOWER_Y = 1500
+    UPPER_Y = 560
+    CAPTION_HALF_H = 150  # generous band around y_center
+
+    if not face_samples:
+        return [(0.0, clip_duration, default_y_center)]
+
+    def in_zone(face_y: float, y_center: int) -> bool:
+        return abs(face_y - y_center) < CAPTION_HALF_H
+
+    current_y = default_y_center
+    segments: list[tuple[float, float, int]] = []
+    seg_start = 0.0
+
+    for t, face_y in face_samples:
+        if face_y is None:
+            continue
+        if in_zone(face_y, current_y):
+            alt_y = UPPER_Y if current_y == LOWER_Y else LOWER_Y
+            if not in_zone(face_y, alt_y):
+                if t > seg_start:
+                    segments.append((seg_start, t, current_y))
+                current_y = alt_y
+                seg_start = t
+
+    segments.append((seg_start, clip_duration, current_y))
+
+    # Merge tiny segments (<2s) to avoid flicker.
+    merged: list[tuple[float, float, int]] = []
+    for seg in segments:
+        if merged and seg[2] == merged[-1][2]:
+            merged[-1] = (merged[-1][0], seg[1], seg[2])
+        elif seg[1] - seg[0] < 2.0 and merged:
+            merged[-1] = (merged[-1][0], seg[1], merged[-1][2])
+        else:
+            merged.append(seg)
+
+    return merged if merged else [(0.0, clip_duration, default_y_center)]
+
+
+def caption_clip(
+    input_path: str,
+    output_path: str,
+    lines: list[str],
+    fontsize: int = 0,
+    y_center: int = 1500,
+    border: int = 8,
+    font: str = "",
+    face_aware: bool = True,
+) -> str:
+    """Burn multi-line caption onto a clip.
+
+    Each entry in `lines` becomes a separate drawtext filter, stacked
+    vertically and centered horizontally. Font size auto-selects from
+    line length when fontsize=0. Font path auto-detects when font=''.
+
+    When face_aware=True, samples the clip for faces. If a face enters
+    the caption zone at any point, the caption flips to the opposite
+    third for that portion of the clip. Uses ffmpeg's drawtext `enable`
+    expression so the switch is frame-accurate.
+
+    Returns output_path on success.
+    """
+    import shutil as _shutil
+
+    lines = [line.strip() for line in lines if line.strip()]
+    if not lines:
+        _shutil.copy2(input_path, output_path)
+        return output_path
+
+    if not font:
+        font = find_caption_font()
+    if fontsize <= 0:
+        fontsize = auto_fontsize(lines)
+
+    line_h = int(fontsize * 1.18)
+    total_h = len(lines) * line_h
+
+    font_safe = font.replace("\\", "\\\\").replace(":", "\\:")
+
+    # Determine caption position segments.
+    if face_aware:
+        face_samples, clip_dur = _detect_face_y_on_clip(input_path)
+        if clip_dur <= 0:
+            clip_dur = 300.0  # safe fallback
+        segments = _compute_caption_segments(face_samples, clip_dur, y_center)
+    else:
+        segments = [(0.0, 999999.0, y_center)]
+
+    single_segment = len(segments) == 1
+
+    clauses: list[str] = []
+    for seg_start, seg_end, seg_y in segments:
+        y_start = seg_y - total_h // 2
+        for i, line in enumerate(lines):
+            y = y_start + i * line_h
+            enable = ""
+            if not single_segment:
+                enable = f":enable='between(t,{seg_start:.2f},{seg_end:.2f})'"
+            clauses.append(
+                f"drawtext=fontfile='{font_safe}'"
+                f":text='{_escape_drawtext(line)}'"
+                f":fontsize={fontsize}"
+                f":fontcolor=white"
+                f":borderw={border}:bordercolor=black"
+                f":x=(w-text_w)/2:y={y}"
+                f"{enable}"
+            )
+
+    vf = ",".join(clauses)
+
+    cmd = [
+        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+        "-i", str(input_path),
+        "-vf", vf,
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "copy",
+        "-movflags", "+faststart",
+        str(output_path),
+    ]
+
+    try:
+        subprocess.run(cmd, capture_output=True, check=True, text=True)
+    except subprocess.CalledProcessError as e:
+        stderr_tail = (e.stderr or "").strip().splitlines()[-10:]
+        raise RuntimeError(
+            f"ffmpeg caption burn failed (exit {e.returncode}).\n"
+            f"stderr:\n  " + "\n  ".join(stderr_tail)
+        ) from None
+    return output_path
+
+
+# ---------------------------------------------------------------------------
 # High-level pipeline (used by both CLI and GUI)
 # ---------------------------------------------------------------------------
 

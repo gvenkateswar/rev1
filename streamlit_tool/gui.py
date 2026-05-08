@@ -17,7 +17,10 @@ import streamlit as st
 
 from shorts_generator import (
     analyze_video,
+    auto_fontsize,
+    caption_clip,
     export_clip,
+    find_caption_font,
 )
 
 # ---------------------------------------------------------------------------
@@ -200,6 +203,53 @@ with st.sidebar:
             "no face is found. Uses OpenCV's built-in Haar cascade."
         ),
     )
+
+    st.divider()
+    st.subheader("Captions")
+    enable_captions = st.checkbox(
+        "Burn captions into clips",
+        value=False,
+        help=(
+            "Add bold white text with a black stroke to each clip. "
+            "Type the caption per-clip in the Export section below. "
+            "Style: bold sans-serif, centered, lower third."
+        ),
+    )
+    if enable_captions:
+        caption_position = st.radio(
+            "Caption position",
+            options=["Lower third", "Upper third"],
+            index=0,
+            help=(
+                "Lower third (y=1500) works when the subject's face is "
+                "in the upper half. Flip to upper third (y=560) if the "
+                "subject is in the lower half."
+            ),
+            horizontal=True,
+        )
+        caption_y_center = 1500 if caption_position == "Lower third" else 560
+
+        caption_fontsize_mode = st.radio(
+            "Font size",
+            options=["Auto (by line length)", "Manual"],
+            index=0,
+            horizontal=True,
+        )
+        if caption_fontsize_mode == "Manual":
+            caption_fontsize = st.slider(
+                "Font size (px)", min_value=48, max_value=120, value=78,
+            )
+        else:
+            caption_fontsize = 0  # 0 = auto in caption_clip()
+
+        _font = find_caption_font()
+        if _font:
+            st.caption(f"Font: `{os.path.basename(_font)}`")
+        else:
+            st.warning(
+                "No bold font found. Install Poppins-Bold or Arial Bold "
+                "and restart. Captions will be skipped if no font is available."
+            )
 
     st.divider()
     if instrumental:
@@ -421,7 +471,13 @@ if "results" in st.session_state:
     crop_note = ""
     if vertical:
         crop_note = " with face-tracking crop" if smart_crop else " with center crop"
-    st.caption(f"Export format: **{fmt_note}{crop_note}**. Change in the sidebar.")
+    caption_note = ""
+    if enable_captions:
+        caption_note = " + captions"
+    st.caption(
+        f"Export format: **{fmt_note}{crop_note}{caption_note}**. "
+        f"Change in the sidebar."
+    )
 
     export_col1, export_col2 = st.columns(2)
 
@@ -446,24 +502,62 @@ if "results" in st.session_state:
             disabled=len(selected_indices) == 0,
         )
 
+    # Per-clip caption inputs (shown when captions are enabled).
+    clip_captions: dict[int, str] = {}
+    if enable_captions and selected_indices:
+        st.markdown("**Captions** — type the text for each clip. "
+                    "Use separate lines for multi-line captions.")
+        for idx in selected_indices:
+            seg = top_segments[idx]
+            clip_captions[idx] = st.text_area(
+                f"Clip #{idx+1} ({fmt_time(seg.start)}–{fmt_time(seg.end)})",
+                value="",
+                height=80,
+                key=f"caption_{idx}",
+                placeholder="e.g.\nOLDER THAN\nTHE BLUES",
+            )
+
     if export_button and selected_indices:
         export_dir = tempfile.mkdtemp(prefix="shorts_export_")
         export_progress = st.progress(0)
         export_status = st.empty()
         exported_paths = []
+        total_steps = len(selected_indices)
 
         for j, idx in enumerate(selected_indices):
             seg = top_segments[idx]
+
+            # Step 1: cut + crop
             export_status.markdown(
                 f"Cutting clip **#{idx+1}** ({fmt_time(seg.start)}–{fmt_time(seg.end)}) ..."
             )
-            out = export_clip(
+            cut_path = export_clip(
                 result_video_path, seg, export_dir, idx,
                 vertical=vertical,
                 smart_crop=smart_crop,
             )
-            exported_paths.append(out)
-            export_progress.progress((j + 1) / len(selected_indices))
+
+            # Step 2: caption burn (if text provided)
+            caption_text = clip_captions.get(idx, "").strip()
+            if enable_captions and caption_text:
+                export_status.markdown(
+                    f"Burning caption onto clip **#{idx+1}** ..."
+                )
+                caption_lines = [l for l in caption_text.splitlines() if l.strip()]
+                captioned_path = cut_path.replace(".mp4", "_captioned.mp4")
+                caption_clip(
+                    input_path=cut_path,
+                    output_path=captioned_path,
+                    lines=caption_lines,
+                    fontsize=caption_fontsize if enable_captions else 0,
+                    y_center=caption_y_center if enable_captions else 1500,
+                    face_aware=True,
+                )
+                exported_paths.append(captioned_path)
+            else:
+                exported_paths.append(cut_path)
+
+            export_progress.progress((j + 1) / total_steps)
 
         export_progress.progress(1.0)
         export_status.markdown("**Export complete.**")

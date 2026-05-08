@@ -212,23 +212,15 @@ with st.sidebar:
         help=(
             "Add bold white text with a black stroke to each clip. "
             "Type the caption per-clip in the Export section below. "
-            "Style: bold sans-serif, centered, lower third."
+            "Position is automatic: detects where the face is and "
+            "places the caption on the opposite third. If the face "
+            "moves mid-clip, the caption repositions to stay clear."
         ),
     )
+    # y_center=0 means fully automatic face-aware positioning.
+    caption_y_center = 0
+    caption_fontsize = 0
     if enable_captions:
-        caption_position = st.radio(
-            "Caption position",
-            options=["Lower third", "Upper third"],
-            index=0,
-            help=(
-                "Lower third (y=1500) works when the subject's face is "
-                "in the upper half. Flip to upper third (y=560) if the "
-                "subject is in the lower half."
-            ),
-            horizontal=True,
-        )
-        caption_y_center = 1500 if caption_position == "Lower third" else 560
-
         caption_fontsize_mode = st.radio(
             "Font size",
             options=["Auto (by line length)", "Manual"],
@@ -239,8 +231,6 @@ with st.sidebar:
             caption_fontsize = st.slider(
                 "Font size (px)", min_value=48, max_value=120, value=78,
             )
-        else:
-            caption_fontsize = 0  # 0 = auto in caption_clip()
 
         _font = find_caption_font()
         if _font:
@@ -250,6 +240,17 @@ with st.sidebar:
                 "No bold font found. Install Poppins-Bold or Arial Bold "
                 "and restart. Captions will be skipped if no font is available."
             )
+
+        with st.expander("Override position (advanced)"):
+            caption_override = st.radio(
+                "Caption position",
+                options=["Auto (face-aware)", "Force lower third", "Force upper third"],
+                index=0,
+            )
+            if caption_override == "Force lower third":
+                caption_y_center = 1500
+            elif caption_override == "Force upper third":
+                caption_y_center = 560
 
     st.divider()
     if instrumental:

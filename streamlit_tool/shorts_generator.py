@@ -735,17 +735,35 @@ def _detect_face_y_on_clip(
 def _compute_caption_segments(
     face_samples: list[tuple[float, float | None]],
     clip_duration: float,
-    default_y_center: int,
+    default_y_center: int = 0,
 ) -> list[tuple[float, float, int]]:
     """Given per-second face Y samples, return time segments with the
-    y_center the caption should use. Flips to the opposite third when
-    the face enters the caption zone.
+    y_center the caption should use.
+
+    Starting position is auto-detected from the first face sample:
+      - Face in upper half of 1920-tall frame → caption at lower third (1500)
+      - Face in lower half → caption at upper third (560)
+      - No face found → use default_y_center, or lower third if 0
+
+    If the face moves into the caption zone mid-clip, the caption flips
+    to the opposite third for that portion.
 
     Returns [(start, end, y_center), ...].
     """
     LOWER_Y = 1500
     UPPER_Y = 560
-    CAPTION_HALF_H = 150  # generous band around y_center
+    FRAME_MID = 960  # midpoint of 1920
+    CAPTION_HALF_H = 150
+
+    # Auto-detect starting position from early face samples.
+    if default_y_center == 0:
+        first_face_y = next(
+            (y for _, y in face_samples if y is not None), None,
+        )
+        if first_face_y is not None:
+            default_y_center = LOWER_Y if first_face_y < FRAME_MID else UPPER_Y
+        else:
+            default_y_center = LOWER_Y
 
     if not face_samples:
         return [(0.0, clip_duration, default_y_center)]
@@ -788,7 +806,7 @@ def caption_clip(
     output_path: str,
     lines: list[str],
     fontsize: int = 0,
-    y_center: int = 1500,
+    y_center: int = 0,
     border: int = 8,
     font: str = "",
     face_aware: bool = True,
@@ -799,10 +817,14 @@ def caption_clip(
     vertically and centered horizontally. Font size auto-selects from
     line length when fontsize=0. Font path auto-detects when font=''.
 
-    When face_aware=True, samples the clip for faces. If a face enters
-    the caption zone at any point, the caption flips to the opposite
-    third for that portion of the clip. Uses ffmpeg's drawtext `enable`
-    expression so the switch is frame-accurate.
+    Caption position is fully automatic when y_center=0 (default):
+      - Detects faces in the clip
+      - Places caption opposite the face (face top → caption bottom,
+        face bottom → caption top)
+      - If the face moves into the caption zone mid-clip, the caption
+        flips to the other third for that time range
+
+    Set y_center to 1500 (lower) or 560 (upper) to override auto-detect.
 
     Returns output_path on success.
     """

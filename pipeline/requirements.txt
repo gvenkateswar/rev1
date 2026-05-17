@@ -1,0 +1,6 @@
+# Historical video asset pipeline -- dependencies.
+#
+# Stage 1 (shotlist generator) needs the Anthropic SDK with structured-output
+# support (client.messages.parse / output_format). pydantic ships as a
+# dependency of the SDK and is used for the shotlist schema.
+anthropic>=0.69.0

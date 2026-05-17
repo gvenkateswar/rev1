@@ -1,0 +1,6 @@
+{
+  "anthropic_api_key": "sk-ant-...",
+  "rijksmuseum_api_key": "",
+  "smithsonian_api_key": "",
+  "shotlist_model": "claude-sonnet-4-6"
+}

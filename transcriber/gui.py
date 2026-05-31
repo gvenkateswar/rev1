@@ -1,6 +1,7 @@
 """Streamlit GUI for the transcriber.  Run locally with:
 
-    streamlit run transcriber/gui.py
+    streamlit run transcriber/gui.py     # from the repo root
+    streamlit run gui.py                 # from inside the transcriber/ folder
 
 It opens in your browser but runs entirely on your machine — nothing is
 uploaded anywhere.
@@ -8,6 +9,13 @@ uploaded anywhere.
 from __future__ import annotations
 
 import os
+
+# macOS aborts with "OMP: Error #15" when PyTorch and CTranslate2/onnxruntime
+# each load their own OpenMP runtime into one process. Allow the duplicate so
+# the app doesn't crash (which Streamlit reports as a "Connection error"). Must
+# be set before torch/ctranslate2 import, so it lives at the very top here.
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+
 import sys
 import tempfile
 

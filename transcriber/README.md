@@ -34,8 +34,9 @@ then caches them.
 ## Use it — GUI (recommended)
 
 ```sh
-# from the repo root
-streamlit run transcriber/gui.py
+streamlit run transcriber/gui.py   # from the repo root
+# or, from inside the transcriber/ folder:
+streamlit run gui.py
 ```
 
 Upload a file (or paste a local path), pick your settings in the sidebar, and
@@ -157,6 +158,20 @@ Example timing line (CPU, `base`, ~2 min clip):
 ```
 Timing: extract=0.4s transcribe=18.2s diarize=6.1s emotion=3.4s  (total 28.1s)
 ```
+
+## Troubleshooting
+
+- **macOS `OMP: Error #15` / app aborts / Streamlit "Connection error".**
+  PyTorch and CTranslate2/onnxruntime each load their own OpenMP runtime, which
+  macOS refuses by default. The app sets `KMP_DUPLICATE_LIB_OK=TRUE`
+  automatically to allow it; if you launch the modules in some other way and
+  still hit it, export that variable yourself before running:
+  ```sh
+  export KMP_DUPLICATE_LIB_OK=TRUE
+  ```
+- **`File does not exist: transcriber/gui.py`.** You're already inside the
+  `transcriber/` folder — run `streamlit run gui.py` instead (or `cd ..` first).
+- **ffmpeg not found.** Install it: `brew install ffmpeg` (macOS).
 
 ## Library use
 

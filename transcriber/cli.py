@@ -29,6 +29,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--model", default="base",
                    help="Whisper model size: tiny/base/small/medium/large "
                         "(default: base).")
+    p.add_argument("--whisper-backend", default="openai",
+                   choices=["openai", "faster"],
+                   help="Transcription engine: 'openai' (PyTorch, most "
+                        "compatible) or 'faster' (CTranslate2, quicker but "
+                        "needs a modern CPU). Default: openai.")
     p.add_argument("--language", default=None,
                    help="Force a language (ISO code). Default: auto-detect.")
     p.add_argument("--diarization", default="cluster",
@@ -61,6 +66,7 @@ def main(argv: list[str] | None = None) -> int:
             args.input,
             whisper_model=args.model,
             language=args.language,
+            whisper_backend=args.whisper_backend,
             diarization_backend=args.diarization,
             num_speakers=args.speakers,
             hf_token=args.hf_token,

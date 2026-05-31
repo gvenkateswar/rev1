@@ -13,10 +13,12 @@ extract audio (ffmpeg) → Whisper transcription → speaker diarization
                        → align speakers to words → fuse audio+text emotion
 ```
 
-Built for speed: transcription uses **faster-whisper** (CTranslate2, ~4x faster
-than openai-whisper on CPU) with a **VAD silence filter**, the emotion stage
-runs **batched**, and models are **cached in-process** so every run after the
-first skips loading. See [Performance](#performance) to go faster still.
+Transcription runs on **openai-whisper** (PyTorch) by default — the most
+compatible engine, sharing one runtime with the emotion models. A faster
+**faster-whisper** engine is available opt-in (`--whisper-backend faster`) for
+machines with a modern CPU. The emotion stage runs **batched** and models are
+**cached in-process** so every run after the first skips loading. See
+[Performance](#performance) and [Troubleshooting](#troubleshooting).
 
 ## Install
 
@@ -64,7 +66,8 @@ Output (txt):
 
 | Flag | Meaning | Default |
 |------|---------|---------|
-| `--model` | Whisper size: tiny/base/small/medium/large-v3, or `distil-large-v3` | `base` |
+| `--model` | Whisper size: tiny/base/small/medium/large | `base` |
+| `--whisper-backend` | `openai` (compatible) or `faster` (quicker, modern CPU) | `openai` |
 | `--language` | Force a language (ISO code) | auto-detect |
 | `--diarization` | `cluster` (offline) or `pyannote` (best, needs token) | `cluster` |
 | `--speakers N` | Number of speakers if known | auto-detect |
@@ -134,9 +137,6 @@ predicted and which channel is driving the result:
 
 The pipeline is tuned for turnaround time:
 
-- **faster-whisper + VAD** — CTranslate2 runs Whisper ~4x faster than
-  openai-whisper on CPU (int8), and `vad_filter` skips silence so dead air
-  costs nothing.
 - **Batched emotion** — both emotion models score all segments in mini-batches
   (one dispatch per batch) instead of one segment at a time.
 - **Warm models** — loaded Whisper/emotion models are cached at module scope,
@@ -147,10 +147,13 @@ The pipeline is tuned for turnaround time:
 
 Going faster still:
 
+- **Faster engine:** `--whisper-backend faster` (after `pip install
+  faster-whisper`) runs Whisper ~4x faster on CPU via CTranslate2, with a
+  built-in VAD that skips silence. Needs a modern (AVX) CPU — see
+  [Troubleshooting](#troubleshooting) if it crashes.
 - **GPU:** with a CUDA card, transcription and the emotion models switch to
   float16 automatically — typically 10-30x on transcription.
-- **Model size:** `--model distil-large-v3` is near-large accuracy at a
-  fraction of the cost; `tiny`/`base` are fastest on CPU.
+- **Model size:** `tiny`/`base` are fastest on CPU; bump up for accuracy.
 - **Skip emotion:** `--no-emotion` drops the emotion stage entirely.
 
 Example timing line (CPU, `base`, ~2 min clip):
@@ -161,11 +164,15 @@ Timing: extract=0.4s transcribe=18.2s diarize=6.1s emotion=3.4s  (total 28.1s)
 
 ## Troubleshooting
 
+- **`segmentation fault` on launch (often after an `Intel MKL` warning).**
+  This is the `faster` engine: CTranslate2 4.x needs a modern (AVX) CPU and
+  loads a second OpenMP runtime that clashes with PyTorch on older Intel Macs.
+  The default `openai` engine avoids it entirely — just don't pass
+  `--whisper-backend faster` (and in the GUI, leave the engine on **openai**).
 - **macOS `OMP: Error #15` / app aborts / Streamlit "Connection error".**
-  PyTorch and CTranslate2/onnxruntime each load their own OpenMP runtime, which
-  macOS refuses by default. The app sets `KMP_DUPLICATE_LIB_OK=TRUE`
-  automatically to allow it; if you launch the modules in some other way and
-  still hit it, export that variable yourself before running:
+  Same root cause (two OpenMP runtimes), seen when the `faster` engine and
+  PyTorch coexist. The app sets `KMP_DUPLICATE_LIB_OK=TRUE` automatically; if
+  you still hit it, stick to the `openai` engine, or export it yourself:
   ```sh
   export KMP_DUPLICATE_LIB_OK=TRUE
   ```

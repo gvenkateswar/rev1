@@ -67,6 +67,12 @@ def main() -> None:
             "Whisper model", ["tiny", "base", "small", "medium", "large"],
             index=1, help="Bigger = more accurate but slower.",
         )
+        whisper_backend = st.radio(
+            "Transcription engine", ["openai", "faster"],
+            captions=["PyTorch — most compatible",
+                      "CTranslate2 — faster, needs a modern CPU"],
+            help="If the app crashes/segfaults on launch, use 'openai'.",
+        )
         language = st.text_input("Language (blank = auto-detect)", value="")
 
         st.subheader("Speakers")
@@ -109,8 +115,8 @@ def main() -> None:
         if src is None:
             st.error("Please upload a file or enter a valid local path.")
             return
-        _run(src, model, language, backend, hf_token, num_speakers,
-             detect_emotion, source, audio_weight)
+        _run(src, model, whisper_backend, language, backend, hf_token,
+             num_speakers, detect_emotion, source, audio_weight)
 
 
 def _resolve_source(uploaded, local_path: str) -> str | None:
@@ -125,8 +131,8 @@ def _resolve_source(uploaded, local_path: str) -> str | None:
     return None
 
 
-def _run(src, model, language, backend, hf_token, num_speakers,
-         detect_emotion, source, audio_weight) -> None:
+def _run(src, model, whisper_backend, language, backend, hf_token,
+         num_speakers, detect_emotion, source, audio_weight) -> None:
     bar = st.progress(0.0, text="Starting…")
 
     def progress(stage: str, frac: float) -> None:
@@ -137,6 +143,7 @@ def _run(src, model, language, backend, hf_token, num_speakers,
             src,
             whisper_model=model,
             language=language or None,
+            whisper_backend=whisper_backend,
             diarization_backend=backend,
             num_speakers=num_speakers,
             hf_token=hf_token or None,

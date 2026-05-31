@@ -86,6 +86,7 @@ def transcribe_file(
     *,
     whisper_model: str = "base",
     language: str | None = None,
+    whisper_backend: str = "openai",
     diarization_backend: str = "cluster",
     num_speakers: int | None = None,
     hf_token: str | None = None,
@@ -107,7 +108,8 @@ def transcribe_file(
         progress("Transcribing", 0.15)
         with _timed(timings, "transcribe"):
             raw_segments, lang = transcribe(
-                wav_path, model_name=whisper_model, language=language
+                wav_path, model_name=whisper_model, language=language,
+                backend=whisper_backend,
             )
 
         progress("Identifying speakers", 0.55)

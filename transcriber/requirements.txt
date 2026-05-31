@@ -1,13 +1,16 @@
 # Transcriber: speaker diarization + fused audio/text emotion.
 #
 # Core
-openai-whisper>=20231117      # transcription (pulls in torch)
+faster-whisper>=1.0.0         # transcription (CTranslate2; ~4x faster than
+                              # openai-whisper on CPU, built-in VAD, int8)
 soundfile>=0.12.0             # WAV I/O
 numpy>=1.24.0
 streamlit>=1.30.0             # GUI (optional if you only use the CLI)
 
-# Emotion (audio wav2vec2 + text RoBERTa via Hugging Face)
+# Emotion (audio wav2vec2 + text RoBERTa via Hugging Face). transformers needs
+# a backend; torch powers both pipelines (and CUDA autodetect for speed).
 transformers>=4.38.0
+torch>=2.1.0
 
 # Diarization backend: offline clustering (default, no token needed)
 resemblyzer>=0.1.1            # speaker embeddings
@@ -18,3 +21,7 @@ scikit-learn>=1.2.0           # clustering + silhouette auto speaker count
 # pyannote.audio>=3.1.0
 #
 # System dependency (not pip-installable): ffmpeg must be on PATH.
+#
+# Speed tips: with a CUDA GPU, faster-whisper and the emotion models switch to
+# float16 automatically. Use --model distil-large-v3 for the fastest accurate
+# transcription, or a smaller size (tiny/base) on CPU.

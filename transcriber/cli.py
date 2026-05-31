@@ -70,6 +70,14 @@ def main(argv: list[str] | None = None) -> int:
         sys.stderr.write(f"\nError: {exc}\n")
         return 1
 
+    if result.timings:
+        parts = " ".join(
+            f"{k}={v:.1f}s" for k, v in result.timings.items() if k != "total"
+        )
+        sys.stderr.write(
+            f"Timing: {parts}  (total {result.timings.get('total', 0):.1f}s)\n"
+        )
+
     text = render(result, args.format, show_emotion=not args.no_emotion)
     if args.output:
         with open(args.output, "w", encoding="utf-8") as fh:

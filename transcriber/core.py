@@ -10,6 +10,8 @@ comes out as separate speaker turns.
 from __future__ import annotations
 
 import os
+import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -52,18 +54,29 @@ class TranscriptResult:
     language: str
     speakers: list[str]
     source: str
+    timings: dict[str, float] = field(default_factory=dict)  # stage -> seconds
 
     def to_dict(self) -> dict:
         return {
             "source": self.source,
             "language": self.language,
             "speakers": self.speakers,
+            "timings": {k: round(v, 3) for k, v in self.timings.items()},
             "segments": [s.to_dict() for s in self.segments],
         }
 
 
 def _noop(_stage: str, _frac: float) -> None:
     pass
+
+
+@contextmanager
+def _timed(timings: dict[str, float], key: str):
+    t0 = time.perf_counter()
+    try:
+        yield
+    finally:
+        timings[key] = time.perf_counter() - t0
 
 
 def transcribe_file(
@@ -83,36 +96,43 @@ def transcribe_file(
     """Run the full pipeline on *src_path* and return a TranscriptResult."""
     progress = progress or _noop
     hf_token = hf_token or os.environ.get("HF_TOKEN")
+    timings: dict[str, float] = {}
 
     progress("Extracting audio", 0.05)
-    wav_path = _audio.extract_audio(src_path)
+    with _timed(timings, "extract"):
+        wav_path = _audio.extract_audio(src_path)
     try:
         progress("Transcribing", 0.15)
-        raw_segments, lang = transcribe(
-            wav_path, model_name=whisper_model, language=language
-        )
+        with _timed(timings, "transcribe"):
+            raw_segments, lang = transcribe(
+                wav_path, model_name=whisper_model, language=language
+            )
 
         progress("Identifying speakers", 0.55)
-        turns = diarize(
-            wav_path,
-            backend=diarization_backend,
-            num_speakers=num_speakers,
-            hf_token=hf_token,
-        )
+        with _timed(timings, "diarize"):
+            turns = diarize(
+                wav_path,
+                backend=diarization_backend,
+                num_speakers=num_speakers,
+                hf_token=hf_token,
+            )
 
         segments = assign_speakers(raw_segments, turns)
 
         if detect_emotion and segments:
             progress("Analyzing emotion", 0.75)
-            _attach_emotions(
-                wav_path, segments, audio_weight,
-                use_audio_emotion, use_text_emotion, progress,
-            )
+            with _timed(timings, "emotion"):
+                _attach_emotions(
+                    wav_path, segments, audio_weight,
+                    use_audio_emotion, use_text_emotion, progress,
+                )
 
         speakers = _ordered_speakers(segments)
+        timings["total"] = sum(v for k, v in timings.items() if k != "total")
         progress("Done", 1.0)
         return TranscriptResult(
-            segments=segments, language=lang, speakers=speakers, source=src_path
+            segments=segments, language=lang, speakers=speakers,
+            source=src_path, timings=timings,
         )
     finally:
         try:
@@ -258,13 +278,16 @@ def _attach_emotions(
         audio_weight=audio_weight, use_audio=use_audio, use_text=use_text
     )
     samples, sr = _audio.load_waveform(wav_path)
-    n = len(segments)
-    for i, seg in enumerate(segments):
-        clip = _audio.slice_waveform(samples, sr, seg.start, seg.end)
-        res = analyzer.analyze(clip, sr, seg.text)
+    items = [
+        (_audio.slice_waveform(samples, sr, seg.start, seg.end), sr, seg.text)
+        for seg in segments
+    ]
+    # One batched pass over both models instead of per-segment inference.
+    results = analyzer.analyze_batch(items)
+    for seg, res in zip(segments, results):
         seg.emotion = res.label
         seg.emotion_score = res.score
         seg.emotion_scores = res.scores
         seg.audio_emotion = res.audio_label
         seg.text_emotion = res.text_label
-        progress("Analyzing emotion", 0.75 + 0.20 * (i + 1) / n)
+    progress("Analyzing emotion", 0.95)

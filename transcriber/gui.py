@@ -145,9 +145,17 @@ def _run(src, model, language, backend, hf_token, num_speakers,
 
     bar.empty()
     st.success(
-        f"Done — {len(result.segments)} segments, "
+        f"Done in {result.timings.get('total', 0):.1f}s — "
+        f"{len(result.segments)} segments, "
         f"{len(result.speakers)} speaker(s), language: {result.language}"
     )
+    if result.timings:
+        cols = st.columns(len(result.timings))
+        for col, (stage, secs) in zip(cols, result.timings.items()):
+            col.metric(stage.title(), f"{secs:.1f}s")
+        st.caption(
+            "First run loads models; later runs reuse them and are much faster."
+        )
     _render_transcript(result, detect_emotion)
     _render_downloads(result, detect_emotion)
 

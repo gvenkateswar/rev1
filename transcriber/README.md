@@ -13,6 +13,11 @@ extract audio (ffmpeg) → Whisper transcription → speaker diarization
                        → align speakers to words → fuse audio+text emotion
 ```
 
+Built for speed: transcription uses **faster-whisper** (CTranslate2, ~4x faster
+than openai-whisper on CPU) with a **VAD silence filter**, the emotion stage
+runs **batched**, and models are **cached in-process** so every run after the
+first skips loading. See [Performance](#performance) to go faster still.
+
 ## Install
 
 Requires Python 3.9+ and **ffmpeg** on your PATH
@@ -58,7 +63,7 @@ Output (txt):
 
 | Flag | Meaning | Default |
 |------|---------|---------|
-| `--model` | Whisper size: tiny/base/small/medium/large | `base` |
+| `--model` | Whisper size: tiny/base/small/medium/large-v3, or `distil-large-v3` | `base` |
 | `--language` | Force a language (ISO code) | auto-detect |
 | `--diarization` | `cluster` (offline) or `pyannote` (best, needs token) | `cluster` |
 | `--speakers N` | Number of speakers if known | auto-detect |
@@ -103,6 +108,35 @@ so you can see when tone and words disagree (e.g. *tone: angry · words: joy*).
 
 > The text emotion model is English. For other languages, lean on audio
 > (`--emotion-source audio`) or raise `--emotion-audio-weight`.
+
+## Performance
+
+The pipeline is tuned for turnaround time:
+
+- **faster-whisper + VAD** — CTranslate2 runs Whisper ~4x faster than
+  openai-whisper on CPU (int8), and `vad_filter` skips silence so dead air
+  costs nothing.
+- **Batched emotion** — both emotion models score all segments in mini-batches
+  (one dispatch per batch) instead of one segment at a time.
+- **Warm models** — loaded Whisper/emotion models are cached at module scope,
+  shared across CLI files in a run *and* across Streamlit reruns, so only the
+  first run pays the load cost.
+- **Per-stage timing** — every run reports where the time went (CLI prints it
+  to stderr; the GUI shows a metric per stage), so you can tune with data.
+
+Going faster still:
+
+- **GPU:** with a CUDA card, transcription and the emotion models switch to
+  float16 automatically — typically 10-30x on transcription.
+- **Model size:** `--model distil-large-v3` is near-large accuracy at a
+  fraction of the cost; `tiny`/`base` are fastest on CPU.
+- **Skip emotion:** `--no-emotion` drops the emotion stage entirely.
+
+Example timing line (CPU, `base`, ~2 min clip):
+
+```
+Timing: extract=0.4s transcribe=18.2s diarize=6.1s emotion=3.4s  (total 28.1s)
+```
 
 ## Library use
 

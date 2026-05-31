@@ -19,24 +19,33 @@ import numpy as np
 # Canonical labels both models are mapped onto.
 CANONICAL = ["angry", "happy", "sad", "fear", "disgust", "surprise", "neutral"]
 
-# Audio model: ehcalabres/wav2vec2 -> 8 labels.
-_AUDIO_MAP = {
-    "angry": "angry", "happy": "happy", "sad": "sad", "fearful": "fear",
-    "disgust": "disgust", "surprised": "surprise", "neutral": "neutral",
-    "calm": "neutral",
-}
-# Text model: j-hartmann/emotion-english-distilroberta-base -> 7 labels.
-_TEXT_MAP = {
-    "anger": "angry", "joy": "happy", "sadness": "sad", "fear": "fear",
-    "disgust": "disgust", "surprise": "surprise", "neutral": "neutral",
-}
+# Different models name the same emotion differently — full words ("angry",
+# "fearful"), the text model's nouns ("anger", "sadness", "joy"), and SUPERB's
+# abbreviations ("ang", "hap", "neu", "sad"). Rather than maintain a brittle
+# per-model exact-match table (which silently dropped everything when SUPERB
+# emitted "ang"), we canonicalize by substring. Order matters: more specific
+# substrings first so e.g. "calm" -> neutral before a looser rule could fire.
+_CANON_RULES: list[tuple[str, str]] = [
+    ("neutral", "neutral"), ("calm", "neutral"), ("neu", "neutral"),
+    ("anger", "angry"), ("angry", "angry"), ("ang", "angry"),
+    ("happiness", "happy"), ("happy", "happy"), ("joy", "happy"), ("hap", "happy"),
+    ("sadness", "sad"), ("sad", "sad"),
+    ("fearful", "fear"), ("fear", "fear"), ("fea", "fear"),
+    ("disgust", "disgust"), ("dis", "disgust"),
+    ("surprised", "surprise"), ("surprise", "surprise"), ("sur", "surprise"),
+]
 
 _EMOJI = {
     "angry": "😠", "happy": "😀", "sad": "😢", "fear": "😨",
     "disgust": "🤢", "surprise": "😲", "neutral": "😐",
 }
 
-AUDIO_MODEL = "ehcalabres/wav2vec2-lg-xlsr-en-speech-emotion-recognition"
+# SUPERB's hubert-large-superb-er is HuggingFace's reference model for the
+# audio-classification pipeline (standard HubertForSequenceClassification, loads
+# cleanly). IEMOCAP 4-class: neutral / happy / angry / sad. The previous default
+# (ehcalabres/wav2vec2...) uses a custom head the generic pipeline mis-loads,
+# which collapsed every prediction toward "neutral".
+AUDIO_MODEL = "superb/hubert-large-superb-er"
 TEXT_MODEL = "j-hartmann/emotion-english-distilroberta-base"
 
 # wav2vec2 needs a few frames; pad shorter slices so batching never crashes.
@@ -58,11 +67,13 @@ def _get_pipeline(task: str, model: str, device):
 
 @dataclass
 class EmotionResult:
-    label: str                                   # fused top emotion
+    label: str                                   # fused top emotion (canonical)
     score: float                                 # fused top probability
     scores: dict[str, float] = field(default_factory=dict)   # fused breakdown
-    audio_label: str | None = None
-    text_label: str | None = None
+    audio_label: str | None = None               # canonical, audio channel
+    text_label: str | None = None                # canonical, text channel
+    audio_raw: str | None = None                 # model's own top label + score
+    text_raw: str | None = None                  # model's own top label + score
 
     @property
     def emoji(self) -> str:
@@ -118,21 +129,9 @@ class EmotionAnalyzer:
             return -1
 
     # -- scoring ----------------------------------------------------------- #
-    def analyze(
-        self, samples: np.ndarray, sr: int, text: str
-    ) -> EmotionResult:
-        audio_scores = self._score_audio(samples, sr) if self.use_audio else None
-        text_scores = self._score_text(text) if self.use_text else None
-
-        fused = self._fuse(audio_scores, text_scores)
-        top = max(fused, key=fused.get)
-        return EmotionResult(
-            label=top,
-            score=fused[top],
-            scores=fused,
-            audio_label=_argmax(audio_scores),
-            text_label=_argmax(text_scores),
-        )
+    def analyze(self, samples: np.ndarray, sr: int, text: str) -> EmotionResult:
+        """Score a single segment (thin wrapper over the batched path)."""
+        return self.analyze_batch([(samples, sr, text)])[0]
 
     def analyze_batch(
         self,
@@ -151,6 +150,8 @@ class EmotionAnalyzer:
 
         audio_scores: list[dict | None] = [None] * n
         text_scores: list[dict | None] = [None] * n
+        audio_raw: list[str | None] = [None] * n
+        text_raw: list[str | None] = [None] * n
 
         if self.use_audio:
             inputs = [
@@ -160,7 +161,8 @@ class EmotionAnalyzer:
             try:
                 raw = self._ensure_audio()(inputs, batch_size=batch_size)
                 for i, preds in enumerate(raw):
-                    audio_scores[i] = _remap(preds, _AUDIO_MAP)
+                    audio_scores[i] = _remap(preds, channel="audio")
+                    audio_raw[i] = _raw_top(preds)
             except Exception:  # pragma: no cover - degrade to text-only
                 pass
 
@@ -175,7 +177,8 @@ class EmotionAnalyzer:
                     preds = raw[j]
                     if preds and isinstance(preds[0], list):  # defensive
                         preds = preds[0]
-                    text_scores[i] = _remap(preds, _TEXT_MAP)
+                    text_scores[i] = _remap(preds, channel="text")
+                    text_raw[i] = _raw_top(preds)
 
         results: list[EmotionResult] = []
         for i in range(n):
@@ -185,27 +188,9 @@ class EmotionAnalyzer:
                 label=top, score=fused[top], scores=fused,
                 audio_label=_argmax(audio_scores[i]),
                 text_label=_argmax(text_scores[i]),
+                audio_raw=audio_raw[i], text_raw=text_raw[i],
             ))
         return results
-
-    def _score_audio(self, samples: np.ndarray, sr: int) -> dict[str, float]:
-        # The model expects 16 kHz mono float; audio.py already guarantees that.
-        try:
-            preds = self._ensure_audio()(
-                {"array": samples.astype(np.float32), "sampling_rate": sr}
-            )
-        except Exception:  # pragma: no cover - very short/empty slice
-            return {}
-        return _remap(preds, _AUDIO_MAP)
-
-    def _score_text(self, text: str) -> dict[str, float]:
-        text = (text or "").strip()
-        if not text:
-            return {}
-        preds = self._ensure_text()(text, truncation=True)
-        if preds and isinstance(preds[0], list):  # top_k=None nests one level
-            preds = preds[0]
-        return _remap(preds, _TEXT_MAP)
 
     def _fuse(
         self, audio: dict[str, float] | None, text: dict[str, float] | None
@@ -236,17 +221,53 @@ def _pad_min(samples: np.ndarray) -> np.ndarray:
     return np.pad(samples, (0, _MIN_AUDIO_SAMPLES - len(samples)))
 
 
-def _remap(preds, mapping: dict[str, str]) -> dict[str, float]:
-    """Collapse a model's raw {label: score} list onto canonical labels."""
+_WARNED_CHANNELS: set[str] = set()
+
+
+def _canon(label: str) -> str | None:
+    """Map any model label onto a canonical emotion via substring rules."""
+    low = label.lower().strip()
+    for sub, canon in _CANON_RULES:
+        if sub in low:
+            return canon
+    return None
+
+
+def _remap(preds, channel: str = "") -> dict[str, float]:
+    """Collapse a model's raw [{label, score}] list onto canonical labels.
+
+    Renormalizes over what mapped. If the model returned predictions but *none*
+    mapped (the failure that made the audio channel silently empty before), warn
+    once per channel instead of vanishing into a neutral fallback.
+    """
     out: dict[str, float] = {}
     for p in preds:
-        canon = mapping.get(p["label"].lower())
+        canon = _canon(p["label"])
         if canon:
             out[canon] = out.get(canon, 0.0) + float(p["score"])
+    if preds and not out and channel and channel not in _WARNED_CHANNELS:
+        import warnings
+
+        _WARNED_CHANNELS.add(channel)
+        seen = ", ".join(sorted({p["label"] for p in preds}))
+        warnings.warn(
+            f"Emotion {channel} model returned labels that map to no known "
+            f"emotion ({seen}); that channel will contribute nothing. This "
+            f"usually means the model is incompatible with the pipeline.",
+            RuntimeWarning, stacklevel=2,
+        )
     total = sum(out.values())
     if total > 0:
         out = {k: v / total for k, v in out.items()}
     return out
+
+
+def _raw_top(preds) -> str | None:
+    """The model's own top label and score, e.g. 'ang 0.82' (for debugging)."""
+    if not preds:
+        return None
+    top = max(preds, key=lambda p: p["score"])
+    return f"{top['label']} {float(top['score']):.2f}"
 
 
 def _argmax(scores: dict[str, float] | None) -> str | None:

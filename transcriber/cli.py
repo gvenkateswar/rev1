@@ -47,6 +47,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--emotion-source", default="both",
                    choices=["both", "audio", "text"],
                    help="Which emotion signal(s) to use (default: both).")
+    p.add_argument("--debug-emotion", action="store_true",
+                   help="Print each segment's raw per-channel emotion model "
+                        "output (audio vs. text) to stderr, to diagnose "
+                        "which channel is firing.")
     return p
 
 
@@ -69,6 +73,15 @@ def main(argv: list[str] | None = None) -> int:
     except (RuntimeError, FileNotFoundError, ValueError) as exc:
         sys.stderr.write(f"\nError: {exc}\n")
         return 1
+
+    if args.debug_emotion:
+        sys.stderr.write("\n--- emotion debug (raw model outputs) ---\n")
+        for seg in result.segments:
+            sys.stderr.write(
+                f"[{seg.start:6.1f}s] {seg.speaker}: fused={seg.emotion} "
+                f"| audio_raw={seg.audio_raw} | text_raw={seg.text_raw}\n"
+            )
+        sys.stderr.write("--- end emotion debug ---\n\n")
 
     if result.timings:
         parts = " ".join(

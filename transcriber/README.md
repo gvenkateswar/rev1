@@ -99,12 +99,32 @@ cleanly.
 Each segment is scored two ways and combined into one probability distribution
 over `angry / happy / sad / fear / disgust / surprise / neutral`:
 
-- **Audio (tone):** [`ehcalabres/wav2vec2-lg-xlsr-en-speech-emotion-recognition`](https://hf.co/ehcalabres/wav2vec2-lg-xlsr-en-speech-emotion-recognition)
+- **Audio (tone):** [`superb/hubert-large-superb-er`](https://hf.co/superb/hubert-large-superb-er)
+  — HuggingFace's reference model for the audio-classification pipeline, so it
+  loads cleanly. Trained on IEMOCAP, it emits four classes: **neutral / happy /
+  angry / sad**. (Fear, disgust, and surprise come from the text channel.)
 - **Text (content):** [`j-hartmann/emotion-english-distilroberta-base`](https://hf.co/j-hartmann/emotion-english-distilroberta-base)
+  — seven classes.
+
+Model labels are canonicalized by meaning, not exact string match, so different
+naming conventions (e.g. SUPERB's `ang`/`hap` vs. `anger`/`joy`) all line up.
 
 Tune the balance with `--emotion-audio-weight` (0 = trust words, 1 = trust
 voice, 0.5 = both). The JSON output and GUI keep the per-channel labels too,
 so you can see when tone and words disagree (e.g. *tone: angry · words: joy*).
+
+**Debugging emotion:** pass `--debug-emotion` to print each segment's *raw*
+per-channel model output, so you can see exactly what the audio vs. text model
+predicted and which channel is driving the result:
+
+```
+[   2.4s] Speaker 1: fused=angry | audio_raw=ang 0.88 | text_raw=anger 0.79
+```
+
+> **Why not the older `ehcalabres/wav2vec2` model?** It ships a custom
+> classification head that the generic `audio-classification` pipeline
+> mis-loads, which made every segment collapse to "neutral" when audio was the
+> only source. `superb/hubert-large-superb-er` avoids that.
 
 > The text emotion model is English. For other languages, lean on audio
 > (`--emotion-source audio`) or raise `--emotion-audio-weight`.

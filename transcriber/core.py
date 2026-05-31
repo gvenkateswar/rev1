@@ -33,6 +33,8 @@ class TranscriptSegment:
     emotion_scores: dict[str, float] = field(default_factory=dict)
     audio_emotion: str | None = None
     text_emotion: str | None = None
+    audio_raw: str | None = None   # raw audio-model top label+score (debug)
+    text_raw: str | None = None    # raw text-model top label+score (debug)
 
     def to_dict(self) -> dict:
         return {
@@ -290,4 +292,6 @@ def _attach_emotions(
         seg.emotion_scores = res.scores
         seg.audio_emotion = res.audio_label
         seg.text_emotion = res.text_label
+        seg.audio_raw = res.audio_raw
+        seg.text_raw = res.text_raw
     progress("Analyzing emotion", 0.95)

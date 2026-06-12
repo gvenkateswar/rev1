@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>World History Atlas — boundaries through time</title>
+<link rel="stylesheet" href="vendor/leaflet/leaflet.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="map"></div>
+
+<div id="hud">
+  <div id="year-readout">
+    <span id="year-label">1776</span>
+    <span id="snapshot-label"></span>
+  </div>
+</div>
+
+<div id="loading-badge" hidden>loading boundaries…</div>
+
+<div id="timeline">
+  <button id="play-btn" title="Play / pause (space)" aria-label="Play">&#9654;</button>
+  <div id="slider-wrap">
+    <div id="ticks"></div>
+    <input id="year-slider" type="range" min="1000" max="2025" step="1" value="1776"
+           aria-label="Year">
+  </div>
+  <div id="range-labels"><span id="min-label"></span><span id="max-label"></span></div>
+</div>
+
+<script src="vendor/leaflet/leaflet.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

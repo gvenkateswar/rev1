@@ -1,12 +1,16 @@
 # Video & Audio Tools
 
-This repo holds two independent tools:
+This repo holds three independent tools:
 
 1. **Video Shorts Generator** (below) — find the best 30s clips in a long video.
 2. **[Speaker & Emotion Transcriber](transcriber/README.md)** — transcribe
    audio/video, tell speakers apart, and tag each segment with an emotion fused
    from voice tone *and* the words. CLI + local Streamlit GUI. See
    [`transcriber/`](transcriber/).
+3. **[World History Atlas](historical-map/README.md)** — interactive world map
+   with a timeline slider (1000–2025); political boundaries crossfade in real
+   time as you scrub through history. Static site, no build step. See
+   [`historical-map/`](historical-map/).
 
 ---
 

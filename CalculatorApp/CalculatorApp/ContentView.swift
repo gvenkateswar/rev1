@@ -12,7 +12,7 @@ enum CalcButton: Hashable {
 
     func label(for system: NumeralSystem) -> String {
         switch self {
-        case .digit(let d): return String(system.keypadGlyphs[d])
+        case .digit(let d): return system.keypadDigitLabel(d)
         case .decimal:      return "."
         case .op(let op):   return op.rawValue
         case .equals:       return "="
@@ -52,56 +52,52 @@ struct ContentView: View {
         [.digit(0), .decimal, .equals],
     ]
 
+    private let spacing: CGFloat = 12
+
     var body: some View {
-        VStack(spacing: 16) {
-            Picker("Numerals", selection: $vm.system) {
-                ForEach(NumeralSystem.allCases) { system in
-                    Text(system.shortName).tag(system)
+        GeometryReader { geo in
+            // Size the keys off the available width so the whole keypad always
+            // fits, regardless of device (no hardcoded screen math).
+            let size = (geo.size.width - spacing * 5) / 4
+
+            VStack(spacing: spacing) {
+                Picker("Numerals", selection: $vm.system) {
+                    ForEach(NumeralSystem.allCases) { system in
+                        Text(system.shortName).tag(system)
+                    }
                 }
-            }
-            .pickerStyle(.segmented)
-            .padding(.horizontal)
-            .padding(.top, 8)
+                .pickerStyle(.segmented)
 
-            Spacer(minLength: 0)
+                Spacer(minLength: 0)
 
-            HStack {
-                Spacer()
                 Text(vm.display)
                     .font(.system(size: 80, weight: .light))
                     .foregroundColor(.white)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.25)
-            }
-            .padding(.horizontal, 24)
+                    .minimumScaleFactor(0.2)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .padding(.horizontal, 8)
 
-            keypad
+                VStack(spacing: spacing) {
+                    ForEach(rows.indices, id: \.self) { r in
+                        HStack(spacing: spacing) {
+                            ForEach(rows[r].indices, id: \.self) { c in
+                                keyView(rows[r][c], size: size)
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, spacing)
+            .padding(.top, 8)
+            .padding(.bottom, spacing)
+            .frame(width: geo.size.width, height: geo.size.height, alignment: .bottom)
         }
         .background(Color.black.ignoresSafeArea())
         .preferredColorScheme(.dark)
     }
 
-    private var keypad: some View {
-        GeometryReader { geo in
-            let spacing: CGFloat = 12
-            let size = (geo.size.width - spacing * 5) / 4
-            VStack(spacing: spacing) {
-                ForEach(rows.indices, id: \.self) { r in
-                    HStack(spacing: spacing) {
-                        ForEach(rows[r].indices, id: \.self) { c in
-                            keyView(rows[r][c], size: size, spacing: spacing)
-                        }
-                    }
-                }
-            }
-            .frame(maxHeight: .infinity, alignment: .bottom)
-            .padding(.horizontal, spacing)
-            .padding(.bottom, spacing)
-        }
-        .frame(height: 5 * (UIScreen.main.bounds.width - 60) / 4 + 6 * 12)
-    }
-
-    private func keyView(_ button: CalcButton, size: CGFloat, spacing: CGFloat) -> some View {
+    private func keyView(_ button: CalcButton, size: CGFloat) -> some View {
         let isZero = button == .digit(0)
         let width = isZero ? size * 2 + spacing : size
         let isActive = isOperation(button) && vm.activeOperation == operation(of: button)
@@ -111,6 +107,9 @@ struct ContentView: View {
         } label: {
             Text(button.label(for: vm.system))
                 .font(.system(size: 34, weight: .medium))
+                .lineLimit(1)
+                .minimumScaleFactor(0.5)
+                .padding(.horizontal, 4)
                 .frame(width: width, height: size, alignment: isZero ? .leading : .center)
                 .padding(.leading, isZero ? size * 0.36 : 0)
                 .background(isActive ? Color.white : button.background)

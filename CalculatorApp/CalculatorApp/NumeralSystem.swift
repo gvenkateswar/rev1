@@ -34,11 +34,18 @@ enum NumeralSystem: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Glyphs to paint on the keypad digit keys. Roman has no positional
-    /// digits, so you still type with Western digits while the *result*
-    /// renders as Roman.
-    var keypadGlyphs: [Character] {
-        digitGlyphs ?? Array("0123456789")
+    /// Single-digit Roman forms, indexed 0...9 (0 shows as "N", *nulla*).
+    private static let romanDigits = ["N", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX"]
+
+    /// Label to paint on the keypad key for digit `d` (0...9). Positional
+    /// systems use their own glyph; Roman shows the digit's own Roman form so
+    /// the keypad itself reads as Roman numerals. Pressing a key always enters
+    /// the same underlying value regardless of script.
+    func keypadDigitLabel(_ d: Int) -> String {
+        if let glyphs = digitGlyphs {
+            return String(glyphs[d])
+        }
+        return NumeralSystem.romanDigits[d]
     }
 
     /// Render a value held as a plain Western digit string (e.g. "-12.5")

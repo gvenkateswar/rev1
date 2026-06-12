@@ -21,8 +21,10 @@ systems — switchable live with the segmented control at the top:
 - **Roman numerals** are non-positional and only express the integers
   `1…3999`. The display converts the live value on the fly; zero shows as
   `N` (medieval *nulla*), and anything Roman can't represent (negatives,
-  fractions, ≥ 4000) gracefully falls back to the Western form. You still
-  type with the digit keys — only the answer is rendered in Roman.
+  fractions, ≥ 4000) gracefully falls back to the Western form. In Roman
+  mode the keypad keys are relabelled with their Roman forms
+  (`I II III IV V VI VII VIII IX`, and `N` for zero); each key still enters
+  the same underlying value, so the result also renders in Roman.
 
 ## Project layout
 

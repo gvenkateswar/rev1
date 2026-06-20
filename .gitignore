@@ -8,6 +8,9 @@ work/
 *.wav
 *.mp3
 
+# Pipeline config -- holds API keys. Use config.example.json as the template.
+config.json
+
 # Python
 __pycache__/
 *.pyc

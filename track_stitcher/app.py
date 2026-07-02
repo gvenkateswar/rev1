@@ -21,7 +21,6 @@ st.set_page_config(page_title="Track Stitcher", page_icon="🎛️", layout="wid
 # Import dependencies after set_page_config so a missing package shows a
 # readable in-app error (with the fix) instead of a raw traceback.
 try:
-    from streamlit_sortables import sort_items
     import audio_engine as engine
 except ModuleNotFoundError as exc:
     st.error(
@@ -170,20 +169,31 @@ if not analyses:
     st.stop()
 
 names_by_path = {p: Path(p).name for p in analyses}
-paths_by_name = {n: p for p, n in names_by_path.items()}
 
 # ---------------------------------------------------------------------------
-# Track ordering (drag-and-drop) — the displayed order IS the render order
+# Track ordering — the ▲▼ buttons on each card set the render order
+# (top card renders first). A new folder resets to alphabetical; files
+# already ordered keep their positions when the folder is rescanned.
 # ---------------------------------------------------------------------------
 
-st.subheader("1 · Order your tracks")
-st.caption("Drag to reorder — the mix is rendered top to bottom.")
+order_sig = tuple(sorted(names_by_path))
+if st.session_state.get("track_order_sig") != order_sig:
+    kept = [p for p in st.session_state.get("track_order", []) if p in names_by_path]
+    added = sorted(
+        (p for p in names_by_path if p not in kept),
+        key=lambda p: names_by_path[p].lower(),
+    )
+    st.session_state.track_order = kept + added
+    st.session_state.track_order_sig = order_sig
+ordered_paths = st.session_state.track_order
 
-alphabetical = sorted(names_by_path.values(), key=str.lower)
-# Key the sortable on the file set so a new folder resets the ordering.
-order_key = "sortable_" + str(hash(tuple(alphabetical)))
-ordered_names = sort_items(alphabetical, direction="vertical", key=order_key)
-ordered_paths = [paths_by_name[n] for n in ordered_names]
+
+def move_track(path: str, delta: int) -> None:
+    order = st.session_state.track_order
+    i = order.index(path)
+    j = i + delta
+    if 0 <= j < len(order):
+        order[i], order[j] = order[j], order[i]
 
 # ---------------------------------------------------------------------------
 # Effective BPM helpers
@@ -230,7 +240,8 @@ def is_included(path: str) -> bool:
 # Global controls (rendered before the table so stretch % reflects them live)
 # ---------------------------------------------------------------------------
 
-st.subheader("2 · Review, audition, and set BPMs")
+st.subheader("1 · Tracks — order, audition, set BPMs")
+st.caption("Reorder with the ▲▼ buttons on each card — the mix renders top to bottom.")
 
 suggested = engine.suggest_output_bpm(
     [effective_bpm(p) for p in ordered_paths if is_included(p)]
@@ -290,17 +301,37 @@ def stretch_badge(pct: float) -> str:
 
 missing_bpm: list[str] = []
 
-for path in ordered_paths:
+for idx, path in enumerate(ordered_paths):
     info = analyses[path]
     name = names_by_path[path]
     with st.container(border=True):
-        top_inc, top_l, top_r = st.columns([0.7, 4.3, 1])
+        top_inc, top_up, top_dn, top_l, top_r = st.columns(
+            [0.55, 0.3, 0.3, 3.85, 1], vertical_alignment="center"
+        )
         with top_inc:
             included = st.checkbox(
-                "In mix",
+                "Mix",
                 value=True,
                 key=f"inc::{path}",
                 help="Uncheck to leave this track out of the rendered mix.",
+            )
+        with top_up:
+            st.button(
+                "▲",
+                key=f"up::{path}",
+                on_click=move_track,
+                args=(path, -1),
+                disabled=idx == 0,
+                help="Move this track up (earlier in the mix)",
+            )
+        with top_dn:
+            st.button(
+                "▼",
+                key=f"dn::{path}",
+                on_click=move_track,
+                args=(path, 1),
+                disabled=idx == len(ordered_paths) - 1,
+                help="Move this track down (later in the mix)",
             )
         with top_l:
             badges = []
@@ -433,7 +464,7 @@ def preview_chart(preview: dict) -> None:
     st.line_chart(df, height=180)
 
 
-st.subheader("3 · Transitions — preview & manual alignment")
+st.subheader("2 · Transitions — preview & manual alignment")
 
 if len(included_paths) < 2:
     st.caption("With fewer than two tracks in the mix there are no transitions.")
@@ -494,7 +525,7 @@ else:
 # Render
 # ---------------------------------------------------------------------------
 
-st.subheader("4 · Render")
+st.subheader("3 · Render")
 
 if missing_bpm:
     st.warning(

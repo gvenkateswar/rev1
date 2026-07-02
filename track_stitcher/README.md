@@ -10,12 +10,13 @@ WAV. Everything runs locally — no cloud services, no external APIs.
    files (m4a/AAC decodes via CoreAudio on macOS — no extra install needed).
 2. It analyzes each track (duration, BPM via librosa, RMS envelope) — results
    are cached, so analysis runs exactly once per file.
-3. Drag-and-drop to set the mix order, deselect any tracks you want to leave
-   out, audition tracks inline, correct BPM detections (`×2` / `÷2` quick-fix
-   buttons), and pick an output BPM (pre-filled with the median of your
-   tracks). Detections that land at half or double the folder's median tempo
-   are auto-corrected to the right octave (badged in the UI; filename BPMs
-   and manual edits are never overridden).
+3. Set the mix order with the ▲▼ buttons on each track card, deselect any
+   tracks you want to leave out, audition tracks inline, correct BPM
+   detections (`×2` / `÷2` quick-fix buttons), and pick an output BPM
+   (pre-filled with the median of your tracks). Detections that land at half
+   or double the folder's median tempo are auto-corrected to the right
+   octave (badged in the UI; filename BPMs and manual edits are never
+   overridden).
 4. Optional: open any transition in **Transitions — preview & manual
    alignment** to hear just that crossover and see both tracks' waveforms
    overlaid. If the automatic placement isn't right, a nudge slider shifts

@@ -13,13 +13,25 @@ import sys
 from pathlib import Path
 
 import streamlit as st
-from streamlit_sortables import sort_items
-
-import audio_engine as engine
 
 CONFIG_PATH = Path.home() / ".track_stitcher_config.json"
 
 st.set_page_config(page_title="Track Stitcher", page_icon="🎛️", layout="wide")
+
+# Import dependencies after set_page_config so a missing package shows a
+# readable in-app error (with the fix) instead of a raw traceback.
+try:
+    from streamlit_sortables import sort_items
+    import audio_engine as engine
+except ModuleNotFoundError as exc:
+    st.error(
+        f"Missing Python dependency: **`{exc.name}`**.\n\n"
+        "**Fix:** install the requirements into the same Python environment "
+        "that runs Streamlit, then restart the app:\n\n"
+        "```sh\npython3 -m pip install -r requirements.txt\n"
+        "python3 -m streamlit run app.py\n```"
+    )
+    st.stop()
 st.title("🎛️ Track Stitcher")
 st.caption(
     "Combine a folder of ambient tracks into one continuous, beat-matched, "

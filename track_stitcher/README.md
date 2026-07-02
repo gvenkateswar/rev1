@@ -38,6 +38,16 @@ streamlit run app.py
 The last-used folder path is remembered across sessions
 (`~/.track_stitcher_config.json`).
 
+### Troubleshooting: `ModuleNotFoundError` on launch
+
+Macs often have several Pythons (Homebrew, python.org, Xcode). The
+dependencies must go into the **same** Python that the `streamlit` command
+runs from. Check which one that is with `pip --version` — if its path matches
+the `site-packages` path shown in the error traceback, a plain
+`pip install -r requirements.txt` from this directory is correct. (Don't
+assume `python3 -m pip` is right: on Homebrew systems `python3` is often a
+different, PEP 668-locked interpreter than the one running streamlit.)
+
 ## Notes
 
 - BPM in the filename (e.g. `raga_72bpm.wav`, `72 bpm`) overrides detection

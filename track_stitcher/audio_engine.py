@@ -132,11 +132,15 @@ def analyze_track(path: Union[str, Path]) -> dict:
     duration = len(y) / sr
 
     detected_bpm: Optional[float] = None
+    beat_times = np.zeros(0, dtype=np.float32)
     try:
-        tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
+        tempo, beat_frames = librosa.beat.beat_track(y=y, sr=sr)
         tempo = float(np.atleast_1d(tempo)[0])
         if math.isfinite(tempo) and tempo > 10.0:
             detected_bpm = round(tempo, 1)
+        # Beat positions (seconds, source-time) — used at render time to
+        # phase-align crossfades so both tracks' beats coincide.
+        beat_times = librosa.frames_to_time(beat_frames, sr=sr).astype(np.float32)
     except Exception:
         detected_bpm = None
 
@@ -148,6 +152,7 @@ def analyze_track(path: Union[str, Path]) -> dict:
         "duration": duration,
         "detected_bpm": detected_bpm,
         "filename_bpm": parse_filename_bpm(path.name),
+        "beats": beat_times,
         "rms_env": rms,
         "rms_hop": RMS_HOP_LENGTH,
         "rms_sr": ANALYSIS_SR,
@@ -201,6 +206,35 @@ def find_decay_onset_seconds(
     if declining_fraction >= 0.7 and ends_quiet:
         return (offset + peak_rel) * hop / sr
     return None
+
+
+def beat_aligned_anchor(
+    desired_anchor: int,
+    out_beats: np.ndarray,
+    in_first_beat: Optional[float],
+    lo: int,
+    hi: int,
+) -> tuple[int, Optional[int]]:
+    """Snap a crossfade anchor so the tracks' beat grids coincide.
+
+    All positions are in samples of the (stretched) audio. The incoming track
+    starts playing at the anchor, so its first beat lands at
+    ``anchor + in_first_beat`` on the outgoing track's timeline. Pick the
+    outgoing beat closest to where the decay heuristic wanted the fade and
+    place the anchor so the incoming first beat hits it exactly — both tracks
+    are at the same BPM, so aligning one beat aligns the whole grid.
+
+    Returns (anchor, shift_in_samples), or (desired_anchor, None) when either
+    track has no usable beat grid or no aligned position fits in [lo, hi].
+    """
+    if in_first_beat is None or len(out_beats) == 0:
+        return desired_anchor, None
+    candidates = np.round(out_beats - in_first_beat)
+    candidates = candidates[(candidates >= lo) & (candidates <= hi)]
+    if len(candidates) == 0:
+        return desired_anchor, None
+    anchor = int(candidates[np.argmin(np.abs(candidates - desired_anchor))])
+    return anchor, anchor - desired_anchor
 
 
 def equal_power_curves(n: int) -> tuple[np.ndarray, np.ndarray]:
@@ -344,6 +378,7 @@ def render_mix(
         name      display name (for progress/log/errors)
         bpm       effective BPM (after filename/manual overrides)
         rms_env, rms_hop, rms_sr   analysis envelope for fade anchoring
+        beats     beat times in seconds (source-time) for beat-phase alignment
 
     crossfade_seconds: a single global length, or a per-transition sequence of
     length len(tracks) - 1 (v1 UI passes one global value; the per-transition
@@ -443,6 +478,31 @@ def render_mix(
                     anchor_kind = "end-aligned (no clear decay)"
                 anchor = max(0, min(anchor, len(pending) - fade_n))
 
+                # Snap the anchor onto the beat grid: both tracks are at the
+                # output BPM, so shifting by at most half a beat makes their
+                # beats coincide for the whole overlap. Beat times were
+                # measured in source-time; divide by the stretch rate to get
+                # positions in the stretched audio.
+                out_beats = (
+                    np.asarray(prev_spec.get("beats", []), dtype=np.float64)
+                    / prev_rate * sample_rate
+                )
+                in_beats = (
+                    np.asarray(spec.get("beats", []), dtype=np.float64)
+                    / rate * sample_rate
+                )
+                in_first_beat = float(in_beats[0]) if len(in_beats) else None
+                anchor, beat_shift = beat_aligned_anchor(
+                    anchor, out_beats, in_first_beat, 0, len(pending) - fade_n
+                )
+                if beat_shift is None:
+                    align_note = "not beat-aligned — no beat grid detected"
+                else:
+                    align_note = (
+                        f"beat-aligned (anchor shifted "
+                        f"{beat_shift / sample_rate * 1000:+.0f} ms)"
+                    )
+
                 dropped_s = (len(pending) - (anchor + fade_n)) / sample_rate
                 fade_out, fade_in = equal_power_curves(fade_n)
                 overlap = (
@@ -456,7 +516,7 @@ def render_mix(
                 msg = (
                     f"{prev_spec['name']} -> {name}: {fade_s:.1f} s equal-power "
                     f"fade anchored at {format_duration(anchor / sample_rate)} "
-                    f"({anchor_kind})"
+                    f"({anchor_kind}, {align_note})"
                 )
                 if dropped_s > 0.05:
                     msg += f", trimmed {dropped_s:.1f} s of quiet tail"

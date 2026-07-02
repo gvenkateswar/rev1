@@ -376,6 +376,7 @@ if st.button(
             "rms_env": analyses[path]["rms_env"],
             "rms_hop": analyses[path]["rms_hop"],
             "rms_sr": analyses[path]["rms_sr"],
+            "beats": analyses[path].get("beats", []),
         }
         for path in ordered_paths
     ]

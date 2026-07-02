@@ -239,6 +239,78 @@ def test_equal_power_curves_sum_of_squares():
 
 
 # ---------------------------------------------------------------------------
+# Beat-phase alignment
+# ---------------------------------------------------------------------------
+
+def test_analysis_returns_beat_grid(track_folder):
+    info = engine.analyze_track(track_folder / "b_middle.wav")
+    beats = np.asarray(info["beats"])
+    assert len(beats) > 20
+    # Pulses are every 60/80 = 0.75 s; detected beats should tick at ~0.75 s.
+    assert np.median(np.diff(beats)) == pytest.approx(0.75, abs=0.03)
+
+
+def test_beat_aligned_anchor_snaps_to_grid():
+    period = int(0.75 * SR)
+    out_beats = np.arange(100, dtype=np.float64) * period          # beats at k*0.75s
+    in_first = 0.37 * SR                                           # incoming pickup
+    desired = 40 * SR                                              # decay wants 40 s
+    anchor, shift = engine.beat_aligned_anchor(desired, out_beats, in_first, 0, 70 * SR)
+    assert shift is not None
+    # Incoming first beat lands exactly on an outgoing beat…
+    assert (anchor + in_first) % period == pytest.approx(0, abs=1)
+    # …and the anchor moved at most half a beat from the decay position.
+    assert abs(anchor - desired) <= period / 2 + 1
+
+
+def test_beat_aligned_anchor_respects_bounds_and_fallback():
+    out_beats = np.array([10.0 * SR])
+    # No aligned position inside [lo, hi] -> unchanged, no shift reported.
+    anchor, shift = engine.beat_aligned_anchor(5 * SR, out_beats, 0.0, 0, 2 * SR)
+    assert (anchor, shift) == (5 * SR, None)
+    # Missing grids -> unchanged.
+    assert engine.beat_aligned_anchor(5, np.array([]), 1.0, 0, 10) == (5, None)
+    assert engine.beat_aligned_anchor(5, out_beats, None, 0, 10) == (5, None)
+
+
+def test_crossfade_lands_on_the_beat(tmp_path):
+    """The make-or-break property: after a crossfade between two tracks at the
+    same BPM, every audible pulse in the mix stays on one 0.75 s beat grid —
+    even when the incoming track's first beat is offset from a bar boundary."""
+    folder = tmp_path / "beats"
+    folder.mkdir()
+    a = pulsed_tone(80, 30, freq=330, fade_tail=8)
+    sf.write(folder / "a.wav", np.stack([a, a], axis=1), SR)
+    # b's pulses start 0.37 s in — deliberately off-grid vs. a naive anchor.
+    pad = np.zeros(int(0.37 * SR), dtype=np.float32)
+    b = np.concatenate([pad, pulsed_tone(80, 30, freq=550)])
+    sf.write(folder / "b.wav", np.stack([b, b], axis=1), SR)
+
+    specs = []
+    for name in ["a.wav", "b.wav"]:
+        info = engine.analyze_track(folder / name)
+        specs.append({
+            "path": str(folder / name), "name": name, "bpm": 80.0,
+            "rms_env": info["rms_env"], "rms_hop": info["rms_hop"],
+            "rms_sr": info["rms_sr"], "beats": info["beats"],
+        })
+    result = engine.render_mix(specs, output_bpm=80.0, crossfade_seconds=6.0,
+                               output_path=tmp_path / "beat_mix.wav")
+    assert "beat-aligned" in "\n".join(result["log"])
+
+    import librosa
+    mix, _ = sf.read(str(tmp_path / "beat_mix.wav"))
+    onsets = librosa.onset.onset_detect(y=mix.mean(axis=1).astype(np.float32),
+                                        sr=SR, units="time", backtrack=False)
+    period = 60.0 / 80.0
+    # Every onset-to-onset gap must sit on the beat grid (within 40 ms) —
+    # a misaligned overlap would produce split intervals like 0.37/0.38 s.
+    gaps = np.diff(onsets)
+    offsets = np.minimum(gaps % period, period - gaps % period)
+    assert float(np.max(offsets)) < 0.04, f"off-grid onset gaps: {gaps[offsets >= 0.04]}"
+
+
+# ---------------------------------------------------------------------------
 # Full render pipeline
 # ---------------------------------------------------------------------------
 
@@ -251,7 +323,7 @@ def make_specs(track_folder, order):
         specs.append({
             "path": str(path), "name": name, "bpm": bpm,
             "rms_env": info["rms_env"], "rms_hop": info["rms_hop"],
-            "rms_sr": info["rms_sr"],
+            "rms_sr": info["rms_sr"], "beats": info["beats"],
         })
     return specs
 

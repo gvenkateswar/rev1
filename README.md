@@ -1,12 +1,15 @@
 # Video & Audio Tools
 
-This repo holds two independent tools:
+This repo holds three independent tools:
 
 1. **Video Shorts Generator** (below) — find the best 30s clips in a long video.
 2. **[Speaker & Emotion Transcriber](transcriber/README.md)** — transcribe
    audio/video, tell speakers apart, and tag each segment with an emotion fused
    from voice tone *and* the words. CLI + local Streamlit GUI. See
    [`transcriber/`](transcriber/).
+3. **[Track Stitcher](track_stitcher/README.md)** — combine a folder of ambient
+   tracks into one continuous, beat-matched, crossfaded mix exported as a single
+   WAV. Local Streamlit app. See [`track_stitcher/`](track_stitcher/).
 
 ---
 

@@ -75,13 +75,20 @@ def rubberband_available() -> bool:
 
 
 def scan_folder(folder: Union[str, Path]) -> list[Path]:
-    """Return supported audio files in *folder* (non-recursive), alphabetical."""
+    """Return supported audio files in *folder* (non-recursive), alphabetical.
+
+    Skips this app's own rendered mixes (stitched_mix_*.wav) — the output is
+    written into the source folder, and it must not become an input track on
+    the next scan.
+    """
     folder = Path(folder).expanduser()
     if not folder.is_dir():
         raise NotADirectoryError(str(folder))
     files = [
         p for p in folder.iterdir()
-        if p.is_file() and p.suffix.lower() in AUDIO_EXTENSIONS
+        if p.is_file()
+        and p.suffix.lower() in AUDIO_EXTENSIONS
+        and not p.name.lower().startswith("stitched_mix")
     ]
     return sorted(files, key=lambda p: p.name.lower())
 
@@ -257,13 +264,75 @@ def equal_power_curves(n: int) -> tuple[np.ndarray, np.ndarray]:
     return np.cos(t)[:, None], np.sin(t)[:, None]
 
 
+def choose_fade_anchor(
+    out_spec: dict,
+    in_spec: dict,
+    out_rate: float,
+    in_rate: float,
+    out_len_samples: int,
+    fade_n: int,
+    sample_rate: int,
+    manual_offset_s: float = 0.0,
+) -> tuple[int, str]:
+    """Pick where the outgoing track's fade begins (samples, stretched time).
+
+    Shared by render_mix and render_transition_preview so the preview always
+    matches the final render. Pipeline: energy-decay heuristic -> beat-grid
+    alignment -> optional manual nudge (applied last, so a nudge deliberately
+    overrides the automatic alignment). Every step is clamped so the fade
+    stays inside the outgoing track. Returns (anchor, human-readable note).
+    """
+    hi = max(0, out_len_samples - fade_n)
+    decay_t = find_decay_onset_seconds(
+        out_spec["rms_env"], out_spec["rms_hop"], out_spec["rms_sr"]
+    )
+    if decay_t is not None:
+        anchor = int(round(decay_t / out_rate * sample_rate))
+        kind = "energy decay"
+    else:
+        anchor = hi
+        kind = "end-aligned (no clear decay)"
+    anchor = max(0, min(anchor, hi))
+
+    out_beats = (
+        np.asarray(out_spec.get("beats", []), dtype=np.float64)
+        / out_rate * sample_rate
+    )
+    in_beats = (
+        np.asarray(in_spec.get("beats", []), dtype=np.float64)
+        / in_rate * sample_rate
+    )
+    in_first_beat = float(in_beats[0]) if len(in_beats) else None
+    anchor, beat_shift = beat_aligned_anchor(anchor, out_beats, in_first_beat, 0, hi)
+    if beat_shift is None:
+        note = f"{kind}, not beat-aligned — no beat grid detected"
+    else:
+        note = (
+            f"{kind}, beat-aligned (anchor shifted "
+            f"{beat_shift / sample_rate * 1000:+.0f} ms)"
+        )
+    if manual_offset_s:
+        anchor = max(0, min(anchor + int(round(manual_offset_s * sample_rate)), hi))
+        note += f", manual nudge {manual_offset_s:+.2f} s"
+    return anchor, note
+
+
 # ---------------------------------------------------------------------------
 # Per-track processing stages
 # ---------------------------------------------------------------------------
 
-def load_track_stereo(path: Union[str, Path], sr: int = SAMPLE_RATE) -> np.ndarray:
-    """Load at the common rate as float32 stereo, shape (n_samples, 2)."""
-    y, _ = librosa.load(str(path), sr=sr, mono=False)
+def load_track_stereo(
+    path: Union[str, Path],
+    sr: int = SAMPLE_RATE,
+    offset: float = 0.0,
+    duration: Optional[float] = None,
+) -> np.ndarray:
+    """Load at the common rate as float32 stereo, shape (n_samples, 2).
+
+    offset/duration (seconds) allow loading just a segment — used by the
+    transition preview so long tracks don't have to be read in full.
+    """
+    y, _ = librosa.load(str(path), sr=sr, mono=False, offset=offset, duration=duration)
     if y.ndim == 1:
         y = np.stack([y, y])
     elif y.shape[0] == 1:
@@ -301,6 +370,102 @@ def normalize_track(
         return audio, 0.0
     gain_db = target_lufs - lufs
     return (audio * (10.0 ** (gain_db / 20.0))).astype(np.float32), gain_db
+
+
+# ---------------------------------------------------------------------------
+# Transition preview (for the manual-alignment UI)
+# ---------------------------------------------------------------------------
+
+def render_transition_preview(
+    out_spec: dict,
+    in_spec: dict,
+    output_bpm: float,
+    fade_seconds: float,
+    manual_offset_s: float = 0.0,
+    context_seconds: float = 10.0,
+    sample_rate: int = SAMPLE_RATE,
+) -> dict:
+    """Render just the crossover between two tracks, for audition and display.
+
+    Loads and stretches only the audio around the transition (context_seconds
+    on each side), so it is fast even for long tracks. Uses the same
+    choose_fade_anchor as the full render, so what you hear is what you get.
+    Specs need the analyze_track fields plus "path", "bpm", and "duration".
+    Per-track gain is approximated by normalizing the loaded segments.
+
+    Returns a dict with:
+        audio          float32 (n, 2) preview
+        sample_rate    int
+        fade_start     seconds into the preview where the crossfade begins
+        fade_seconds   effective fade length (short-track rule applied)
+        anchor_seconds fade start position within the stretched outgoing track
+        note           human-readable anchor description
+        out_env, in_env, env_rate   coarse amplitude envelopes of the raw
+            (unfaded) outgoing/incoming segments for waveform display; the
+            incoming envelope starts at fade_start.
+    """
+    out_rate = float(output_bpm) / float(out_spec["bpm"])
+    in_rate = float(output_bpm) / float(in_spec["bpm"])
+    out_len_st = float(out_spec["duration"]) / out_rate   # stretched seconds
+    in_len_st = float(in_spec["duration"]) / in_rate
+
+    fade_s = float(fade_seconds)
+    shorter = min(out_len_st, in_len_st)
+    if shorter < 2.0 * fade_s:
+        fade_s = 0.4 * shorter
+    fade_n = max(1, int(round(fade_s * sample_rate)))
+    out_len_samples = int(round(out_len_st * sample_rate))
+
+    anchor, note = choose_fade_anchor(
+        out_spec, in_spec, out_rate, in_rate,
+        out_len_samples, fade_n, sample_rate, manual_offset_s,
+    )
+
+    # Outgoing: the segment ends exactly where the fade ends (anchor + fade),
+    # so after stretching, the fade occupies its final fade_n samples.
+    seg_start_st = max(0.0, anchor / sample_rate - context_seconds)
+    y_out = load_track_stereo(
+        out_spec["path"], sample_rate,
+        offset=seg_start_st * out_rate,
+        duration=max(0.1, (anchor / sample_rate + fade_s - seg_start_st) * out_rate),
+    )
+    y_out, _ = stretch_track(y_out, out_rate, sample_rate)
+    y_out, _ = normalize_track(y_out, sample_rate)
+
+    y_in = load_track_stereo(
+        in_spec["path"], sample_rate,
+        offset=0.0,
+        duration=min(float(in_spec["duration"]),
+                     max(0.1, (fade_s + context_seconds) * in_rate)),
+    )
+    y_in, _ = stretch_track(y_in, in_rate, sample_rate)
+    y_in, _ = normalize_track(y_in, sample_rate)
+
+    fade_n = min(fade_n, len(y_out), len(y_in))
+    fade_out, fade_in = equal_power_curves(fade_n)
+    head = y_out[:len(y_out) - fade_n]
+    overlap = (y_out[len(y_out) - fade_n:] * fade_out + y_in[:fade_n] * fade_in)
+    audio = np.concatenate([head, overlap.astype(np.float32), y_in[fade_n:]])
+
+    def coarse_env(y: np.ndarray, block: int) -> np.ndarray:
+        mono = np.abs(y).mean(axis=1)
+        pad = (-len(mono)) % block
+        if pad:
+            mono = np.concatenate([mono, np.zeros(pad, dtype=mono.dtype)])
+        return mono.reshape(-1, block).max(axis=1)
+
+    env_block = max(1, sample_rate // 100)  # ~100 envelope points per second
+    return {
+        "audio": audio,
+        "sample_rate": sample_rate,
+        "fade_start": len(head) / sample_rate,
+        "fade_seconds": fade_n / sample_rate,
+        "anchor_seconds": anchor / sample_rate,
+        "note": note,
+        "out_env": coarse_env(y_out, env_block),
+        "in_env": coarse_env(y_in, env_block),
+        "env_rate": sample_rate / env_block,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -384,6 +549,7 @@ def render_mix(
     output_path: Union[str, Path],
     sample_rate: int = SAMPLE_RATE,
     progress: Optional[Callable[[float, str], None]] = None,
+    anchor_offsets: Optional[Sequence[float]] = None,
 ) -> dict:
     """Render the full mix and write a 24-bit WAV.
 
@@ -398,6 +564,9 @@ def render_mix(
     length len(tracks) - 1 (v1 UI passes one global value; the per-transition
     form is the extension point for future per-transition overrides).
 
+    anchor_offsets: optional per-transition manual nudges in seconds, applied
+    to each fade anchor after the automatic decay/beat placement.
+
     Returns {output_path, duration, integrated_lufs, true_peak_dbtp, log}.
     """
     if not tracks:
@@ -411,6 +580,9 @@ def render_mix(
         fade_lengths = [float(f) for f in crossfade_seconds]
         if len(fade_lengths) != n - 1:
             raise ValueError("need one crossfade length per transition")
+    offsets = [float(o) for o in anchor_offsets] if anchor_offsets else [0.0] * (n - 1)
+    if len(offsets) != n - 1:
+        raise ValueError("need one anchor offset per transition")
 
     def report(frac: float, msg: str) -> None:
         if progress is not None:
@@ -477,45 +649,13 @@ def render_mix(
                     )
                 fade_n = max(1, int(round(fade_s * sample_rate)))
 
-                # Anchor: start the fade where the outgoing track's energy is
-                # already in sustained decline (searched in its final ~45 s).
-                # The decay time is found in source-time and mapped to
-                # stretched-time by dividing by the stretch rate.
-                decay_t = find_decay_onset_seconds(
-                    prev_spec["rms_env"], prev_spec["rms_hop"], prev_spec["rms_sr"]
+                # Anchor: energy decay -> beat alignment -> manual nudge (see
+                # choose_fade_anchor, shared with the transition preview).
+                anchor, anchor_note = choose_fade_anchor(
+                    prev_spec, spec, prev_rate, rate,
+                    len(pending), fade_n, sample_rate,
+                    manual_offset_s=offsets[i - 1],
                 )
-                if decay_t is not None:
-                    anchor = int(round(decay_t / prev_rate * sample_rate))
-                    anchor_kind = "energy decay"
-                else:
-                    anchor = len(pending) - fade_n
-                    anchor_kind = "end-aligned (no clear decay)"
-                anchor = max(0, min(anchor, len(pending) - fade_n))
-
-                # Snap the anchor onto the beat grid: both tracks are at the
-                # output BPM, so shifting by at most half a beat makes their
-                # beats coincide for the whole overlap. Beat times were
-                # measured in source-time; divide by the stretch rate to get
-                # positions in the stretched audio.
-                out_beats = (
-                    np.asarray(prev_spec.get("beats", []), dtype=np.float64)
-                    / prev_rate * sample_rate
-                )
-                in_beats = (
-                    np.asarray(spec.get("beats", []), dtype=np.float64)
-                    / rate * sample_rate
-                )
-                in_first_beat = float(in_beats[0]) if len(in_beats) else None
-                anchor, beat_shift = beat_aligned_anchor(
-                    anchor, out_beats, in_first_beat, 0, len(pending) - fade_n
-                )
-                if beat_shift is None:
-                    align_note = "not beat-aligned — no beat grid detected"
-                else:
-                    align_note = (
-                        f"beat-aligned (anchor shifted "
-                        f"{beat_shift / sample_rate * 1000:+.0f} ms)"
-                    )
 
                 dropped_s = (len(pending) - (anchor + fade_n)) / sample_rate
                 fade_out, fade_in = equal_power_curves(fade_n)
@@ -530,7 +670,7 @@ def render_mix(
                 msg = (
                     f"{prev_spec['name']} -> {name}: {fade_s:.1f} s equal-power "
                     f"fade anchored at {format_duration(anchor / sample_rate)} "
-                    f"({anchor_kind}, {align_note})"
+                    f"({anchor_note})"
                 )
                 if dropped_s > 0.05:
                     msg += f", trimmed {dropped_s:.1f} s of quiet tail"

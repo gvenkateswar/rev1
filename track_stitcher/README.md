@@ -16,7 +16,12 @@ WAV. Everything runs locally — no cloud services, no external APIs.
    tracks). Detections that land at half or double the folder's median tempo
    are auto-corrected to the right octave (badged in the UI; filename BPMs
    and manual edits are never overridden).
-4. Click **Render**: each track is pitch-preserving time-stretched to the
+4. Optional: open any transition in **Transitions — preview & manual
+   alignment** to hear just that crossover and see both tracks' waveforms
+   overlaid. If the automatic placement isn't right, a nudge slider shifts
+   the fade point manually (used in the final render). Previews render from
+   short segments around the transition, so they're fast even on long tracks.
+5. Click **Render**: each track is pitch-preserving time-stretched to the
    output BPM (rubberband), gain-matched to −18 LUFS, joined with equal-power
    crossfades anchored where the outgoing track's energy is already decaying
    and beat-aligned so both tracks' beats coincide exactly through the

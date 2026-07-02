@@ -66,6 +66,12 @@ def test_scan_folder_includes_m4a(tmp_path):
     assert [f.name for f in engine.scan_folder(tmp_path)] == ["song.m4a"]
 
 
+def test_scan_folder_skips_own_rendered_mixes(tmp_path):
+    (tmp_path / "track.wav").write_bytes(b"")
+    (tmp_path / "stitched_mix_20260702.wav").write_bytes(b"")
+    assert [f.name for f in engine.scan_folder(tmp_path)] == ["track.wav"]
+
+
 def have_m4a_decoder() -> bool:
     """True if this machine can decode AAC: CoreAudio (macOS) or ffmpeg."""
     import platform
@@ -411,6 +417,59 @@ def test_render_error_names_track_and_stage(track_folder, tmp_path):
                           output_path=tmp_path / "err.wav")
     assert exc_info.value.stage == "load"
     assert exc_info.value.track_name == "b_middle.wav"
+
+
+# ---------------------------------------------------------------------------
+# Transition preview & manual anchor offsets
+# ---------------------------------------------------------------------------
+
+def full_specs(track_folder, names, bpms):
+    specs = []
+    for name, bpm in zip(names, bpms):
+        path = track_folder / name
+        info = engine.analyze_track(path)
+        specs.append({"path": str(path), "name": name, "bpm": bpm, **info})
+    return specs
+
+
+def test_transition_preview_matches_render_anchor(track_folder):
+    out_spec, in_spec = full_specs(
+        track_folder, ["b_middle.wav", "c_mono.wav"], [80.0, 90.0])
+    pv = engine.render_transition_preview(out_spec, in_spec, output_bpm=80.0,
+                                          fade_seconds=8.0)
+    assert pv["audio"].ndim == 2 and pv["audio"].shape[1] == 2
+    # ~10 s context + 8 s fade + ~10 s incoming tail
+    assert pv["audio"].shape[0] / SR == pytest.approx(28.0, abs=2.0)
+    assert pv["fade_seconds"] == pytest.approx(8.0, abs=0.01)
+    assert pv["fade_start"] == pytest.approx(10.0, abs=1.0)
+    assert len(pv["out_env"]) > 0 and len(pv["in_env"]) > 0
+    # The same anchor logic drives the full render (shared helper), and the
+    # anchor sits inside the stretched outgoing track.
+    assert 0 <= pv["anchor_seconds"] <= 30.0
+    assert "beat-aligned" in pv["note"]
+
+
+def test_transition_preview_manual_nudge_shifts_anchor(track_folder):
+    out_spec, in_spec = full_specs(
+        track_folder, ["b_middle.wav", "c_mono.wav"], [80.0, 90.0])
+    base = engine.render_transition_preview(out_spec, in_spec, 80.0, 8.0)
+    nudged = engine.render_transition_preview(out_spec, in_spec, 80.0, 8.0,
+                                              manual_offset_s=-1.5)
+    assert nudged["anchor_seconds"] == pytest.approx(
+        base["anchor_seconds"] - 1.5, abs=0.02)
+    assert "manual nudge -1.50 s" in nudged["note"]
+
+
+def test_render_mix_applies_anchor_offsets(track_folder, tmp_path):
+    specs = make_specs(track_folder, ["b_middle.wav", "c_mono.wav"])
+    base = engine.render_mix(specs, output_bpm=80.0, crossfade_seconds=8.0,
+                             output_path=tmp_path / "base.wav")
+    nudged = engine.render_mix(specs, output_bpm=80.0, crossfade_seconds=8.0,
+                               output_path=tmp_path / "nudged.wav",
+                               anchor_offsets=[-2.0])
+    assert "manual nudge -2.00 s" in "\n".join(nudged["log"])
+    # Fade starts 2 s earlier -> 2 s more of the outgoing tail is trimmed.
+    assert nudged["duration"] == pytest.approx(base["duration"] - 2.0, abs=0.1)
 
 
 # ---------------------------------------------------------------------------

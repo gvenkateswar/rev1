@@ -376,12 +376,125 @@ for path in ordered_paths:
             st.audio(path)
 
 # ---------------------------------------------------------------------------
+# Transition preview & manual alignment
+# ---------------------------------------------------------------------------
+
+included_paths = [p for p in ordered_paths if is_included(p)]
+
+
+@st.cache_data(show_spinner=False)
+def preview_cached(
+    out_path: str, out_mtime: float, out_bpm: float,
+    in_path: str, in_mtime: float, in_bpm: float,
+    output_bpm_v: float, fade_v: float, offset_v: float,
+) -> dict:
+    def spec(path, mtime, bpm):
+        info = analyze_cached(path, mtime)
+        return {"path": path, "name": Path(path).name, "bpm": bpm, **info}
+
+    return engine.render_transition_preview(
+        spec(out_path, out_mtime, out_bpm),
+        spec(in_path, in_mtime, in_bpm),
+        output_bpm=output_bpm_v,
+        fade_seconds=fade_v,
+        manual_offset_s=offset_v,
+    )
+
+
+def preview_wav_bytes(preview: dict) -> bytes:
+    import io
+
+    import soundfile as sf
+
+    buf = io.BytesIO()
+    sf.write(buf, preview["audio"], preview["sample_rate"], format="WAV",
+             subtype="PCM_16")
+    return buf.getvalue()
+
+
+def preview_chart(preview: dict) -> None:
+    """Overlay the raw (unfaded) outgoing/incoming waveform envelopes so the
+    beat alignment through the crossover is visible."""
+    import numpy as np
+    import pandas as pd
+
+    er = preview["env_rate"]
+    out_env, in_env = preview["out_env"], preview["in_env"]
+    in_start = int(round(preview["fade_start"] * er))
+    total = max(len(out_env), in_start + len(in_env))
+    out_col = np.full(total, np.nan)
+    out_col[: len(out_env)] = out_env
+    in_col = np.full(total, np.nan)
+    in_col[in_start: in_start + len(in_env)] = in_env
+    df = pd.DataFrame(
+        {"outgoing": out_col, "incoming": in_col},
+        index=np.round(np.arange(total) / er, 2),
+    )
+    st.line_chart(df, height=180)
+
+
+st.subheader("3 · Transitions — preview & manual alignment")
+
+if len(included_paths) < 2:
+    st.caption("With fewer than two tracks in the mix there are no transitions.")
+else:
+    st.caption(
+        "Each crossover is placed automatically (energy decay + beat "
+        "alignment). Preview any transition to hear it and see both "
+        "waveforms; if the algorithm didn't nail it, nudge the fade point — "
+        "the nudge shifts where the fade begins in the outgoing track and is "
+        "used in the final render."
+    )
+    for a, b in zip(included_paths[:-1], included_paths[1:]):
+        na, nb = names_by_path[a], names_by_path[b]
+        nudge_key = f"nudge::{a}::{b}"
+        shown_key = f"preview_on::{a}::{b}"
+        if nudge_key not in st.session_state:
+            st.session_state[nudge_key] = 0.0
+        nudge_now = st.session_state[nudge_key]
+        suffix = f" (nudged {nudge_now:+.2f} s)" if nudge_now else ""
+        with st.expander(f"{na}  →  {nb}{suffix}"):
+            bpm_a, bpm_b = effective_bpm(a), effective_bpm(b)
+            if not bpm_a or not bpm_b:
+                st.info("Set BPMs on both tracks to preview this transition.")
+                continue
+            col_slider, col_btn = st.columns([3, 1], vertical_alignment="bottom")
+            with col_slider:
+                st.slider(
+                    "Nudge crossfade point (seconds)",
+                    min_value=-4.0, max_value=4.0, step=0.01,
+                    key=nudge_key,
+                    help="0 = fully automatic. Positive starts the fade later "
+                    "in the outgoing track, negative earlier. Applied after "
+                    "beat alignment, so use it when the automatic placement "
+                    "is wrong.",
+                )
+            with col_btn:
+                if st.button("Preview crossover", key=f"pv_btn::{a}::{b}",
+                             use_container_width=True):
+                    st.session_state[shown_key] = True
+            if st.session_state.get(shown_key):
+                with st.spinner("Rendering preview…"):
+                    preview = preview_cached(
+                        a, Path(a).stat().st_mtime, float(bpm_a),
+                        b, Path(b).stat().st_mtime, float(bpm_b),
+                        float(output_bpm), float(crossfade_s),
+                        float(st.session_state[nudge_key]),
+                    )
+                preview_chart(preview)
+                st.caption(
+                    f"Fade: {preview['fade_seconds']:.1f} s starting at "
+                    f"{preview['fade_start']:.1f} s into this preview "
+                    f"(anchor {engine.format_duration(preview['anchor_seconds'])} "
+                    f"into the stretched track — {preview['note']})."
+                )
+                st.audio(preview_wav_bytes(preview))
+
+# ---------------------------------------------------------------------------
 # Render
 # ---------------------------------------------------------------------------
 
-st.subheader("3 · Render")
-
-included_paths = [p for p in ordered_paths if is_included(p)]
+st.subheader("4 · Render")
 
 if missing_bpm:
     st.warning(
@@ -431,6 +544,10 @@ if st.button(
             output_bpm=float(output_bpm),
             crossfade_seconds=float(crossfade_s),
             output_path=output_path,
+            anchor_offsets=[
+                st.session_state.get(f"nudge::{a}::{b}", 0.0)
+                for a, b in zip(included_paths[:-1], included_paths[1:])
+            ],
         )
     except engine.RenderError as exc:
         progress_bar.empty()

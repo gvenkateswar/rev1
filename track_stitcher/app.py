@@ -200,15 +200,30 @@ def scale_bpm(key: str, factor: float) -> None:
         st.session_state[key] = round(value * factor, 1)
 
 
-# Seed each track's BPM input once: filename override beats detection.
+# Seed each track's BPM input once: filename override beats detection, and
+# detections that landed an octave off the folder's median (librosa hearing
+# half/double time) are auto-folded to the right octave. Filename BPMs and
+# anything the user has already edited are never second-guessed.
+seed_bpms = {p: (i["filename_bpm"] or i["detected_bpm"]) for p, i in analyses.items()}
+folder_median = engine.suggest_output_bpm(list(seed_bpms.values()))
 for path, info in analyses.items():
     key = bpm_key(path)
     if key not in st.session_state:
-        st.session_state[key] = info["filename_bpm"] or info["detected_bpm"]
+        seed = seed_bpms[path]
+        if seed and folder_median and not info["filename_bpm"]:
+            folded, mult = engine.fold_bpm_to_reference(seed, folder_median)
+            if mult != 1.0:
+                st.session_state[f"autofix::{path}"] = (seed, folded, mult)
+                seed = folded
+        st.session_state[key] = seed
 
 
 def effective_bpm(path: str) -> float | None:
     return st.session_state.get(bpm_key(path))
+
+
+def is_included(path: str) -> bool:
+    return st.session_state.get(f"inc::{path}", True)
 
 
 # ---------------------------------------------------------------------------
@@ -217,7 +232,9 @@ def effective_bpm(path: str) -> float | None:
 
 st.subheader("2 · Review, audition, and set BPMs")
 
-suggested = engine.suggest_output_bpm([effective_bpm(p) for p in ordered_paths])
+suggested = engine.suggest_output_bpm(
+    [effective_bpm(p) for p in ordered_paths if is_included(p)]
+)
 
 gc1, gc2, gc3 = st.columns([1.2, 1, 2], vertical_alignment="bottom")
 with gc1:
@@ -277,13 +294,30 @@ for path in ordered_paths:
     info = analyses[path]
     name = names_by_path[path]
     with st.container(border=True):
-        top_l, top_r = st.columns([5, 1])
+        top_inc, top_l, top_r = st.columns([0.7, 4.3, 1])
+        with top_inc:
+            included = st.checkbox(
+                "In mix",
+                value=True,
+                key=f"inc::{path}",
+                help="Uncheck to leave this track out of the rendered mix.",
+            )
         with top_l:
             badges = []
             if info["filename_bpm"]:
                 badges.append(":blue-badge[BPM from filename]")
+            autofix = st.session_state.get(f"autofix::{path}")
+            if autofix:
+                orig, folded, mult = autofix
+                label = "×2" if mult > 1 else "÷2"
+                badges.append(
+                    f":violet-badge[auto {label}: detected {orig:g} looked "
+                    f"{'half' if mult > 1 else 'double'}-time]"
+                )
             if info["detected_bpm"] is None:
                 badges.append(":red-badge[⚠ detection failed — set BPM manually]")
+            if not included:
+                badges.append(":gray-badge[not in mix]")
             st.markdown(f"**{name}** " + " ".join(badges))
             detected = (
                 f"detected: {info['detected_bpm']:g} BPM"
@@ -336,7 +370,8 @@ for path in ordered_paths:
                 )
             else:
                 st.markdown(":red[no BPM]")
-                missing_bpm.append(name)
+                if included:
+                    missing_bpm.append(name)
         with c_audio:
             st.audio(path)
 
@@ -346,10 +381,19 @@ for path in ordered_paths:
 
 st.subheader("3 · Render")
 
+included_paths = [p for p in ordered_paths if is_included(p)]
+
 if missing_bpm:
     st.warning(
         "Set a manual BPM for these tracks before rendering: "
         + ", ".join(f"**{n}**" for n in missing_bpm)
+    )
+if not included_paths:
+    st.warning("All tracks are deselected — include at least one to render.")
+elif len(included_paths) < len(ordered_paths):
+    st.caption(
+        f"Rendering {len(included_paths)} of {len(ordered_paths)} tracks "
+        f"({len(ordered_paths) - len(included_paths)} deselected)."
     )
 
 output_name = output_name.strip() or default_name
@@ -360,8 +404,8 @@ output_path = folder_path / output_name
 if st.button(
     "🎚️ Render mix",
     type="primary",
-    disabled=bool(missing_bpm),
-    help="Set a BPM on every track first." if missing_bpm else None,
+    disabled=bool(missing_bpm) or not included_paths,
+    help="Set a BPM on every included track first." if missing_bpm else None,
 ):
     progress_bar = st.progress(0.0, text="Starting render…")
 
@@ -378,7 +422,7 @@ if st.button(
             "rms_sr": analyses[path]["rms_sr"],
             "beats": analyses[path].get("beats", []),
         }
-        for path in ordered_paths
+        for path in included_paths
     ]
 
     try:

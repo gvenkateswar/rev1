@@ -108,6 +108,20 @@ def suggest_output_bpm(bpms: Sequence[float]) -> Optional[int]:
     return int(round(float(np.median(values))))
 
 
+def fold_bpm_to_reference(bpm: Optional[float], reference: Optional[float]):
+    """Fold a detected BPM into the tempo octave nearest *reference*.
+
+    librosa frequently hears ambient material at half or double the true
+    tempo. Given the folder's median BPM as reference, return
+    (folded_bpm, multiplier) where multiplier ∈ {0.5, 1, 2} minimizes the
+    log-tempo distance to the reference. multiplier == 1 means no change.
+    """
+    if not bpm or not reference:
+        return bpm, 1.0
+    best = min((1.0, 2.0, 0.5), key=lambda m: abs(math.log2(bpm * m / reference)))
+    return round(bpm * best, 1), best
+
+
 # ---------------------------------------------------------------------------
 # Per-track analysis
 # ---------------------------------------------------------------------------

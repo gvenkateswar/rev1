@@ -417,6 +417,16 @@ def test_render_error_names_track_and_stage(track_folder, tmp_path):
 # Misc helpers
 # ---------------------------------------------------------------------------
 
+def test_fold_bpm_to_reference():
+    assert engine.fold_bpm_to_reference(36.0, 72) == (72.0, 2.0)     # half-time
+    assert engine.fold_bpm_to_reference(144.0, 72) == (72.0, 0.5)    # double-time
+    assert engine.fold_bpm_to_reference(160.5, 80) == (80.2, 0.5)
+    assert engine.fold_bpm_to_reference(75.0, 72) == (75.0, 1.0)     # close enough
+    assert engine.fold_bpm_to_reference(89.1, 80) == (89.1, 1.0)
+    assert engine.fold_bpm_to_reference(None, 72) == (None, 1.0)
+    assert engine.fold_bpm_to_reference(80.0, None) == (80.0, 1.0)
+
+
 def test_suggest_output_bpm():
     assert engine.suggest_output_bpm([72.0, 80.0, 90.0]) == 80
     assert engine.suggest_output_bpm([72.0, None, 90.0]) == 81

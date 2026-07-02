@@ -111,13 +111,15 @@ def browse_for_folder() -> str | None:
 if "folder_path" not in st.session_state:
     st.session_state.folder_path = load_config().get("last_folder", "")
 
+SUPPORTED = ", ".join(sorted(engine.AUDIO_EXTENSIONS))
+
 col_path, col_browse = st.columns([5, 1], vertical_alignment="bottom")
 with col_path:
     folder = st.text_input(
         "Folder of audio tracks",
         key="folder_path",
         placeholder="/Users/you/Music/ambient-session",
-        help="Scans for .wav, .mp3, .flac, .aiff (non-recursive).",
+        help=f"Scans for {SUPPORTED} (non-recursive).",
     )
 with col_browse:
     if st.button("Browse…", use_container_width=True):
@@ -140,7 +142,7 @@ except NotADirectoryError:
     st.stop()
 
 if not files:
-    st.warning("That folder has no supported audio files (.wav, .mp3, .flac, .aiff).")
+    st.warning(f"That folder has no supported audio files ({SUPPORTED}).")
     st.stop()
 
 folder_path = Path(folder.strip()).expanduser()

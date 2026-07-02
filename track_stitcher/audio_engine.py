@@ -47,7 +47,9 @@ RMS_FRAME_LENGTH = 2048
 RMS_HOP_LENGTH = 512
 DECAY_SEARCH_SECONDS = 45.0         # tail window searched for energy decay
 
-AUDIO_EXTENSIONS = {".wav", ".mp3", ".flac", ".aiff", ".aif"}
+# .wav/.mp3/.flac/.aiff decode via libsndfile; .m4a (AAC) falls back to
+# audioread, which uses CoreAudio on macOS — no ffmpeg needed there.
+AUDIO_EXTENSIONS = {".wav", ".mp3", ".flac", ".aiff", ".aif", ".m4a"}
 
 # Filename BPM patterns like "72bpm", "_72bpm", "72 bpm", "72-BPM".
 _FILENAME_BPM_RE = re.compile(r"(?<!\d)(\d{1,3}(?:\.\d+)?)\s*[-_ ]?bpm", re.IGNORECASE)

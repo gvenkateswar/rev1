@@ -6,7 +6,8 @@ WAV. Everything runs locally — no cloud services, no external APIs.
 
 ## What it does
 
-1. Point it at a folder of `.wav` / `.mp3` / `.flac` / `.aiff` files.
+1. Point it at a folder of `.wav` / `.mp3` / `.flac` / `.aiff` / `.m4a`
+   files (m4a/AAC decodes via CoreAudio on macOS — no extra install needed).
 2. It analyzes each track (duration, BPM via librosa, RMS envelope) — results
    are cached, so analysis runs exactly once per file.
 3. Drag-and-drop to set the mix order, audition tracks inline, correct BPM

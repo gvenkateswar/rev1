@@ -3,6 +3,8 @@ anchoring, loudness, and the full render pipeline. Run with:  pytest tests/
 """
 
 import math
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -56,6 +58,54 @@ def track_folder(tmp_path_factory):
 def test_scan_folder_filters_and_sorts(track_folder):
     files = engine.scan_folder(track_folder)
     assert [f.name for f in files] == ["a_raga_72bpm.wav", "b_middle.wav", "c_mono.wav"]
+
+
+def test_scan_folder_includes_m4a(tmp_path):
+    (tmp_path / "song.m4a").write_bytes(b"")
+    (tmp_path / "notes.txt").write_text("not audio")
+    assert [f.name for f in engine.scan_folder(tmp_path)] == ["song.m4a"]
+
+
+def have_m4a_decoder() -> bool:
+    """True if this machine can decode AAC: CoreAudio (macOS) or ffmpeg."""
+    import platform
+    return platform.system() == "Darwin" or shutil.which("ffmpeg") is not None
+
+
+@pytest.mark.skipif(not have_m4a_decoder(), reason="no m4a decoder available")
+def test_m4a_analyze_and_render(track_folder, tmp_path):
+    # Build an m4a from one of the wav fixtures.
+    m4a = track_folder / "delta_80bpm.m4a"
+    if shutil.which("ffmpeg"):
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", str(track_folder / "b_middle.wav"),
+             "-c:a", "aac", "-b:a", "192k", str(m4a)],
+            check=True, capture_output=True,
+        )
+    else:  # macOS without ffmpeg: use the built-in encoder
+        subprocess.run(
+            ["afconvert", "-f", "m4af", "-d", "aac",
+             str(track_folder / "b_middle.wav"), str(m4a)],
+            check=True, capture_output=True,
+        )
+    try:
+        info = engine.analyze_track(m4a)
+        assert "error" not in info
+        assert info["duration"] == pytest.approx(30.0, abs=0.3)
+        assert info["filename_bpm"] == 80.0
+
+        specs = make_specs(track_folder, ["a_raga_72bpm.wav"])
+        specs.append({
+            "path": str(m4a), "name": m4a.name, "bpm": 80.0,
+            "rms_env": info["rms_env"], "rms_hop": info["rms_hop"],
+            "rms_sr": info["rms_sr"],
+        })
+        result = engine.render_mix(specs, output_bpm=80.0, crossfade_seconds=8.0,
+                                   output_path=tmp_path / "with_m4a.wav")
+        assert (tmp_path / "with_m4a.wav").exists()
+        assert result["duration"] > 40
+    finally:
+        m4a.unlink()
 
 
 def test_scan_folder_invalid():

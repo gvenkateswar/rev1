@@ -573,6 +573,31 @@ def test_fold_bpm_to_reference():
     assert engine.fold_bpm_to_reference(80.0, None) == (80.0, 1.0)
 
 
+def test_analysis_includes_timbre_fingerprint(track_folder):
+    info = engine.analyze_track(track_folder / "b_middle.wav")
+    assert info["fingerprint"] is not None
+    assert len(info["fingerprint"]) == 26  # 13 MFCC means + 13 stds
+
+
+def test_order_for_max_variety_separates_similar_tracks():
+    a, b = np.array([0.0, 0.0]), np.array([10.0, 10.0])
+    fps = [a, a + 0.1, b, b + 0.1]  # tracks 0,1 sound alike; so do 2,3
+    order = engine.order_for_max_variety(fps)
+    assert sorted(order) == [0, 1, 2, 3]
+    cluster = [0 if i < 2 else 1 for i in order]
+    assert all(cluster[k] != cluster[k + 1] for k in range(3)), order
+
+    # Anchors pin the current first/last tracks; the middle still alternates.
+    order = engine.order_for_max_variety(fps, fix_first=True, fix_last=True)
+    assert order[0] == 0 and order[-1] == 3
+    cluster = [0 if i < 2 else 1 for i in order]
+    assert all(cluster[k] != cluster[k + 1] for k in range(3)), order
+
+    # Tiny inputs pass through.
+    assert engine.order_for_max_variety([a]) == [0]
+    assert engine.order_for_max_variety([a, b]) == [0, 1]
+
+
 def test_suggest_output_bpm():
     assert engine.suggest_output_bpm([72.0, 80.0, 90.0]) == 80
     assert engine.suggest_output_bpm([72.0, None, 90.0]) == 81

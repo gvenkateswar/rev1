@@ -118,6 +118,66 @@ def suggest_output_bpm(bpms: Sequence[float]) -> Optional[int]:
     return int(round(float(np.median(values))))
 
 
+def order_for_max_variety(
+    fingerprints: Sequence[np.ndarray],
+    fix_first: bool = False,
+    fix_last: bool = False,
+) -> list[int]:
+    """Order tracks so adjacent ones sound least similar.
+
+    fingerprints: one timbre vector per track (input order). Returns a
+    permutation of input indices maximizing the total timbre distance between
+    consecutive tracks — similar-sounding tracks get pushed apart. Features
+    are z-scored per dimension; distance is euclidean. A greedy
+    farthest-neighbor chain seeds the order, then pairwise-swap hill climbing
+    refines it (deterministic; n is small, so this is instant).
+
+    fix_first / fix_last pin the tracks currently in those input positions.
+    """
+    n = len(fingerprints)
+    if n <= 2:
+        return list(range(n))
+    X = np.asarray([np.asarray(f, dtype=np.float64) for f in fingerprints])
+    X = (X - X.mean(axis=0)) / (X.std(axis=0) + 1e-9)
+    diff = X[:, None, :] - X[None, :, :]
+    D = np.sqrt((diff ** 2).sum(axis=2))
+
+    last_idx = n - 1 if fix_last else None
+    start = 0 if fix_first else int(np.argmax(D.sum(axis=1)))
+    if start == last_idx:
+        start = 0 if last_idx != 0 else 1
+    remaining = [i for i in range(n) if i != start]
+    chain = [start]
+    while remaining:
+        candidates = [i for i in remaining if i != last_idx] or remaining
+        nxt = max(candidates, key=lambda i: D[chain[-1], i])
+        chain.append(nxt)
+        remaining.remove(nxt)
+    if last_idx is not None and chain[-1] != last_idx:
+        chain.remove(last_idx)
+        chain.append(last_idx)
+
+    def score(order):
+        return float(sum(D[order[k], order[k + 1]] for k in range(n - 1)))
+
+    lo = 1 if fix_first else 0
+    hi = n - 1 if fix_last else n
+    best = score(chain)
+    improved = True
+    while improved:
+        improved = False
+        for i in range(lo, hi):
+            for j in range(i + 1, hi):
+                chain[i], chain[j] = chain[j], chain[i]
+                s = score(chain)
+                if s > best + 1e-12:
+                    best = s
+                    improved = True
+                else:
+                    chain[i], chain[j] = chain[j], chain[i]
+    return chain
+
+
 def refine_bpm_from_beats(
     nominal_bpm: Optional[float],
     beats: Sequence[float],
@@ -213,6 +273,15 @@ def analyze_track(path: Union[str, Path]) -> dict:
         y=y, frame_length=RMS_FRAME_LENGTH, hop_length=RMS_HOP_LENGTH
     )[0].astype(np.float32)
 
+    # Timbre fingerprint (MFCC mean + std) for audio-similarity ordering.
+    try:
+        mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
+        fingerprint = np.concatenate(
+            [mfcc.mean(axis=1), mfcc.std(axis=1)]
+        ).astype(np.float32)
+    except Exception:
+        fingerprint = None
+
     return {
         "duration": duration,
         "detected_bpm": detected_bpm,
@@ -221,6 +290,7 @@ def analyze_track(path: Union[str, Path]) -> dict:
         "rms_env": rms,
         "rms_hop": RMS_HOP_LENGTH,
         "rms_sr": ANALYSIS_SR,
+        "fingerprint": fingerprint,
     }
 
 

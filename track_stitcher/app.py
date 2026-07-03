@@ -243,6 +243,50 @@ def is_included(path: str) -> bool:
 st.subheader("1 · Tracks — order, audition, set BPMs")
 st.caption("Reorder with the ▲▼ buttons on each card — the mix renders top to bottom.")
 
+# Order tools: audio-similarity recommendation, shuffle, and anchors.
+oc_rec, oc_shuf, oc_first, oc_last = st.columns(
+    [1.6, 1.1, 1.3, 1.3], vertical_alignment="center"
+)
+with oc_first:
+    anchor_first = st.checkbox(
+        "Anchor first track",
+        key="anchor_first",
+        help="Keep the current first card in place when recommending or shuffling.",
+    )
+with oc_last:
+    anchor_last = st.checkbox(
+        "Anchor last track",
+        key="anchor_last",
+        help="Keep the current last card in place when recommending or shuffling.",
+    )
+with oc_rec:
+    if st.button(
+        "✨ Recommend order",
+        help="Orders the tracks so neighbours sound least alike (timbre "
+        "fingerprint from analysis) — avoids two similar tracks back to back.",
+    ):
+        fingerprints = [analyses[p].get("fingerprint") for p in ordered_paths]
+        if any(f is None for f in fingerprints):
+            st.toast("Similarity data missing for some tracks — rescan the folder.")
+        else:
+            perm = engine.order_for_max_variety(
+                fingerprints, fix_first=anchor_first, fix_last=anchor_last
+            )
+            st.session_state.track_order = [ordered_paths[i] for i in perm]
+            ordered_paths = st.session_state.track_order
+with oc_shuf:
+    if st.button("🎲 Shuffle", help="Randomize the order (respects the anchors)."):
+        import random
+
+        lo = 1 if anchor_first else 0
+        hi = len(ordered_paths) - 1 if anchor_last else len(ordered_paths)
+        middle = ordered_paths[lo:hi]
+        random.shuffle(middle)
+        st.session_state.track_order = (
+            ordered_paths[:lo] + middle + ordered_paths[hi:]
+        )
+        ordered_paths = st.session_state.track_order
+
 suggested = engine.suggest_output_bpm(
     [effective_bpm(p) for p in ordered_paths if is_included(p)]
 )

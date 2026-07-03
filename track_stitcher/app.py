@@ -443,25 +443,64 @@ def preview_wav_bytes(preview: dict) -> bytes:
     return buf.getvalue()
 
 
+OUTGOING_COLOR = "#2bb3a3"   # teal, like a Logic audio region
+INCOMING_COLOR = "#c95c9e"   # pink
+
+
 def preview_chart(preview: dict) -> None:
-    """Overlay the raw (unfaded) outgoing/incoming waveform envelopes so the
-    beat alignment through the crossover is visible."""
+    """Two stacked DAW-style waveform panels (filled, mirrored around zero)
+    on a shared time axis — outgoing on top, incoming below — with beat tick
+    marks on each, so beat alignment is visible while nudging. Envelopes have
+    the crossfade gains applied, so the equal-power taper shows in the shape.
+    """
+    import altair as alt
     import numpy as np
     import pandas as pd
 
     er = preview["env_rate"]
-    out_env, in_env = preview["out_env"], preview["in_env"]
-    in_start = int(round(preview["fade_start"] * er))
-    total = max(len(out_env), in_start + len(in_env))
-    out_col = np.full(total, np.nan)
-    out_col[: len(out_env)] = out_env
-    in_col = np.full(total, np.nan)
-    in_col[in_start: in_start + len(in_env)] = in_env
-    df = pd.DataFrame(
-        {"outgoing": out_col, "incoming": in_col},
-        index=np.round(np.arange(total) / er, 2),
+    total = float(preview["fade_start"] + len(preview["in_env"]) / er)
+    x_scale = alt.Scale(domain=[0.0, total], nice=False)
+    fade_df = pd.DataFrame([{
+        "x1": preview["fade_start"],
+        "x2": preview["fade_start"] + preview["fade_seconds"],
+    }])
+
+    def panel(env, offset, beats, color, label, last):
+        peak = float(np.max(env)) or 1.0
+        t = offset + np.arange(len(env)) / er
+        wave_df = pd.DataFrame({"t": t, "hi": env / peak, "lo": -env / peak})
+        axis = alt.Axis(title="seconds", grid=False) if last else None
+        band = alt.Chart(fade_df).mark_rect(color="#808080", opacity=0.18).encode(
+            x=alt.X("x1:Q", scale=x_scale, axis=axis, title="seconds" if last else None),
+            x2="x2:Q",
+        )
+        beat_rules = alt.Chart(pd.DataFrame({"t": beats})).mark_rule(
+            color="#808080", strokeWidth=1, opacity=0.6
+        ).encode(x=alt.X("t:Q", scale=x_scale, axis=axis))
+        wave = alt.Chart(wave_df).mark_area(
+            color=color, opacity=0.95, line={"color": color}
+        ).encode(
+            x=alt.X("t:Q", scale=x_scale, axis=axis),
+            y=alt.Y("hi:Q", title=label,
+                    axis=alt.Axis(labels=False, ticks=False, grid=False),
+                    scale=alt.Scale(domain=[-1.05, 1.05])),
+            y2="lo:Q",
+        )
+        return (band + beat_rules + wave).properties(height=110)
+
+    chart = alt.vconcat(
+        panel(preview["out_env"], 0.0, preview["out_beats"],
+              OUTGOING_COLOR, "outgoing", last=False),
+        panel(preview["in_env"], preview["fade_start"], preview["in_beats"],
+              INCOMING_COLOR, "incoming", last=True),
+        spacing=4,
+    ).configure_view(strokeOpacity=0)
+    st.altair_chart(chart, use_container_width=True)
+    st.caption(
+        f":gray[Gray band = the crossfade ({preview['fade_seconds']:.1f} s "
+        f"equal-power); vertical ticks = each track's beats. Beats lining up "
+        f"vertically across the two panels = a tight transition.]"
     )
-    st.line_chart(df, height=180)
 
 
 st.subheader("2 · Transitions — preview & manual alignment")

@@ -443,6 +443,15 @@ def test_transition_preview_matches_render_anchor(track_folder):
     assert pv["fade_seconds"] == pytest.approx(8.0, abs=0.01)
     assert pv["fade_start"] == pytest.approx(10.0, abs=1.0)
     assert len(pv["out_env"]) > 0 and len(pv["in_env"]) > 0
+    # Display envelopes are post-fade: the outgoing tail tapers to ~silence
+    # and the incoming head starts near silence (equal-power crossfade).
+    assert pv["out_env"][-1] < 0.05 * np.max(pv["out_env"])
+    assert pv["in_env"][0] < 0.05 * np.max(pv["in_env"])
+    # Beat ticks land on the preview timeline: outgoing within its panel,
+    # incoming starting at fade_start.
+    assert len(pv["out_beats"]) > 0 and len(pv["in_beats"]) > 0
+    assert 0 <= pv["out_beats"].min() and pv["out_beats"].max() <= pv["fade_start"] + pv["fade_seconds"] + 0.1
+    assert pv["in_beats"].min() >= pv["fade_start"]
     # The same anchor logic drives the full render (shared helper), and the
     # anchor sits inside the stretched outgoing track.
     assert 0 <= pv["anchor_seconds"] <= 30.0

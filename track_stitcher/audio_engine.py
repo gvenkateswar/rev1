@@ -400,9 +400,12 @@ def render_transition_preview(
         fade_seconds   effective fade length (short-track rule applied)
         anchor_seconds fade start position within the stretched outgoing track
         note           human-readable anchor description
-        out_env, in_env, env_rate   coarse amplitude envelopes of the raw
-            (unfaded) outgoing/incoming segments for waveform display; the
-            incoming envelope starts at fade_start.
+        out_env, in_env, env_rate   coarse amplitude envelopes of the
+            outgoing/incoming segments with the crossfade gains applied
+            (so the taper is visible); the incoming envelope starts at
+            fade_start on the preview timeline.
+        out_beats, in_beats   beat positions on the preview timeline, for
+            beat tick marks in the waveform display.
     """
     out_rate = float(output_bpm) / float(out_spec["bpm"])
     in_rate = float(output_bpm) / float(in_spec["bpm"])
@@ -446,6 +449,7 @@ def render_transition_preview(
     head = y_out[:len(y_out) - fade_n]
     overlap = (y_out[len(y_out) - fade_n:] * fade_out + y_in[:fade_n] * fade_in)
     audio = np.concatenate([head, overlap.astype(np.float32), y_in[fade_n:]])
+    fade_start_s = len(head) / sample_rate
 
     def coarse_env(y: np.ndarray, block: int) -> np.ndarray:
         mono = np.abs(y).mean(axis=1)
@@ -454,16 +458,34 @@ def render_transition_preview(
             mono = np.concatenate([mono, np.zeros(pad, dtype=mono.dtype)])
         return mono.reshape(-1, block).max(axis=1)
 
+    # Envelopes for display are post-fade so the crossfade taper is visible.
+    y_out_faded = y_out.copy()
+    y_out_faded[len(y_out) - fade_n:] *= fade_out
+    y_in_faded = y_in.copy()
+    y_in_faded[:fade_n] *= fade_in
+
+    # Beat positions mapped onto the preview timeline (t=0 = preview start;
+    # the incoming track starts at fade_start_s), for tick marks in the UI.
+    out_beats_st = np.asarray(out_spec.get("beats", []), dtype=np.float64) / out_rate
+    out_beats_pv = out_beats_st[
+        (out_beats_st >= seg_start_st)
+        & (out_beats_st <= seg_start_st + len(y_out) / sample_rate)
+    ] - seg_start_st
+    in_beats_st = np.asarray(in_spec.get("beats", []), dtype=np.float64) / in_rate
+    in_beats_pv = in_beats_st[in_beats_st <= len(y_in) / sample_rate] + fade_start_s
+
     env_block = max(1, sample_rate // 100)  # ~100 envelope points per second
     return {
         "audio": audio,
         "sample_rate": sample_rate,
-        "fade_start": len(head) / sample_rate,
+        "fade_start": fade_start_s,
         "fade_seconds": fade_n / sample_rate,
         "anchor_seconds": anchor / sample_rate,
         "note": note,
-        "out_env": coarse_env(y_out, env_block),
-        "in_env": coarse_env(y_in, env_block),
+        "out_env": coarse_env(y_out_faded, env_block),
+        "in_env": coarse_env(y_in_faded, env_block),
+        "out_beats": out_beats_pv,
+        "in_beats": in_beats_pv,
         "env_rate": sample_rate / env_block,
     }
 

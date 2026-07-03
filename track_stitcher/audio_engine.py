@@ -954,6 +954,7 @@ def render_mix(
     progress: Optional[Callable[[float, str], None]] = None,
     anchor_offsets: Optional[Sequence[float]] = None,
     in_offsets: Optional[Sequence[float]] = None,
+    final_fade_seconds: float = 0.0,
 ) -> dict:
     """Render the full mix and write a 24-bit WAV.
 
@@ -974,6 +975,9 @@ def render_mix(
     in_offsets: optional per-transition start offsets in seconds
     (stretched-time): how far into the incoming track it enters the mix —
     everything before the offset is skipped (e.g. to jump past a long intro).
+
+    final_fade_seconds: when > 0, fade the end of the mix smoothly to
+    silence over this many seconds (for final tracks that end abruptly).
 
     Returns {output_path, duration, integrated_lufs, true_peak_dbtp, log}.
     """
@@ -1134,6 +1138,18 @@ def render_mix(
     chunks.append(pending)
     mix = np.concatenate(chunks, axis=0)
     del chunks, pending
+
+    # Optional fade-out on the ending, applied before mastering so the
+    # loudness/true-peak targets are measured on the final audio.
+    if final_fade_seconds and final_fade_seconds > 0:
+        n_fade = min(len(mix), int(round(float(final_fade_seconds) * sample_rate)))
+        if n_fade > 1:
+            curve = np.cos(np.linspace(0.0, np.pi / 2.0, n_fade)) ** 2
+            mix[-n_fade:] *= curve[:, None].astype(np.float32)
+            log.append(
+                f"Final fade-out: last {n_fade / sample_rate:.1f} s of the mix "
+                f"faded smoothly to silence"
+            )
 
     stage = "master"
     report(0.92, "Mastering: measuring loudness…")

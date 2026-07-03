@@ -27,7 +27,10 @@ WAV. Everything runs locally — no cloud services, no external APIs.
    the fade starts in the outgoing track, and where the incoming track
    enters (skip its intro). Both are used in the final render. Previews use
    short segments around the transition, so they're fast even on long tracks.
-5. Click **Render**: each track is pitch-preserving time-stretched to the
+5. Optional: **Fade out the ending** — smoothly fades the last seconds of
+   the mix to silence, for final tracks that end abruptly (length
+   configurable, default 15 s).
+6. Click **Render**: each track is pitch-preserving time-stretched to the
    output BPM (rubberband), gain-matched to −18 LUFS, joined with equal-power
    crossfades anchored where the outgoing track's energy is already decaying
    and beat-aligned so both tracks' beats coincide exactly through the

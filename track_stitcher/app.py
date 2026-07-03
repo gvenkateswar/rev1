@@ -317,6 +317,21 @@ with gc2:
         help="Applied to every transition (per-transition overrides are a "
         "planned v2 feature).",
     )
+    fade_out_end = st.checkbox(
+        "Fade out the ending",
+        key="fade_out_end",
+        help="Fade the last seconds of the mix smoothly to silence — for "
+        "final tracks that end abruptly.",
+    )
+    final_fade_s = 0.0
+    if fade_out_end:
+        final_fade_s = st.number_input(
+            "Fade-out length (seconds)",
+            min_value=2.0,
+            max_value=60.0,
+            value=15.0,
+            step=1.0,
+        )
 with gc3:
     default_name = f"stitched_mix_{datetime.date.today():%Y%m%d}.wav"
     output_name = st.text_input(
@@ -807,6 +822,7 @@ if st.session_state.pop("render_requested", False):
                 st.session_state.get(f"instart::{a}::{b}", 0.0)
                 for a, b in zip(included_paths[:-1], included_paths[1:])
             ],
+            final_fade_seconds=float(final_fade_s),
         )
     except engine.RenderError as exc:
         progress_bar.empty()

@@ -414,6 +414,35 @@ def test_short_track_shortens_crossfade(track_folder, tmp_path):
         (track_folder / "short.wav").unlink()
 
 
+def test_final_fade_out_option(tmp_path):
+    """With the option on, a mix whose last track ends abruptly must end in
+    silence; without it, the abrupt ending is preserved."""
+    abrupt = pulsed_tone(80, 20, freq=440, fade_tail=0)  # loud to the last sample
+    folder = tmp_path / "abrupt"
+    folder.mkdir()
+    sf.write(folder / "t.wav", np.stack([abrupt, abrupt], axis=1), SR)
+    info = engine.analyze_track(folder / "t.wav")
+    spec = {"path": str(folder / "t.wav"), "name": "t.wav", "bpm": 80.0, **info}
+
+    plain = engine.render_mix([spec], output_bpm=80.0, crossfade_seconds=8.0,
+                              output_path=tmp_path / "plain.wav")
+    faded = engine.render_mix([spec], output_bpm=80.0, crossfade_seconds=8.0,
+                              output_path=tmp_path / "faded.wav",
+                              final_fade_seconds=6.0)
+    assert "Final fade-out: last 6.0 s" in "\n".join(faded["log"])
+    assert "Final fade-out" not in "\n".join(plain["log"])
+    assert faded["duration"] == pytest.approx(plain["duration"], abs=0.05)
+
+    def tail_rms(path, seconds):
+        y, _ = sf.read(str(path))
+        tail = y[-int(seconds * SR):]
+        return float(np.sqrt(np.mean(tail ** 2)))
+
+    # Faded mix ends essentially silent; the plain one is still loud there.
+    assert tail_rms(tmp_path / "faded.wav", 0.5) < 0.02
+    assert tail_rms(tmp_path / "plain.wav", 0.5) > 0.05
+
+
 def test_render_error_names_track_and_stage(track_folder, tmp_path):
     specs = make_specs(track_folder, ["b_middle.wav"])
     specs[0]["path"] = str(track_folder / "gone.wav")

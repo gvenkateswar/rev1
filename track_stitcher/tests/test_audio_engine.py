@@ -183,8 +183,11 @@ def test_stretch_preserves_pitch():
 
 def test_stretch_skipped_within_tolerance():
     audio = np.zeros((SR, 2), dtype=np.float32)
-    out, applied = engine.stretch_track(audio, rate=1.004)
+    out, applied = engine.stretch_track(audio, rate=1.0003)
     assert not applied and out is audio
+    # 0.4% off is NOT "close enough": it would drift ~80 ms over a 20 s fade.
+    _, applied = engine.stretch_track(audio, rate=1.004)
+    assert applied
 
 
 # ---------------------------------------------------------------------------
@@ -349,9 +352,10 @@ def test_render_mix_end_to_end(track_folder, tmp_path):
 
     # Duration: stretched lengths minus two 8 s overlaps, minus any trimmed
     # decay tails (each tail trim is bounded by the 45 s search window).
+    # Rates come from the measured beat grids, so allow ±2% on the estimate.
     stretched = [30 * 80 / 72, 30.0, 30 * 80 / 90]
-    upper = sum(stretched) - 2 * 8.0 + 0.1
-    lower = upper - 2 * 45.0
+    upper = sum(stretched) * 1.02 - 2 * 8.0 + 0.1
+    lower = sum(stretched) * 0.98 - 2 * 8.0 - 2 * 45.0
     assert lower < result["duration"] < upper
     assert info.duration == pytest.approx(result["duration"], abs=0.01)
 
@@ -458,6 +462,27 @@ def test_transition_preview_matches_render_anchor(track_folder):
     assert "beat-aligned" in pv["note"]
 
 
+def test_preview_extends_incoming_past_silent_intro(track_folder, tmp_path):
+    """An incoming track that opens with a long quiet intro must still show
+    audible material (and its first beat) in the preview, not a blank panel."""
+    quiet = np.concatenate([
+        np.zeros(int(25 * SR), dtype=np.float32),
+        pulsed_tone(80, 30, freq=660),
+    ])
+    path = tmp_path / "quiet_intro.wav"
+    sf.write(path, np.stack([quiet, quiet], axis=1), SR)
+    info = engine.analyze_track(path)
+    in_spec = {"path": str(path), "name": path.name, "bpm": 80.0, **info}
+    out_spec = full_specs(track_folder, ["b_middle.wav"], [80.0])[0]
+    pv = engine.render_transition_preview(out_spec, in_spec, output_bpm=80.0,
+                                          fade_seconds=8.0)
+    # The incoming segment reaches past the 25 s silence to its first beat.
+    in_len = len(pv["in_env"]) / pv["env_rate"]
+    assert in_len > 24.0
+    assert len(pv["in_beats"]) > 0
+    assert pv["in_env"].max() > 0.01  # audible material is in the panel
+
+
 def test_transition_preview_manual_nudge_shifts_anchor(track_folder):
     out_spec, in_spec = full_specs(
         track_folder, ["b_middle.wav", "c_mono.wav"], [80.0, 90.0])
@@ -484,6 +509,59 @@ def test_render_mix_applies_anchor_offsets(track_folder, tmp_path):
 # ---------------------------------------------------------------------------
 # Misc helpers
 # ---------------------------------------------------------------------------
+
+def test_refine_bpm_from_beats():
+    # Beats truly at 151.6 BPM, labeled 152 -> refined to the measured pulse.
+    beats = np.arange(300) * (60.0 / 151.6)
+    assert engine.refine_bpm_from_beats(152.0, beats) == pytest.approx(151.6, abs=0.01)
+    # Beat grid at double the labeled tempo (tracker ticking eighths) folds down.
+    beats = np.arange(300) * (60.0 / 151.6)
+    assert engine.refine_bpm_from_beats(76.0, beats) == pytest.approx(75.8, abs=0.01)
+    # Skipped beats are counted as whole multiples, not treated as slow tempo.
+    beats = np.delete(np.arange(300) * 0.75, [50, 51, 120])
+    assert engine.refine_bpm_from_beats(80.0, beats) == pytest.approx(80.0, abs=0.05)
+    # A grid that contradicts the label beyond tolerance is ignored.
+    beats = np.arange(300) * (60.0 / 140.0)
+    assert engine.refine_bpm_from_beats(152.0, beats) == 152.0
+    # Too few beats -> label wins; no label -> passthrough.
+    assert engine.refine_bpm_from_beats(120.0, [0.0, 0.5, 1.0]) == 120.0
+    assert engine.refine_bpm_from_beats(None, np.arange(50) * 0.5) is None
+
+
+def test_mislabeled_tempo_still_locks_through_crossfade(tmp_path):
+    """A track whose true pulse is 81.0 BPM but is labeled 80 must not drift
+    against a true-80 track during the fade — the stretch rate comes from the
+    measured beat grid, not the label."""
+    folder = tmp_path / "drift"
+    folder.mkdir()
+    a = pulsed_tone(81.0, 60, freq=330, fade_tail=10)   # labeled 80 below
+    sf.write(folder / "a.wav", np.stack([a, a], axis=1), SR)
+    b = pulsed_tone(80.0, 60, freq=550)
+    sf.write(folder / "b.wav", np.stack([b, b], axis=1), SR)
+
+    specs = []
+    for name in ["a.wav", "b.wav"]:
+        info = engine.analyze_track(folder / name)
+        specs.append({
+            "path": str(folder / name), "name": name, "bpm": 80.0,  # the lie
+            "rms_env": info["rms_env"], "rms_hop": info["rms_hop"],
+            "rms_sr": info["rms_sr"], "beats": info["beats"],
+        })
+    result = engine.render_mix(specs, output_bpm=80.0, crossfade_seconds=12.0,
+                               output_path=tmp_path / "drift_mix.wav")
+    assert "tempo refined" in "\n".join(result["log"])
+
+    import librosa
+    mix, _ = sf.read(str(tmp_path / "drift_mix.wav"))
+    onsets = librosa.onset.onset_detect(y=mix.mean(axis=1).astype(np.float32),
+                                        sr=SR, units="time", backtrack=False)
+    period = 60.0 / 80.0
+    gaps = np.diff(onsets)
+    offsets = np.minimum(gaps % period, period - gaps % period)
+    # Without refinement the 1.25% label error drifts ~150 ms by the end of a
+    # 12 s fade; with it, every onset gap stays on the grid.
+    assert float(np.max(offsets)) < 0.045, f"off-grid gaps: {gaps[offsets >= 0.045]}"
+
 
 def test_fold_bpm_to_reference():
     assert engine.fold_bpm_to_reference(36.0, 72) == (72.0, 2.0)     # half-time

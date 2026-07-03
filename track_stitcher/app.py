@@ -447,46 +447,85 @@ OUTGOING_COLOR = "#2bb3a3"   # teal, like a Logic audio region
 INCOMING_COLOR = "#c95c9e"   # pink
 
 
-def preview_chart(preview: dict) -> None:
+def preview_total_seconds(preview: dict) -> float:
+    return float(preview["fade_start"] + len(preview["in_env"]) / preview["env_rate"])
+
+
+def preview_chart(preview: dict, window: tuple) -> None:
     """Two stacked DAW-style waveform panels (filled, mirrored around zero)
-    on a shared time axis — outgoing on top, incoming below — with beat tick
-    marks on each, so beat alignment is visible while nudging. Envelopes have
-    the crossfade gains applied, so the equal-power taper shows in the shape.
+    on a shared time axis — outgoing on top, incoming below — with tick marks
+    at each track's detected beats, so beat alignment is visible while
+    nudging. Envelopes have the crossfade gains applied, so the equal-power
+    taper shows in the shape. *window* is the (start, end) zoom range in
+    preview seconds; envelopes are sliced and adaptively downsampled so
+    zooming in reveals more detail.
     """
     import altair as alt
     import numpy as np
     import pandas as pd
 
     er = preview["env_rate"]
-    total = float(preview["fade_start"] + len(preview["in_env"]) / er)
-    x_scale = alt.Scale(domain=[0.0, total], nice=False)
-    fade_df = pd.DataFrame([{
-        "x1": preview["fade_start"],
-        "x2": preview["fade_start"] + preview["fade_seconds"],
-    }])
+    t0, t1 = float(window[0]), float(window[1])
+    x_scale = alt.Scale(domain=[t0, t1], nice=False)
+    fade0 = preview["fade_start"]
+    fade1 = fade0 + preview["fade_seconds"]
+    band_df = pd.DataFrame(
+        [{"x1": max(t0, fade0), "x2": min(t1, fade1)}]
+        if fade1 > t0 and fade0 < t1 else {"x1": [], "x2": []}
+    )
+
+    def wave_df(env, offset):
+        peak = float(np.max(env)) if len(env) else 0.0
+        i0 = max(0, int((t0 - offset) * er))
+        i1 = min(len(env), max(i0, int(np.ceil((t1 - offset) * er))))
+        seg = np.asarray(env[i0:i1], dtype=float)
+        if not len(seg) or peak <= 0:
+            return pd.DataFrame({"t": [], "hi": [], "lo": []})
+        step = max(1, int(np.ceil(len(seg) / 2200)))  # cap points per panel
+        if step > 1:
+            pad = (-len(seg)) % step
+            if pad:
+                seg = np.concatenate([seg, np.zeros(pad)])
+            seg = seg.reshape(-1, step).max(axis=1)
+        t = offset + (i0 + np.arange(len(seg)) * step + step / 2) / er
+        return pd.DataFrame({"t": t, "hi": seg / peak, "lo": -seg / peak})
 
     def panel(env, offset, beats, color, label, last):
-        peak = float(np.max(env)) or 1.0
-        t = offset + np.arange(len(env)) / er
-        wave_df = pd.DataFrame({"t": t, "hi": env / peak, "lo": -env / peak})
-        axis = alt.Axis(title="seconds", grid=False) if last else None
-        band = alt.Chart(fade_df).mark_rect(color="#808080", opacity=0.18).encode(
-            x=alt.X("x1:Q", scale=x_scale, axis=axis, title="seconds" if last else None),
-            x2="x2:Q",
-        )
-        beat_rules = alt.Chart(pd.DataFrame({"t": beats})).mark_rule(
-            color="#808080", strokeWidth=1, opacity=0.6
-        ).encode(x=alt.X("t:Q", scale=x_scale, axis=axis))
-        wave = alt.Chart(wave_df).mark_area(
-            color=color, opacity=0.95, line={"color": color}
-        ).encode(
-            x=alt.X("t:Q", scale=x_scale, axis=axis),
-            y=alt.Y("hi:Q", title=label,
-                    axis=alt.Axis(labels=False, ticks=False, grid=False),
-                    scale=alt.Scale(domain=[-1.05, 1.05])),
-            y2="lo:Q",
-        )
-        return (band + beat_rules + wave).properties(height=110)
+        axis = alt.Axis(grid=False) if last else None
+
+        def x(field):
+            return alt.X(field, scale=x_scale, axis=axis,
+                         title="seconds" if last else None)
+
+        y = alt.Y("hi:Q", title=label,
+                  axis=alt.Axis(labels=False, ticks=False, grid=False),
+                  scale=alt.Scale(domain=[-1.05, 1.05]))
+        layers = []
+        if len(band_df):
+            layers.append(
+                alt.Chart(band_df).mark_rect(color="#808080", opacity=0.18)
+                .encode(x=x("x1:Q"), x2="x2:Q")
+            )
+        visible_beats = [b for b in np.asarray(beats, dtype=float) if t0 <= b <= t1]
+        if visible_beats:
+            layers.append(
+                alt.Chart(pd.DataFrame({"t": visible_beats}))
+                .mark_rule(color="#808080", strokeWidth=1, opacity=0.6)
+                .encode(x=x("t:Q"))
+            )
+        wdf = wave_df(env, offset)
+        if len(wdf):
+            layers.append(
+                alt.Chart(wdf).mark_area(color=color, opacity=0.95)
+                .encode(x=x("t:Q"), y=y, y2="lo:Q")
+            )
+        else:  # silent or out-of-window segment: draw the zero line
+            layers.append(
+                alt.Chart(pd.DataFrame({"t": [max(t0, offset), t1], "hi": [0.0, 0.0]}))
+                .mark_line(color=color, strokeWidth=1)
+                .encode(x=x("t:Q"), y=y)
+            )
+        return alt.layer(*layers).properties(height=110)
 
     chart = alt.vconcat(
         panel(preview["out_env"], 0.0, preview["out_beats"],
@@ -498,8 +537,9 @@ def preview_chart(preview: dict) -> None:
     st.altair_chart(chart, use_container_width=True)
     st.caption(
         f":gray[Gray band = the crossfade ({preview['fade_seconds']:.1f} s "
-        f"equal-power); vertical ticks = each track's beats. Beats lining up "
-        f"vertically across the two panels = a tight transition.]"
+        f"equal-power); vertical ticks = each track's detected beats (every "
+        f"beat, not just downbeats). Ticks lining up vertically across the "
+        f"two panels = a tight transition.]"
     )
 
 
@@ -521,9 +561,10 @@ else:
         shown_key = f"preview_on::{a}::{b}"
         if nudge_key not in st.session_state:
             st.session_state[nudge_key] = 0.0
-        nudge_now = st.session_state[nudge_key]
-        suffix = f" (nudged {nudge_now:+.2f} s)" if nudge_now else ""
-        with st.expander(f"{na}  →  {nb}{suffix}"):
+        # NOTE: the label must not change with the nudge value — a changed
+        # label makes Streamlit treat the expander as a new widget and
+        # collapse it on every slider move.
+        with st.expander(f"{na}  →  {nb}"):
             bpm_a, bpm_b = effective_bpm(a), effective_bpm(b)
             if not bpm_a or not bpm_b:
                 st.info("Set BPMs on both tracks to preview this transition.")
@@ -551,7 +592,20 @@ else:
                         float(output_bpm), float(crossfade_s),
                         float(st.session_state[nudge_key]),
                     )
-                preview_chart(preview)
+                total = round(preview_total_seconds(preview), 1)
+                zoom_key = f"zoom::{a}::{b}"
+                stored = st.session_state.get(zoom_key)
+                if stored is not None and not (0.0 <= stored[0] < stored[1] <= total):
+                    del st.session_state[zoom_key]  # settings changed the range
+                window = st.slider(
+                    "Zoom (visible time window, seconds)",
+                    min_value=0.0, max_value=total,
+                    value=st.session_state.get(zoom_key, (0.0, total)),
+                    step=0.1, key=zoom_key,
+                    help="Narrow the window to inspect beat alignment "
+                    "precisely — waveform detail increases as you zoom in.",
+                )
+                preview_chart(preview, window)
                 st.caption(
                     f"Fade: {preview['fade_seconds']:.1f} s starting at "
                     f"{preview['fade_start']:.1f} s into this preview "

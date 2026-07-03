@@ -40,7 +40,10 @@ SAMPLE_RATE = 48000                 # common rate everything is resampled to
 WORKING_LUFS = -18.0                # per-track gain-match level before mixing
 TARGET_LUFS = -14.0                 # final integrated loudness of the mix
 TRUE_PEAK_CEILING_DBTP = -1.0       # final true-peak ceiling
-STRETCH_SKIP_TOLERANCE = 0.005      # skip stretching within +/-0.5%
+# Skip stretching only when the ratio is essentially 1. This must be tight:
+# a skipped stretch leaves the track at its true tempo, and even 0.5% of
+# tempo error drifts ~100 ms across a 20 s crossfade — an audible flam.
+STRETCH_SKIP_TOLERANCE = 0.0005     # skip stretching within +/-0.05%
 
 ANALYSIS_SR = 22050                 # sample rate used for BPM/RMS analysis
 RMS_FRAME_LENGTH = 2048
@@ -113,6 +116,47 @@ def suggest_output_bpm(bpms: Sequence[float]) -> Optional[int]:
     if not values:
         return None
     return int(round(float(np.median(values))))
+
+
+def refine_bpm_from_beats(
+    nominal_bpm: Optional[float],
+    beats: Sequence[float],
+    tolerance: float = 0.04,
+) -> Optional[float]:
+    """Measure a track's true tempo from its beat grid, guarded by the label.
+
+    Tempo labels (detection rounded to 0.1, filename tags, manual entries)
+    are often slightly off — a track called 152 BPM whose real pulse is 151.6
+    ends up 0.3% off-tempo after stretching, which audibly drifts across a
+    long crossfade. The beat grid measures the actual pulse: total elapsed
+    time divided by total beat count (gaps from skipped beats are counted as
+    whole multiples of the median interval, and quantization noise averages
+    out over the track). The result is folded to the label's tempo octave and
+    used only when it confirms the label within *tolerance* — otherwise the
+    label wins.
+    """
+    if not nominal_bpm:
+        return nominal_bpm
+    nominal = float(nominal_bpm)
+    beats = np.asarray(beats, dtype=np.float64)
+    if len(beats) < 8:
+        return nominal
+    ibis = np.diff(beats)
+    ibis = ibis[ibis > 1e-3]
+    if len(ibis) < 4:
+        return nominal
+    med = float(np.median(ibis))
+    counts = np.round(ibis / med)
+    valid = counts >= 1
+    if not np.any(valid):
+        return nominal
+    ibi = float(np.sum(ibis[valid]) / np.sum(counts[valid]))
+    raw = 60.0 / ibi
+    octave = 2.0 ** round(math.log2(nominal / raw))
+    refined = raw * octave
+    if abs(refined / nominal - 1.0) <= tolerance:
+        return refined
+    return nominal
 
 
 def fold_bpm_to_reference(bpm: Optional[float], reference: Optional[float]):
@@ -407,8 +451,11 @@ def render_transition_preview(
         out_beats, in_beats   beat positions on the preview timeline, for
             beat tick marks in the waveform display.
     """
-    out_rate = float(output_bpm) / float(out_spec["bpm"])
-    in_rate = float(output_bpm) / float(in_spec["bpm"])
+    # Same beat-grid tempo refinement as render_mix, so preview == render.
+    out_rate = float(output_bpm) / refine_bpm_from_beats(
+        float(out_spec["bpm"]), out_spec.get("beats", []))
+    in_rate = float(output_bpm) / refine_bpm_from_beats(
+        float(in_spec["bpm"]), in_spec.get("beats", []))
     out_len_st = float(out_spec["duration"]) / out_rate   # stretched seconds
     in_len_st = float(in_spec["duration"]) / in_rate
 
@@ -435,11 +482,18 @@ def render_transition_preview(
     y_out, _ = stretch_track(y_out, out_rate, sample_rate)
     y_out, _ = normalize_track(y_out, sample_rate)
 
+    # Incoming: at least fade + context, but always long enough to reach the
+    # incoming track's first detected beat — ambient tracks often open with a
+    # long quiet intro, and a preview showing only that silence looks broken.
+    in_needed_st = fade_s + context_seconds
+    in_beats_src = np.asarray(in_spec.get("beats", []), dtype=np.float64)
+    if len(in_beats_src):
+        first_beat_st = float(in_beats_src[0]) / in_rate
+        in_needed_st = max(in_needed_st, min(first_beat_st + 5.0, fade_s + 60.0))
     y_in = load_track_stereo(
         in_spec["path"], sample_rate,
         offset=0.0,
-        duration=min(float(in_spec["duration"]),
-                     max(0.1, (fade_s + context_seconds) * in_rate)),
+        duration=min(float(in_spec["duration"]), max(0.1, in_needed_st * in_rate)),
     )
     y_in, _ = stretch_track(y_in, in_rate, sample_rate)
     y_in, _ = normalize_track(y_in, sample_rate)
@@ -474,7 +528,7 @@ def render_transition_preview(
     in_beats_st = np.asarray(in_spec.get("beats", []), dtype=np.float64) / in_rate
     in_beats_pv = in_beats_st[in_beats_st <= len(y_in) / sample_rate] + fade_start_s
 
-    env_block = max(1, sample_rate // 100)  # ~100 envelope points per second
+    env_block = max(1, sample_rate // 200)  # ~200 envelope points/s (zoomable)
     return {
         "audio": audio,
         "sample_rate": sample_rate,
@@ -631,7 +685,17 @@ def render_mix(
             raise RenderError(name, stage, exc) from exc
 
         stage = "stretch"
-        rate = float(output_bpm) / float(spec["bpm"])
+        # Stretch by the tempo measured from the beat grid (guarded by the
+        # labeled BPM) — labels are rarely exact, and a fraction of a percent
+        # of tempo error audibly drifts across a long crossfade.
+        nominal_bpm = float(spec["bpm"])
+        refined_bpm = refine_bpm_from_beats(nominal_bpm, spec.get("beats", []))
+        rate = float(output_bpm) / refined_bpm
+        if abs(refined_bpm - nominal_bpm) > 0.005:
+            log.append(
+                f"{name}: tempo refined {nominal_bpm:g} -> {refined_bpm:.2f} BPM "
+                f"(measured from its beat grid)"
+            )
         report(base + 0.3 * per_track_budget, f"Stretching track {i + 1} of {n}: {name}")
         try:
             audio, stretched = stretch_track(audio, rate, sample_rate)
@@ -639,11 +703,11 @@ def render_mix(
             raise RenderError(name, stage, exc) from exc
         if stretched:
             log.append(
-                f"{name}: stretched {spec['bpm']:g} -> {output_bpm:g} BPM "
+                f"{name}: stretched {refined_bpm:.2f} -> {output_bpm:g} BPM "
                 f"(x{1 / rate:.3f} duration, pitch preserved)"
             )
         else:
-            log.append(f"{name}: stretch skipped (ratio within ±0.5%)")
+            log.append(f"{name}: stretch skipped (already at the output tempo)")
 
         stage = "normalize"
         report(base + 0.7 * per_track_budget, f"Normalizing track {i + 1} of {n}: {name}")

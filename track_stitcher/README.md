@@ -68,10 +68,13 @@ different, PEP 668-locked interpreter than the one running streamlit.)
   until you set a BPM manually.
 - Stretch percentages are color-coded (amber beyond ±8%, red beyond ±15%) —
   large stretches degrade sustained/ambient textures.
-- Stretching is skipped when a track is already within ±0.5% of the output
-  BPM. Mono files are converted to stereo. Single-track folders skip
-  crossfading. Transitions involving tracks shorter than 2× the crossfade
-  length are automatically shortened (noted in the render log).
+- Each track's true tempo is measured from its detected beat grid (tempo
+  labels are rarely exact), so tracks land on the output BPM precisely and
+  stay locked through long crossfades. Stretching is skipped only when a
+  track is already within ±0.05% of the output BPM. Mono files are converted
+  to stereo. Single-track folders skip crossfading. Transitions involving
+  tracks shorter than 2× the crossfade length are automatically shortened
+  (noted in the render log).
 - The render log (expandable after a render) lists the stretch ratio, gain,
   and fade anchor chosen for every track.
 

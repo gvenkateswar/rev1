@@ -1,0 +1,9 @@
+# Video Stitcher deps. Also requires ffmpeg 4.3+ on PATH (xfade filter).
+#
+# This tool is independent of the Shorts Generator's torch/whisper stack,
+# so it has no numpy<2 pin — but it coexists fine with those pins if you
+# install both tools into one environment (numpy>=1.24 overlaps).
+streamlit>=1.30.0
+numpy>=1.24.0
+# Frame sampling for thumbnails + visual-flow order recommendation.
+opencv-python-headless>=4.8

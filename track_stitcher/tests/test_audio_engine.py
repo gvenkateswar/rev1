@@ -607,6 +607,30 @@ def test_beat_timemap_pins_drifting_beats_to_grid():
     assert pins[-1][0] == int(120 * SR)
 
 
+def test_beat_timemap_respects_octave_folded_label(tmp_path):
+    """A track detected at 76 BPM but labeled 152 (auto x2 fold): one detected
+    beat spans TWO output beats. The timemap must space targets accordingly —
+    the regression here played such tracks at double speed."""
+    beats = np.arange(120) * (60.0 / 76.0)          # ticking at 76 BPM
+    n_src = int(beats[-1] * SR + SR)
+    pins, targets = engine.build_beat_timemap(beats, 152.0, 152.0, n_src, SR)
+    # Detected-beat spacing in the output = 2 output beats at 152.
+    assert np.allclose(np.diff(targets), 2 * 60.0 / 152.0, atol=1e-3)
+    # Overall duration is preserved (rate ~ 1), not halved.
+    assert pins[-1][1] == pytest.approx(n_src, rel=0.01)
+
+    # End-to-end: the warped audio keeps its duration and pulse rate.
+    y = pulsed_tone(76.0, 40, freq=440)
+    audio = np.stack([y, y], axis=1)
+    path = tmp_path / "half_grid.wav"
+    sf.write(path, audio, SR)
+    info = engine.analyze_track(path)
+    warped, beat_pos, mapped = engine.stretch_track_beatmapped(
+        audio, SR, info["beats"], 152.0, 152.0)
+    assert mapped
+    assert len(warped) == pytest.approx(len(audio), rel=0.02)  # NOT 2x speed
+
+
 def test_beatmapped_stretch_fixes_internal_drift(tmp_path):
     """The case uniform stretching cannot fix: a track whose tempo drifts
     internally. After beat-mapping, its crossfade against a steady track

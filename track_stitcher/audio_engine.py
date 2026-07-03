@@ -266,8 +266,15 @@ def build_beat_timemap(
     period = 60.0 / float(output_bpm)
     ibis = np.diff(beats)
     med = float(np.median(ibis))
+    # The tracker may tick at half/double the labeled tempo (e.g. a track
+    # auto-folded to 152 whose beats were detected at 76): one detected-beat
+    # step then spans `octave` output beats. Targets must be spaced by
+    # period * octave, or the warp would play the track at 2x / 0.5x speed.
+    raw = 60.0 / med
+    octave = 2.0 ** round(math.log2(float(nominal_bpm) / raw))
+    step = period * octave
     k = np.concatenate([[0.0], np.cumsum(np.maximum(1.0, np.round(ibis / med)))])
-    targets = beats[0] / rate + k * period
+    targets = beats[0] / rate + k * step
 
     # The tracker loses the pulse in quiet intros/outros, but the music
     # usually keeps time there — and outros are exactly where crossfades
@@ -282,16 +289,16 @@ def build_beat_timemap(
     if ibi_head:
         j = 1
         while (beats[0] - j * ibi_head > 0.02
-               and targets[0] - j * period > 0.02):
+               and targets[0] - j * step > 0.02):
             src_list.insert(0, beats[0] - j * ibi_head)
-            tgt_list.insert(0, targets[0] - j * period)
+            tgt_list.insert(0, targets[0] - j * step)
             j += 1
     dur_src = n_src_samples / sr
     if ibi_tail:
         j = 1
         while beats[-1] + j * ibi_tail < dur_src - 0.02:
             src_list.append(beats[-1] + j * ibi_tail)
-            tgt_list.append(targets[-1] + j * period)
+            tgt_list.append(targets[-1] + j * step)
             j += 1
 
     pins = [(0, 0)]
@@ -300,7 +307,7 @@ def build_beat_timemap(
         if s > pins[-1][0] and t > pins[-1][1] and s < n_src_samples:
             pins.append((s, t))
     tail_src = n_src_samples - pins[-1][0]
-    tail_rate = (ibi_tail / period) if ibi_tail else rate
+    tail_rate = (ibi_tail / step) if ibi_tail else rate
     pins.append((n_src_samples,
                  pins[-1][1] + max(1, int(round(tail_src / tail_rate)))))
     # Report only DETECTED beats as beat positions — the extrapolated pins

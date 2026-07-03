@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import math
 import subprocess
 import sys
 from pathlib import Path
@@ -500,90 +501,106 @@ def preview_total_seconds(preview: dict) -> float:
     return float(preview["fade_start"] + len(preview["in_env"]) / preview["env_rate"])
 
 
-def preview_chart(preview: dict, window: tuple, chart_key: str = None) -> None:
+def preview_chart(preview: dict, window: tuple) -> None:
     """Two stacked DAW-style waveform panels (filled, mirrored around zero)
     on a shared time axis — outgoing on top, incoming below — with tick marks
     at each track's detected beats, so beat alignment is visible while
     nudging. Envelopes have the crossfade gains applied, so the equal-power
     taper shows in the shape. *window* is the (start, end) zoom range in
-    preview seconds; envelopes are sliced and adaptively downsampled so
-    zooming in reveals more detail.
+    preview seconds.
+
+    Rendered as hand-built inline SVG (no Vega/JS): Safari does not reliably
+    redraw scripted chart updates, and static markup is identical everywhere.
     """
-    import altair as alt
     import numpy as np
-    import pandas as pd
 
     er = preview["env_rate"]
     t0, t1 = float(window[0]), float(window[1])
-    x_scale = alt.Scale(domain=[t0, t1], nice=False)
+    span = max(0.1, t1 - t0)
+    W, PH, GAP, AXIS = 1200.0, 105.0, 8.0, 30.0
+    H = PH * 2 + GAP + AXIS
+
+    def x_of(t):
+        return (t - t0) / span * W
+
     fade0 = preview["fade_start"]
     fade1 = fade0 + preview["fade_seconds"]
-    band_df = pd.DataFrame(
-        [{"x1": max(t0, fade0), "x2": min(t1, fade1)}]
-        if fade1 > t0 and fade0 < t1 else {"x1": [], "x2": []}
-    )
 
-    def wave_df(env, offset):
+    def wave_points(env, offset):
+        """Per-pixel peak values for the window slice, or None if silent."""
         peak = float(np.max(env)) if len(env) else 0.0
         i0 = max(0, int((t0 - offset) * er))
         i1 = min(len(env), max(i0, int(np.ceil((t1 - offset) * er))))
         seg = np.asarray(env[i0:i1], dtype=float)
         if not len(seg) or peak <= 0:
-            return pd.DataFrame({"t": [], "hi": [], "lo": []})
-        step = max(1, int(np.ceil(len(seg) / 2200)))  # cap points per panel
-        if step > 1:
-            pad = (-len(seg)) % step
-            if pad:
-                seg = np.concatenate([seg, np.zeros(pad)])
-            seg = seg.reshape(-1, step).max(axis=1)
-        t = offset + (i0 + np.arange(len(seg)) * step + step / 2) / er
-        return pd.DataFrame({"t": t, "hi": seg / peak, "lo": -seg / peak})
+            return None, None
+        n_bins = int(min(len(seg), W))
+        edges = np.linspace(0, len(seg), n_bins + 1).astype(int)
+        vals = np.array([seg[a:b].max() if b > a else 0.0
+                         for a, b in zip(edges[:-1], edges[1:])]) / peak
+        times = offset + (i0 + (edges[:-1] + edges[1:]) / 2.0) / er
+        return times, vals
 
-    def panel(env, offset, beats, color, label, last):
-        axis = alt.Axis(grid=False) if last else None
+    svg = [
+        f'<svg viewBox="0 0 {W:g} {H:g}" xmlns="http://www.w3.org/2000/svg" '
+        f'style="width:100%;height:auto;display:block;" '
+        f'preserveAspectRatio="none">'
+    ]
+    panels = [
+        (preview["out_env"], 0.0, preview["out_beats"], OUTGOING_COLOR, "outgoing"),
+        (preview["in_env"], fade0, preview["in_beats"], INCOMING_COLOR, "incoming"),
+    ]
+    for idx, (env, offset, beats, color, label) in enumerate(panels):
+        y0 = idx * (PH + GAP)
+        mid = y0 + PH / 2
+        amp = PH / 2 - 3
+        svg.append(f'<rect x="0" y="{y0:g}" width="{W:g}" height="{PH:g}" '
+                   f'fill="#80808012"/>')
+        if fade1 > t0 and fade0 < t1:  # crossfade band
+            bx0, bx1 = x_of(max(t0, fade0)), x_of(min(t1, fade1))
+            svg.append(f'<rect x="{bx0:.1f}" y="{y0:g}" '
+                       f'width="{bx1 - bx0:.1f}" height="{PH:g}" '
+                       f'fill="#80808030"/>')
+        for b in np.asarray(beats, dtype=float):  # beat ticks
+            if t0 <= b <= t1:
+                bx = x_of(b)
+                svg.append(f'<line x1="{bx:.1f}" y1="{y0:g}" x2="{bx:.1f}" '
+                           f'y2="{y0 + PH:g}" stroke="#808080" '
+                           f'stroke-width="1" opacity="0.55"/>')
+        times, vals = wave_points(env, offset)
+        if times is not None:
+            top = " ".join(f"{x_of(t):.1f},{mid - v * amp:.1f}"
+                           for t, v in zip(times, vals))
+            bottom = " ".join(f"{x_of(t):.1f},{mid + v * amp:.1f}"
+                              for t, v in zip(times[::-1], vals[::-1]))
+            svg.append(f'<polygon points="{top} {bottom}" fill="{color}" '
+                       f'opacity="0.95"/>')
+        else:  # silent segment: zero line from where the track exists
+            lx = x_of(max(t0, offset))
+            svg.append(f'<line x1="{lx:.1f}" y1="{mid:g}" x2="{W:g}" '
+                       f'y2="{mid:g}" stroke="{color}" stroke-width="1.5"/>')
+        svg.append(f'<text x="6" y="{y0 + 14:g}" fill="#808080" '
+                   f'font-size="12" font-family="sans-serif">{label}</text>')
 
-        def x(field):
-            return alt.X(field, scale=x_scale, axis=axis,
-                         title="seconds" if last else None)
-
-        y = alt.Y("hi:Q", title=label,
-                  axis=alt.Axis(labels=False, ticks=False, grid=False),
-                  scale=alt.Scale(domain=[-1.05, 1.05]))
-        layers = []
-        if len(band_df):
-            layers.append(
-                alt.Chart(band_df).mark_rect(color="#808080", opacity=0.18)
-                .encode(x=x("x1:Q"), x2="x2:Q")
-            )
-        visible_beats = [b for b in np.asarray(beats, dtype=float) if t0 <= b <= t1]
-        if visible_beats:
-            layers.append(
-                alt.Chart(pd.DataFrame({"t": visible_beats}))
-                .mark_rule(color="#808080", strokeWidth=1, opacity=0.6)
-                .encode(x=x("t:Q"))
-            )
-        wdf = wave_df(env, offset)
-        if len(wdf):
-            layers.append(
-                alt.Chart(wdf).mark_area(color=color, opacity=0.95)
-                .encode(x=x("t:Q"), y=y, y2="lo:Q")
-            )
-        else:  # silent or out-of-window segment: draw the zero line
-            layers.append(
-                alt.Chart(pd.DataFrame({"t": [max(t0, offset), t1], "hi": [0.0, 0.0]}))
-                .mark_line(color=color, strokeWidth=1)
-                .encode(x=x("t:Q"), y=y)
-            )
-        return alt.layer(*layers).properties(height=110)
-
-    chart = alt.vconcat(
-        panel(preview["out_env"], 0.0, preview["out_beats"],
-              OUTGOING_COLOR, "outgoing", last=False),
-        panel(preview["in_env"], preview["fade_start"], preview["in_beats"],
-              INCOMING_COLOR, "incoming", last=True),
-        spacing=4,
-    ).configure_view(strokeOpacity=0)
-    st.altair_chart(chart, use_container_width=True, key=chart_key)
+    # Time axis: pick a tick step that yields <= 14 labels.
+    step = next(s for s in (0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120)
+                if span / s <= 14)
+    axis_y = PH * 2 + GAP + 14
+    tick = math.ceil(t0 / step) * step
+    while tick <= t1 + 1e-9:
+        tx = x_of(tick)
+        label = f"{tick:g}" if step >= 1 else f"{tick:.1f}"
+        svg.append(f'<line x1="{tx:.1f}" y1="{PH * 2 + GAP:g}" x2="{tx:.1f}" '
+                   f'y2="{PH * 2 + GAP + 4:g}" stroke="#808080"/>')
+        svg.append(f'<text x="{tx:.1f}" y="{axis_y + 6:g}" fill="#808080" '
+                   f'font-size="12" font-family="sans-serif" '
+                   f'text-anchor="middle">{label}</text>')
+        tick += step
+    svg.append(f'<text x="{W / 2:g}" y="{H - 2:g}" fill="#808080" '
+               f'font-size="12" font-family="sans-serif" '
+               f'text-anchor="middle">seconds</text>')
+    svg.append("</svg>")
+    st.markdown("".join(svg), unsafe_allow_html=True)
     st.caption(
         f":gray[Gray band = the crossfade ({preview['fade_seconds']:.1f} s "
         f"equal-power); vertical ticks = each track's detected beats (every "
@@ -709,12 +726,7 @@ else:
                 help="Narrow the window to inspect beat alignment "
                 "precisely — waveform detail increases as you zoom in.",
             )
-            # A fresh element key per (params, window) forces a full chart
-            # remount — Safari doesn't reliably redraw in-place Vega updates.
-            preview_chart(
-                preview, window,
-                chart_key=f"pvchart::{a}::{b}::{abs(hash((params, window)))}",
-            )
+            preview_chart(preview, window)
             st.caption(
                 f"Fade: {preview['fade_seconds']:.1f} s starting at "
                 f"{preview['fade_start']:.1f} s into this preview "

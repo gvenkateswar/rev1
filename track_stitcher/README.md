@@ -20,10 +20,12 @@ WAV. Everything runs locally — no cloud services, no external APIs.
    or double the folder's median tempo are auto-corrected to the right
    octave (badged in the UI; filename BPMs and manual edits are never
    overridden).
-4. Optional: open any transition in **Transitions — preview & manual
-   alignment** to hear just that crossover and see both tracks' waveforms
-   overlaid. If the automatic placement isn't right, a nudge slider shifts
-   the fade point manually (used in the final render). Previews render from
+4. Every crossover preview renders automatically (a progress counter shows
+   "Loaded k / N"); open any transition in **Transitions — preview & manual
+   alignment** to hear it and see both tracks' waveforms stacked with beat
+   ticks, zoom in for precision, and adjust two independent controls: where
+   the fade starts in the outgoing track, and where the incoming track
+   enters (skip its intro). Both are used in the final render. Previews use
    short segments around the transition, so they're fast even on long tracks.
 5. Click **Render**: each track is pitch-preserving time-stretched to the
    output BPM (rubberband), gain-matched to −18 LUFS, joined with equal-power
@@ -71,13 +73,16 @@ different, PEP 668-locked interpreter than the one running streamlit.)
   until you set a BPM manually.
 - Stretch percentages are color-coded (amber beyond ±8%, red beyond ±15%) —
   large stretches degrade sustained/ambient textures.
-- Each track's true tempo is measured from its detected beat grid (tempo
-  labels are rarely exact), so tracks land on the output BPM precisely and
-  stay locked through long crossfades. Stretching is skipped only when a
-  track is already within ±0.05% of the output BPM. Mono files are converted
-  to stereo. Single-track folders skip crossfading. Transitions involving
-  tracks shorter than 2× the crossfade length are automatically shortened
-  (noted in the render log).
+- Tracks with a reliable beat grid are **beat-mapped**: rubberband warps
+  them so every detected beat lands exactly on the output tempo grid (like
+  DAW warp markers), correcting tempo drift *within* a track — with the
+  grid extrapolated at the local tempo through quiet intros/outros where
+  the tracker loses the pulse. Beat positions are refined to a few ms via
+  onset-peak interpolation. Tracks without a trustworthy grid fall back to
+  a uniform stretch at the tempo measured from their beats. Mono files are
+  converted to stereo. Single-track folders skip crossfading. Transitions
+  involving tracks shorter than 2× the crossfade length are automatically
+  shortened (noted in the render log).
 - The render log (expandable after a render) lists the stretch ratio, gain,
   and fade anchor chosen for every track.
 

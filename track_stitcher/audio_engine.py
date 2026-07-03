@@ -219,6 +219,147 @@ def refine_bpm_from_beats(
     return nominal
 
 
+def beat_grid_trusted(nominal_bpm: Optional[float], beats: Sequence[float]) -> bool:
+    """True when a beat grid is dense and consistent enough to warp against.
+
+    Beat-mapped stretching pins every detected beat to the output grid, so a
+    sparse or erratic grid (tracker losing the pulse) would warp the audio
+    audibly wrong. Require: enough beats, mostly single-beat steps, and an
+    implied tempo that confirms the labeled BPM (within an octave fold).
+    """
+    beats = np.asarray(beats, dtype=np.float64)
+    if not nominal_bpm or len(beats) < 16:
+        return False
+    ibis = np.diff(beats)
+    ibis = ibis[ibis > 1e-3]
+    if len(ibis) < 8:
+        return False
+    med = float(np.median(ibis))
+    counts = np.round(ibis / med)
+    if float(np.mean(counts == 1)) < 0.8:
+        return False
+    valid = counts >= 1
+    ibi = float(np.sum(ibis[valid]) / np.sum(counts[valid]))
+    raw = 60.0 / ibi
+    octave = 2.0 ** round(math.log2(float(nominal_bpm) / raw))
+    return abs(raw * octave / float(nominal_bpm) - 1.0) <= 0.04
+
+
+def build_beat_timemap(
+    beats: Sequence[float],
+    nominal_bpm: float,
+    output_bpm: float,
+    n_src_samples: int,
+    sr: int,
+) -> tuple[list, np.ndarray]:
+    """Pins mapping every detected beat onto the exact output tempo grid.
+
+    Returns (pins, beat_targets_seconds): pins are (source_sample,
+    target_sample) pairs for pyrubberband.timemap_stretch — every beat lands
+    at first_beat + k * (60 / output_bpm), with skipped detections counted as
+    whole beats, and the head/tail scaled at the track's average rate. This
+    corrects tempo drift *within* a track, which a uniform stretch cannot.
+    """
+    beats = np.asarray(beats, dtype=np.float64)
+    refined = refine_bpm_from_beats(float(nominal_bpm), beats)
+    rate = float(output_bpm) / refined
+    period = 60.0 / float(output_bpm)
+    ibis = np.diff(beats)
+    med = float(np.median(ibis))
+    k = np.concatenate([[0.0], np.cumsum(np.maximum(1.0, np.round(ibis / med)))])
+    targets = beats[0] / rate + k * period
+
+    # The tracker loses the pulse in quiet intros/outros, but the music
+    # usually keeps time there — and outros are exactly where crossfades
+    # live. Extend the grid past the detected beats at the LOCAL tempo
+    # (median of the nearest single-beat intervals), so drift correction
+    # holds through the head and tail instead of reverting to the average
+    # rate the moment detection stops.
+    singles = ibis[np.round(ibis / med) == 1]
+    ibi_head = float(np.median(singles[:8])) if len(singles) >= 3 else None
+    ibi_tail = float(np.median(singles[-8:])) if len(singles) >= 3 else None
+    src_list, tgt_list = list(beats), list(targets)
+    if ibi_head:
+        j = 1
+        while (beats[0] - j * ibi_head > 0.02
+               and targets[0] - j * period > 0.02):
+            src_list.insert(0, beats[0] - j * ibi_head)
+            tgt_list.insert(0, targets[0] - j * period)
+            j += 1
+    dur_src = n_src_samples / sr
+    if ibi_tail:
+        j = 1
+        while beats[-1] + j * ibi_tail < dur_src - 0.02:
+            src_list.append(beats[-1] + j * ibi_tail)
+            tgt_list.append(targets[-1] + j * period)
+            j += 1
+
+    pins = [(0, 0)]
+    for b_src, b_tgt in zip(src_list, tgt_list):
+        s, t = int(round(b_src * sr)), int(round(b_tgt * sr))
+        if s > pins[-1][0] and t > pins[-1][1] and s < n_src_samples:
+            pins.append((s, t))
+    tail_src = n_src_samples - pins[-1][0]
+    tail_rate = (ibi_tail / period) if ibi_tail else rate
+    pins.append((n_src_samples,
+                 pins[-1][1] + max(1, int(round(tail_src / tail_rate)))))
+    # Report only DETECTED beats as beat positions — the extrapolated pins
+    # shape the warp but should not count as audible beats (e.g. a silent
+    # intro must still read as beatless to alignment and preview logic).
+    beat_targets = np.asarray(
+        [t for s, t in zip(beats, targets) if 0 < s * sr < n_src_samples],
+        dtype=np.float64,
+    )
+    return pins, beat_targets
+
+
+def _segment_pins(pins: list, s0: float, s1: float, seg_len: int) -> list:
+    """Restrict a full-track timemap to a source segment [s0, s1).
+
+    Returns pins relative to the segment start (source) and to the warped
+    segment start (target), ending exactly at (seg_len, warped_seg_len) as
+    pyrubberband requires.
+    """
+    src = np.asarray([p[0] for p in pins], dtype=np.float64)
+    tgt = np.asarray([p[1] for p in pins], dtype=np.float64)
+    t0 = float(np.interp(s0, src, tgt))
+    t1 = float(np.interp(s1, src, tgt))
+    seg = [(0, 0)]
+    for s, t in zip(src, tgt):
+        if s0 < s < s1:
+            rs, rt = int(round(s - s0)), int(round(t - t0))
+            if 0 < rs < seg_len and rt > seg[-1][1]:
+                seg.append((rs, rt))
+    seg.append((seg_len, max(seg[-1][1] + 1, int(round(t1 - t0)))))
+    return seg
+
+
+def stretch_track_beatmapped(
+    audio: np.ndarray,
+    sr: int,
+    beats: Sequence[float],
+    nominal_bpm: float,
+    output_bpm: float,
+) -> tuple[np.ndarray, Optional[np.ndarray], bool]:
+    """Warp a track so every beat lands exactly on the output grid.
+
+    Returns (audio, beat_positions_seconds, True) when the beat grid is
+    trusted; otherwise falls back to the uniform pitch-preserving stretch and
+    returns (audio, None, False) so the caller can map beats by the average
+    rate instead.
+    """
+    if not beat_grid_trusted(nominal_bpm, beats):
+        rate = float(output_bpm) / refine_bpm_from_beats(float(nominal_bpm), beats)
+        stretched, _ = stretch_track(audio, rate, sr)
+        return stretched, None, False
+    import pyrubberband
+
+    pins, beat_targets = build_beat_timemap(
+        beats, nominal_bpm, output_bpm, len(audio), sr)
+    warped = pyrubberband.timemap_stretch(audio, sr, pins)
+    return np.ascontiguousarray(warped, dtype=np.float32), beat_targets, True
+
+
 def fold_bpm_to_reference(bpm: Optional[float], reference: Optional[float]):
     """Fold a detected BPM into the tempo octave nearest *reference*.
 
@@ -259,13 +400,20 @@ def analyze_track(path: Union[str, Path]) -> dict:
     detected_bpm: Optional[float] = None
     beat_times = np.zeros(0, dtype=np.float32)
     try:
-        tempo, beat_frames = librosa.beat.beat_track(y=y, sr=sr)
+        onset_env = librosa.onset.onset_strength(
+            y=y, sr=sr, hop_length=RMS_HOP_LENGTH)
+        tempo, beat_frames = librosa.beat.beat_track(
+            onset_envelope=onset_env, sr=sr, hop_length=RMS_HOP_LENGTH)
         tempo = float(np.atleast_1d(tempo)[0])
         if math.isfinite(tempo) and tempo > 10.0:
             detected_bpm = round(tempo, 1)
         # Beat positions (seconds, source-time) — used at render time to
-        # phase-align crossfades so both tracks' beats coincide.
-        beat_times = librosa.frames_to_time(beat_frames, sr=sr).astype(np.float32)
+        # phase-align crossfades and beat-map tracks onto the output grid.
+        # Snapped to the local onset peak with sub-frame precision: the raw
+        # frame grid quantizes to ~23 ms, which would become the accuracy
+        # floor of every beat-aligned transition.
+        beat_times = _snap_beats_to_onsets(
+            onset_env, beat_frames, sr, RMS_HOP_LENGTH).astype(np.float32)
     except Exception:
         detected_bpm = None
 
@@ -292,6 +440,32 @@ def analyze_track(path: Union[str, Path]) -> dict:
         "rms_sr": ANALYSIS_SR,
         "fingerprint": fingerprint,
     }
+
+
+def _snap_beats_to_onsets(
+    onset_env: np.ndarray, beat_frames: np.ndarray, sr: int, hop: int
+) -> np.ndarray:
+    """Refine beat frames to sub-frame times via the onset-strength peak.
+
+    Looks for the local onset maximum within ±2 frames of each tracked beat
+    and interpolates the peak parabolically, reducing the ~23 ms frame
+    quantization to a few ms — the difference between a tight and a flammy
+    beat-aligned crossfade.
+    """
+    env = np.asarray(onset_env, dtype=np.float64)
+    times = []
+    for f in np.asarray(beat_frames, dtype=int):
+        lo = max(1, f - 2)
+        hi = min(len(env) - 1, f + 3)
+        if hi - lo < 1:
+            times.append(float(f))
+            continue
+        p = lo + int(np.argmax(env[lo:hi]))
+        a, b, c = env[p - 1], env[p], env[p + 1]
+        denom = a - 2.0 * b + c
+        delta = 0.5 * (a - c) / denom if denom < -1e-12 else 0.0
+        times.append(p + float(np.clip(delta, -0.5, 0.5)))
+    return np.asarray(times, dtype=np.float64) * hop / sr
 
 
 # ---------------------------------------------------------------------------
@@ -387,6 +561,9 @@ def choose_fade_anchor(
     fade_n: int,
     sample_rate: int,
     manual_offset_s: float = 0.0,
+    out_beats_stretched: Optional[np.ndarray] = None,
+    in_beats_stretched: Optional[np.ndarray] = None,
+    out_head_trim_s: float = 0.0,
 ) -> tuple[int, str]:
     """Pick where the outgoing track's fade begins (samples, stretched time).
 
@@ -395,27 +572,40 @@ def choose_fade_anchor(
     alignment -> optional manual nudge (applied last, so a nudge deliberately
     overrides the automatic alignment). Every step is clamped so the fade
     stays inside the outgoing track. Returns (anchor, human-readable note).
+
+    out_beats_stretched / in_beats_stretched: exact beat positions in
+    stretched-track seconds (e.g. from beat-mapped warping); when omitted the
+    analysis beats are mapped by the average rate. out_head_trim_s: seconds
+    already trimmed from the head of the outgoing (stretched) track — all
+    positions are shifted accordingly. out_len_samples is the length AFTER
+    that trim. Incoming beats must already be relative to its entry point.
     """
     hi = max(0, out_len_samples - fade_n)
     decay_t = find_decay_onset_seconds(
         out_spec["rms_env"], out_spec["rms_hop"], out_spec["rms_sr"]
     )
     if decay_t is not None:
-        anchor = int(round(decay_t / out_rate * sample_rate))
+        anchor = int(round((decay_t / out_rate - out_head_trim_s) * sample_rate))
         kind = "energy decay"
     else:
         anchor = hi
         kind = "end-aligned (no clear decay)"
     anchor = max(0, min(anchor, hi))
 
+    if out_beats_stretched is None:
+        out_beats_stretched = (
+            np.asarray(out_spec.get("beats", []), dtype=np.float64) / out_rate
+        )
+    if in_beats_stretched is None:
+        in_beats_stretched = (
+            np.asarray(in_spec.get("beats", []), dtype=np.float64) / in_rate
+        )
     out_beats = (
-        np.asarray(out_spec.get("beats", []), dtype=np.float64)
-        / out_rate * sample_rate
-    )
-    in_beats = (
-        np.asarray(in_spec.get("beats", []), dtype=np.float64)
-        / in_rate * sample_rate
-    )
+        np.asarray(out_beats_stretched, dtype=np.float64) - out_head_trim_s
+    ) * sample_rate
+    out_beats = out_beats[out_beats >= 0]
+    in_beats = np.asarray(in_beats_stretched, dtype=np.float64) * sample_rate
+    in_beats = in_beats[in_beats >= 0]
     in_first_beat = float(in_beats[0]) if len(in_beats) else None
     anchor, beat_shift = beat_aligned_anchor(anchor, out_beats, in_first_beat, 0, hi)
     if beat_shift is None:
@@ -490,12 +680,69 @@ def normalize_track(
 # Transition preview (for the manual-alignment UI)
 # ---------------------------------------------------------------------------
 
+def _track_grid(spec: dict, output_bpm: float, sample_rate: int):
+    """Per-track stretch geometry shared by preview and render.
+
+    Returns (rate, pins, beats_stretched, len_stretched_s): pins is the full
+    beat timemap when the grid is trusted (else None), beats_stretched are
+    beat positions in stretched-track seconds.
+    """
+    beats = np.asarray(spec.get("beats", []), dtype=np.float64)
+    rate = float(output_bpm) / refine_bpm_from_beats(float(spec["bpm"]), beats)
+    n_src = int(round(float(spec["duration"]) * sample_rate))
+    if beat_grid_trusted(spec["bpm"], beats):
+        pins, beat_tgts = build_beat_timemap(
+            beats, spec["bpm"], output_bpm, n_src, sample_rate)
+        return rate, pins, beat_tgts, pins[-1][1] / sample_rate
+    return rate, None, beats / rate, float(spec["duration"]) / rate
+
+
+def _load_warped_segment(
+    spec: dict,
+    rate: float,
+    pins,
+    st_start: float,
+    st_end: float,
+    sample_rate: int,
+) -> np.ndarray:
+    """Load and stretch just the audio for stretched-time [st_start, st_end).
+
+    Uses the same beat timemap as the full render (restricted to the
+    segment) when available, otherwise a uniform stretch.
+    """
+    if pins is not None:
+        src = np.asarray([p[0] for p in pins], dtype=np.float64)
+        tgt = np.asarray([p[1] for p in pins], dtype=np.float64)
+        s0 = float(np.interp(st_start * sample_rate, tgt, src))
+        s1 = float(np.interp(st_end * sample_rate, tgt, src))
+    else:
+        s0, s1 = st_start * rate * sample_rate, st_end * rate * sample_rate
+    y = load_track_stereo(
+        spec["path"], sample_rate,
+        offset=max(0.0, s0 / sample_rate),
+        duration=max(0.1, (s1 - s0) / sample_rate),
+    )
+    if pins is not None:
+        import pyrubberband
+
+        seg_pins = _segment_pins(pins, s0, s1, len(y))
+        y = np.ascontiguousarray(
+            pyrubberband.timemap_stretch(y, sample_rate, seg_pins),
+            dtype=np.float32,
+        )
+    else:
+        y, _ = stretch_track(y, rate, sample_rate)
+    return y
+
+
 def render_transition_preview(
     out_spec: dict,
     in_spec: dict,
     output_bpm: float,
     fade_seconds: float,
     manual_offset_s: float = 0.0,
+    in_start_s: float = 0.0,
+    out_head_trim_s: float = 0.0,
     context_seconds: float = 10.0,
     sample_rate: int = SAMPLE_RATE,
 ) -> dict:
@@ -503,9 +750,14 @@ def render_transition_preview(
 
     Loads and stretches only the audio around the transition (context_seconds
     on each side), so it is fast even for long tracks. Uses the same
-    choose_fade_anchor as the full render, so what you hear is what you get.
-    Specs need the analyze_track fields plus "path", "bpm", and "duration".
-    Per-track gain is approximated by normalizing the loaded segments.
+    choose_fade_anchor, tempo refinement, and beat-mapped warping as the full
+    render, so what you hear is what you get. Specs need the analyze_track
+    fields plus "path", "bpm", and "duration". Per-track gain is approximated
+    by normalizing the loaded segments.
+
+    in_start_s: seconds (stretched-time) into the incoming track where it
+    enters the mix. out_head_trim_s: the previous transition's in_start for
+    the OUTGOING track, so its positions match the final render.
 
     Returns a dict with:
         audio          float32 (n, 2) preview
@@ -514,58 +766,57 @@ def render_transition_preview(
         fade_seconds   effective fade length (short-track rule applied)
         anchor_seconds fade start position within the stretched outgoing track
         note           human-readable anchor description
-        out_env, in_env, env_rate   coarse amplitude envelopes of the
-            outgoing/incoming segments with the crossfade gains applied
-            (so the taper is visible); the incoming envelope starts at
-            fade_start on the preview timeline.
+        out_env, in_env, env_rate   coarse amplitude envelopes with the
+            crossfade gains applied (so the taper is visible); the incoming
+            envelope starts at fade_start on the preview timeline.
         out_beats, in_beats   beat positions on the preview timeline, for
             beat tick marks in the waveform display.
     """
-    # Same beat-grid tempo refinement as render_mix, so preview == render.
-    out_rate = float(output_bpm) / refine_bpm_from_beats(
-        float(out_spec["bpm"]), out_spec.get("beats", []))
-    in_rate = float(output_bpm) / refine_bpm_from_beats(
-        float(in_spec["bpm"]), in_spec.get("beats", []))
-    out_len_st = float(out_spec["duration"]) / out_rate   # stretched seconds
-    in_len_st = float(in_spec["duration"]) / in_rate
+    out_rate, out_pins, out_beats_st, out_len_st = _track_grid(
+        out_spec, output_bpm, sample_rate)
+    in_rate, in_pins, in_beats_st, in_len_st = _track_grid(
+        in_spec, output_bpm, sample_rate)
+
+    out_head_trim_s = min(max(0.0, out_head_trim_s), max(0.0, out_len_st - 1.0))
+    in_start_s = min(max(0.0, in_start_s), max(0.0, in_len_st - 1.0))
+    out_len_eff = out_len_st - out_head_trim_s
+    in_len_eff = in_len_st - in_start_s
 
     fade_s = float(fade_seconds)
-    shorter = min(out_len_st, in_len_st)
+    shorter = min(out_len_eff, in_len_eff)
     if shorter < 2.0 * fade_s:
         fade_s = 0.4 * shorter
     fade_n = max(1, int(round(fade_s * sample_rate)))
-    out_len_samples = int(round(out_len_st * sample_rate))
 
     anchor, note = choose_fade_anchor(
         out_spec, in_spec, out_rate, in_rate,
-        out_len_samples, fade_n, sample_rate, manual_offset_s,
+        int(round(out_len_eff * sample_rate)), fade_n, sample_rate,
+        manual_offset_s=manual_offset_s,
+        out_beats_stretched=out_beats_st,
+        in_beats_stretched=np.asarray(in_beats_st) - in_start_s,
+        out_head_trim_s=out_head_trim_s,
     )
 
     # Outgoing: the segment ends exactly where the fade ends (anchor + fade),
     # so after stretching, the fade occupies its final fade_n samples.
-    seg_start_st = max(0.0, anchor / sample_rate - context_seconds)
-    y_out = load_track_stereo(
-        out_spec["path"], sample_rate,
-        offset=seg_start_st * out_rate,
-        duration=max(0.1, (anchor / sample_rate + fade_s - seg_start_st) * out_rate),
-    )
-    y_out, _ = stretch_track(y_out, out_rate, sample_rate)
+    # Positions here are in the UNTRIMMED stretched timeline.
+    fade_end_abs = out_head_trim_s + anchor / sample_rate + fade_s
+    seg_start_abs = max(out_head_trim_s, fade_end_abs - fade_s - context_seconds)
+    y_out = _load_warped_segment(
+        out_spec, out_rate, out_pins, seg_start_abs, fade_end_abs, sample_rate)
     y_out, _ = normalize_track(y_out, sample_rate)
 
-    # Incoming: at least fade + context, but always long enough to reach the
-    # incoming track's first detected beat — ambient tracks often open with a
-    # long quiet intro, and a preview showing only that silence looks broken.
-    in_needed_st = fade_s + context_seconds
-    in_beats_src = np.asarray(in_spec.get("beats", []), dtype=np.float64)
-    if len(in_beats_src):
-        first_beat_st = float(in_beats_src[0]) / in_rate
-        in_needed_st = max(in_needed_st, min(first_beat_st + 5.0, fade_s + 60.0))
-    y_in = load_track_stereo(
-        in_spec["path"], sample_rate,
-        offset=0.0,
-        duration=min(float(in_spec["duration"]), max(0.1, in_needed_st * in_rate)),
-    )
-    y_in, _ = stretch_track(y_in, in_rate, sample_rate)
+    # Incoming: at least fade + context past its entry point, but always long
+    # enough to reach its first beat after entry — ambient tracks often open
+    # with a long quiet intro, and a preview of pure silence looks broken.
+    in_needed = fade_s + context_seconds
+    beats_after_entry = np.asarray(in_beats_st, dtype=np.float64) - in_start_s
+    beats_after_entry = beats_after_entry[beats_after_entry >= 0]
+    if len(beats_after_entry):
+        in_needed = max(in_needed, min(beats_after_entry[0] + 5.0, fade_s + 60.0))
+    in_end_abs = min(in_len_st, in_start_s + in_needed)
+    y_in = _load_warped_segment(
+        in_spec, in_rate, in_pins, in_start_s, in_end_abs, sample_rate)
     y_in, _ = normalize_track(y_in, sample_rate)
 
     fade_n = min(fade_n, len(y_out), len(y_in))
@@ -589,14 +840,13 @@ def render_transition_preview(
     y_in_faded[:fade_n] *= fade_in
 
     # Beat positions mapped onto the preview timeline (t=0 = preview start;
-    # the incoming track starts at fade_start_s), for tick marks in the UI.
-    out_beats_st = np.asarray(out_spec.get("beats", []), dtype=np.float64) / out_rate
-    out_beats_pv = out_beats_st[
-        (out_beats_st >= seg_start_st)
-        & (out_beats_st <= seg_start_st + len(y_out) / sample_rate)
-    ] - seg_start_st
-    in_beats_st = np.asarray(in_spec.get("beats", []), dtype=np.float64) / in_rate
-    in_beats_pv = in_beats_st[in_beats_st <= len(y_in) / sample_rate] + fade_start_s
+    # the incoming track enters at fade_start_s), for tick marks in the UI.
+    ob = np.asarray(out_beats_st, dtype=np.float64)
+    out_beats_pv = ob[
+        (ob >= seg_start_abs) & (ob <= seg_start_abs + len(y_out) / sample_rate)
+    ] - seg_start_abs
+    ib = beats_after_entry
+    in_beats_pv = ib[ib <= len(y_in) / sample_rate] + fade_start_s
 
     env_block = max(1, sample_rate // 200)  # ~200 envelope points/s (zoomable)
     return {
@@ -696,6 +946,7 @@ def render_mix(
     sample_rate: int = SAMPLE_RATE,
     progress: Optional[Callable[[float, str], None]] = None,
     anchor_offsets: Optional[Sequence[float]] = None,
+    in_offsets: Optional[Sequence[float]] = None,
 ) -> dict:
     """Render the full mix and write a 24-bit WAV.
 
@@ -713,6 +964,10 @@ def render_mix(
     anchor_offsets: optional per-transition manual nudges in seconds, applied
     to each fade anchor after the automatic decay/beat placement.
 
+    in_offsets: optional per-transition start offsets in seconds
+    (stretched-time): how far into the incoming track it enters the mix —
+    everything before the offset is skipped (e.g. to jump past a long intro).
+
     Returns {output_path, duration, integrated_lufs, true_peak_dbtp, log}.
     """
     if not tracks:
@@ -729,6 +984,9 @@ def render_mix(
     offsets = [float(o) for o in anchor_offsets] if anchor_offsets else [0.0] * (n - 1)
     if len(offsets) != n - 1:
         raise ValueError("need one anchor offset per transition")
+    starts = [float(o) for o in in_offsets] if in_offsets else [0.0] * (n - 1)
+    if len(starts) != n - 1:
+        raise ValueError("need one incoming start offset per transition")
 
     def report(frac: float, msg: str) -> None:
         if progress is not None:
@@ -739,6 +997,8 @@ def render_mix(
     pending: Optional[np.ndarray] = None  # last processed track, not yet committed
     prev_rate = 1.0
     prev_spec: Optional[dict] = None
+    prev_beat_pos: Optional[np.ndarray] = None  # stretched beat positions (s)
+    prev_head_trim = 0.0
     per_track_budget = 0.9 / n      # progress: 90% tracks, 10% mastering
 
     for i, spec in enumerate(tracks):
@@ -757,9 +1017,12 @@ def render_mix(
         stage = "stretch"
         # Stretch by the tempo measured from the beat grid (guarded by the
         # labeled BPM) — labels are rarely exact, and a fraction of a percent
-        # of tempo error audibly drifts across a long crossfade.
+        # of tempo error audibly drifts across a long crossfade. When the
+        # grid is trusted, go further and beat-map: warp so every beat lands
+        # exactly on the output grid, correcting drift *within* the track.
         nominal_bpm = float(spec["bpm"])
-        refined_bpm = refine_bpm_from_beats(nominal_bpm, spec.get("beats", []))
+        beats_src = spec.get("beats", [])
+        refined_bpm = refine_bpm_from_beats(nominal_bpm, beats_src)
         rate = float(output_bpm) / refined_bpm
         if abs(refined_bpm - nominal_bpm) > 0.005:
             log.append(
@@ -768,16 +1031,22 @@ def render_mix(
             )
         report(base + 0.3 * per_track_budget, f"Stretching track {i + 1} of {n}: {name}")
         try:
-            audio, stretched = stretch_track(audio, rate, sample_rate)
+            audio, beat_pos, mapped = stretch_track_beatmapped(
+                audio, sample_rate, beats_src, nominal_bpm, output_bpm)
         except Exception as exc:
             raise RenderError(name, stage, exc) from exc
-        if stretched:
+        if mapped:
             log.append(
-                f"{name}: stretched {refined_bpm:.2f} -> {output_bpm:g} BPM "
-                f"(x{1 / rate:.3f} duration, pitch preserved)"
+                f"{name}: beat-mapped — {len(beat_pos)} beats pinned exactly "
+                f"onto the {output_bpm:g} BPM grid (pitch preserved)"
             )
         else:
-            log.append(f"{name}: stretch skipped (already at the output tempo)")
+            beat_pos = np.asarray(beats_src, dtype=np.float64) / rate
+            log.append(
+                f"{name}: uniform stretch {refined_bpm:.2f} -> {output_bpm:g} BPM "
+                f"(x{1 / rate:.3f} duration, pitch preserved; beat grid not "
+                f"dense enough to beat-map)"
+            )
 
         stage = "normalize"
         report(base + 0.7 * per_track_budget, f"Normalizing track {i + 1} of {n}: {name}")
@@ -790,6 +1059,19 @@ def render_mix(
         stage = "crossfade"
         report(base + 0.85 * per_track_budget, f"Blending track {i + 1} of {n}: {name}")
         try:
+            # Optional per-transition entry point: skip the incoming track's
+            # head (e.g. a long intro) so it enters mid-stream. Keep >= 1 s.
+            head_trim_s = 0.0
+            if pending is not None and starts[i - 1] > 0:
+                trim_n = min(int(round(starts[i - 1] * sample_rate)),
+                             max(0, len(audio) - sample_rate))
+                if trim_n > 0:
+                    head_trim_s = trim_n / sample_rate
+                    audio = audio[trim_n:]
+                    log.append(
+                        f"{name}: enters {head_trim_s:.1f} s into the track "
+                        f"(head skipped)"
+                    )
             if pending is None:
                 pending = audio
             else:
@@ -811,6 +1093,9 @@ def render_mix(
                     prev_spec, spec, prev_rate, rate,
                     len(pending), fade_n, sample_rate,
                     manual_offset_s=offsets[i - 1],
+                    out_beats_stretched=prev_beat_pos,
+                    in_beats_stretched=np.asarray(beat_pos) - head_trim_s,
+                    out_head_trim_s=prev_head_trim,
                 )
 
                 dropped_s = (len(pending) - (anchor + fade_n)) / sample_rate
@@ -836,6 +1121,8 @@ def render_mix(
 
         prev_rate = rate
         prev_spec = spec
+        prev_beat_pos = np.asarray(beat_pos, dtype=np.float64)
+        prev_head_trim = head_trim_s
 
     chunks.append(pending)
     mix = np.concatenate(chunks, axis=0)

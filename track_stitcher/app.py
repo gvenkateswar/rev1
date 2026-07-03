@@ -462,7 +462,10 @@ def preview_cached(
     out_path: str, out_mtime: float, out_bpm: float,
     in_path: str, in_mtime: float, in_bpm: float,
     output_bpm_v: float, fade_v: float, offset_v: float,
+    in_start_v: float, out_trim_v: float, refresh_token: int,
 ) -> dict:
+    # refresh_token is unused here on purpose: bumping it busts the cache so
+    # the per-transition "Refresh" button forces a recompute.
     def spec(path, mtime, bpm):
         info = analyze_cached(path, mtime)
         return {"path": path, "name": Path(path).name, "bpm": bpm, **info}
@@ -473,6 +476,8 @@ def preview_cached(
         output_bpm=output_bpm_v,
         fade_seconds=fade_v,
         manual_offset_s=offset_v,
+        in_start_s=in_start_v,
+        out_head_trim_s=out_trim_v,
     )
 
 
@@ -495,7 +500,7 @@ def preview_total_seconds(preview: dict) -> float:
     return float(preview["fade_start"] + len(preview["in_env"]) / preview["env_rate"])
 
 
-def preview_chart(preview: dict, window: tuple) -> None:
+def preview_chart(preview: dict, window: tuple, chart_key: str = None) -> None:
     """Two stacked DAW-style waveform panels (filled, mirrored around zero)
     on a shared time axis — outgoing on top, incoming below — with tick marks
     at each track's detected beats, so beat alignment is visible while
@@ -578,7 +583,7 @@ def preview_chart(preview: dict, window: tuple) -> None:
               INCOMING_COLOR, "incoming", last=True),
         spacing=4,
     ).configure_view(strokeOpacity=0)
-    st.altair_chart(chart, use_container_width=True)
+    st.altair_chart(chart, use_container_width=True, key=chart_key)
     st.caption(
         f":gray[Gray band = the crossfade ({preview['fade_seconds']:.1f} s "
         f"equal-power); vertical ticks = each track's detected beats (every "
@@ -589,34 +594,78 @@ def preview_chart(preview: dict, window: tuple) -> None:
 
 st.subheader("2 · Transitions — preview & manual alignment")
 
+transition_pairs = list(zip(included_paths[:-1], included_paths[1:]))
+
+
+def pair_preview_params(i: int, a: str, b: str):
+    """Cache-key tuple for one transition's preview, or None if not ready."""
+    bpm_a, bpm_b = effective_bpm(a), effective_bpm(b)
+    if not bpm_a or not bpm_b:
+        return None
+    # The outgoing track's own entry offset comes from the PREVIOUS
+    # transition, so its timeline in the preview matches the final render.
+    prev_in_start = 0.0
+    if i > 0:
+        pa, pb = transition_pairs[i - 1]
+        prev_in_start = float(st.session_state.get(f"instart::{pa}::{pb}", 0.0))
+    return (
+        a, Path(a).stat().st_mtime, float(bpm_a),
+        b, Path(b).stat().st_mtime, float(bpm_b),
+        float(output_bpm), float(crossfade_s),
+        float(st.session_state.get(f"nudge::{a}::{b}", 0.0)),
+        float(st.session_state.get(f"instart::{a}::{b}", 0.0)),
+        prev_in_start,
+        int(st.session_state.get(f"pvtoken::{a}::{b}", 0)),
+    )
+
+
+previews_ready: set = st.session_state.setdefault("previews_ready", set())
+pair_params = {
+    (a, b): pair_preview_params(i, a, b)
+    for i, (a, b) in enumerate(transition_pairs)
+}
+pending_previews = [p for p in pair_params.values()
+                    if p is not None and p not in previews_ready]
+
 if len(included_paths) < 2:
     st.caption("With fewer than two tracks in the mix there are no transitions.")
 else:
     st.caption(
         "Each crossover is placed automatically (energy decay + beat "
-        "alignment). Preview any transition to hear it and see both "
-        "waveforms; if the algorithm didn't nail it, nudge the fade point — "
-        "the nudge shifts where the fade begins in the outgoing track and is "
+        "alignment, with every track beat-mapped onto the output grid). "
+        "If a transition isn't right: nudge where the fade starts in the "
+        "outgoing track, or move where the incoming track enters. Both are "
         "used in the final render."
     )
-    for a, b in zip(included_paths[:-1], included_paths[1:]):
+    n_previewable = sum(1 for p in pair_params.values() if p is not None)
+    if pending_previews:
+        st.progress(
+            (n_previewable - len(pending_previews)) / max(1, n_previewable),
+            text=f"Loaded {n_previewable - len(pending_previews)} / "
+            f"{n_previewable} crossover previews…",
+        )
+    for a, b in transition_pairs:
         na, nb = names_by_path[a], names_by_path[b]
         nudge_key = f"nudge::{a}::{b}"
-        shown_key = f"preview_on::{a}::{b}"
+        instart_key = f"instart::{a}::{b}"
         if nudge_key not in st.session_state:
             st.session_state[nudge_key] = 0.0
-        # NOTE: the label must not change with the nudge value — a changed
+        if instart_key not in st.session_state:
+            st.session_state[instart_key] = 0.0
+        # NOTE: the label must not change with the slider values — a changed
         # label makes Streamlit treat the expander as a new widget and
-        # collapse it on every slider move.
+        # collapse it on every adjustment.
         with st.expander(f"{na}  →  {nb}"):
-            bpm_a, bpm_b = effective_bpm(a), effective_bpm(b)
-            if not bpm_a or not bpm_b:
+            params = pair_params[(a, b)]
+            if params is None:
                 st.info("Set BPMs on both tracks to preview this transition.")
                 continue
-            col_slider, col_btn = st.columns([3, 1], vertical_alignment="bottom")
-            with col_slider:
+            col_nudge, col_instart, col_btn = st.columns(
+                [2, 2, 1], vertical_alignment="bottom"
+            )
+            with col_nudge:
                 st.slider(
-                    "Nudge crossfade point (seconds)",
+                    "Fade starts (outgoing, ± s)",
                     min_value=-4.0, max_value=4.0, step=0.01,
                     key=nudge_key,
                     help="0 = fully automatic. Positive starts the fade later "
@@ -624,39 +673,55 @@ else:
                     "beat alignment, so use it when the automatic placement "
                     "is wrong.",
                 )
+            with col_instart:
+                in_dur = float(analyses[b]["duration"])
+                st.slider(
+                    "Incoming enters at (s into track)",
+                    min_value=0.0,
+                    max_value=max(1.0, round(min(in_dur * 0.5, 240.0), 1)),
+                    step=0.1,
+                    key=instart_key,
+                    help="Skip the head of the incoming track — it enters the "
+                    "mix from this point (e.g. to jump past a long intro).",
+                )
             with col_btn:
-                if st.button("Preview crossover", key=f"pv_btn::{a}::{b}",
-                             use_container_width=True):
-                    st.session_state[shown_key] = True
-            if st.session_state.get(shown_key):
-                with st.spinner("Rendering preview…"):
-                    preview = preview_cached(
-                        a, Path(a).stat().st_mtime, float(bpm_a),
-                        b, Path(b).stat().st_mtime, float(bpm_b),
-                        float(output_bpm), float(crossfade_s),
-                        float(st.session_state[nudge_key]),
-                    )
-                total = round(preview_total_seconds(preview), 1)
-                zoom_key = f"zoom::{a}::{b}"
-                stored = st.session_state.get(zoom_key)
-                if stored is not None and not (0.0 <= stored[0] < stored[1] <= total):
-                    del st.session_state[zoom_key]  # settings changed the range
-                window = st.slider(
-                    "Zoom (visible time window, seconds)",
-                    min_value=0.0, max_value=total,
-                    value=st.session_state.get(zoom_key, (0.0, total)),
-                    step=0.1, key=zoom_key,
-                    help="Narrow the window to inspect beat alignment "
-                    "precisely — waveform detail increases as you zoom in.",
-                )
-                preview_chart(preview, window)
-                st.caption(
-                    f"Fade: {preview['fade_seconds']:.1f} s starting at "
-                    f"{preview['fade_start']:.1f} s into this preview "
-                    f"(anchor {engine.format_duration(preview['anchor_seconds'])} "
-                    f"into the stretched track — {preview['note']})."
-                )
-                st.audio(preview_wav_bytes(preview))
+                def _bump_token(key=f"pvtoken::{a}::{b}"):
+                    st.session_state[key] = st.session_state.get(key, 0) + 1
+
+                st.button("Refresh preview", key=f"pv_btn::{a}::{b}",
+                          on_click=_bump_token, use_container_width=True,
+                          help="Force this transition's preview to re-render.")
+
+            if params not in previews_ready:
+                st.caption(":gray[Preview loading…]")
+                continue
+            preview = preview_cached(*params)
+            total = round(preview_total_seconds(preview), 1)
+            zoom_key = f"zoom::{a}::{b}"
+            stored = st.session_state.get(zoom_key)
+            if stored is not None and not (0.0 <= stored[0] < stored[1] <= total):
+                del st.session_state[zoom_key]  # settings changed the range
+            window = st.slider(
+                "Zoom (visible time window, seconds)",
+                min_value=0.0, max_value=total,
+                value=st.session_state.get(zoom_key, (0.0, total)),
+                step=0.1, key=zoom_key,
+                help="Narrow the window to inspect beat alignment "
+                "precisely — waveform detail increases as you zoom in.",
+            )
+            # A fresh element key per (params, window) forces a full chart
+            # remount — Safari doesn't reliably redraw in-place Vega updates.
+            preview_chart(
+                preview, window,
+                chart_key=f"pvchart::{a}::{b}::{abs(hash((params, window)))}",
+            )
+            st.caption(
+                f"Fade: {preview['fade_seconds']:.1f} s starting at "
+                f"{preview['fade_start']:.1f} s into this preview "
+                f"(anchor {engine.format_duration(preview['anchor_seconds'])} "
+                f"into the stretched track — {preview['note']})."
+            )
+            st.audio(preview_wav_bytes(preview))
 
 # ---------------------------------------------------------------------------
 # Render
@@ -682,12 +747,22 @@ if not output_name.lower().endswith(".wav"):
     output_name += ".wav"
 output_path = folder_path / output_name
 
-if st.button(
+def _request_render() -> None:
+    st.session_state.render_requested = True
+
+
+st.button(
     "🎚️ Render mix",
+    key="render_mix_btn",
     type="primary",
+    on_click=_request_render,
     disabled=bool(missing_bpm) or not included_paths,
     help="Set a BPM on every included track first." if missing_bpm else None,
-):
+)
+
+just_rendered = False
+if st.session_state.pop("render_requested", False):
+    just_rendered = True
     progress_bar = st.progress(0.0, text="Starting render…")
 
     def on_progress(frac: float, msg: str) -> None:
@@ -716,6 +791,10 @@ if st.button(
                 st.session_state.get(f"nudge::{a}::{b}", 0.0)
                 for a, b in zip(included_paths[:-1], included_paths[1:])
             ],
+            in_offsets=[
+                st.session_state.get(f"instart::{a}::{b}", 0.0)
+                for a, b in zip(included_paths[:-1], included_paths[1:])
+            ],
         )
     except engine.RenderError as exc:
         progress_bar.empty()
@@ -735,3 +814,15 @@ if st.button(
         with st.expander("Render log"):
             for line in result["log"]:
                 st.text(line)
+
+# ---------------------------------------------------------------------------
+# Background preview loader — runs LAST so the whole page is already drawn,
+# then computes one pending crossover preview and reruns. Previews pop in
+# one by one; the progress bar in the Transitions section shows the count.
+# ---------------------------------------------------------------------------
+
+# Don't rerun right after a render — it would wipe the success banner.
+if pending_previews and not just_rendered:
+    preview_cached(*pending_previews[0])
+    previews_ready.add(pending_previews[0])
+    st.rerun()

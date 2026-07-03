@@ -369,7 +369,8 @@ def test_render_mix_end_to_end(track_folder, tmp_path):
 
     # Render log covers stretch, gain, and fade anchors; progress advanced.
     log = "\n".join(result["log"])
-    assert "stretched" in log and "gain" in log and "fade anchored" in log
+    assert ("beat-mapped" in log or "stretch" in log)
+    assert "gain" in log and "fade anchored" in log
     assert progress_msgs[-1][0] == 1.0
 
 
@@ -561,6 +562,108 @@ def test_mislabeled_tempo_still_locks_through_crossfade(tmp_path):
     # Without refinement the 1.25% label error drifts ~150 ms by the end of a
     # 12 s fade; with it, every onset gap stays on the grid.
     assert float(np.max(offsets)) < 0.045, f"off-grid gaps: {gaps[offsets >= 0.045]}"
+
+
+def drifting_tone(bpm_start, bpm_end, seconds, freq, sr=SR, fade_tail=0.0):
+    """Pulse train whose tempo drifts linearly — like a human performance."""
+    n = int(seconds * sr)
+    t = np.arange(n) / sr
+    beat_times = []
+    tb = 0.0
+    while tb < seconds:
+        beat_times.append(tb)
+        bpm_here = bpm_start + (bpm_end - bpm_start) * (tb / seconds)
+        tb += 60.0 / bpm_here
+    env = np.full(n, 0.15)
+    for b in beat_times:
+        i = int(b * sr)
+        k = min(n - i, int(0.25 * sr))
+        env[i:i + k] = np.maximum(env[i:i + k], np.exp(-np.arange(k) / sr * 12.0))
+    y = 0.5 * np.sin(2 * np.pi * freq * t) * env
+    if fade_tail > 0:
+        k = int(fade_tail * sr)
+        y[-k:] *= np.linspace(1.0, 0.0, k) ** 2
+    return y.astype(np.float32)
+
+
+def test_beat_timemap_pins_drifting_beats_to_grid():
+    # Beats drifting 78 -> 82 BPM, labeled 80: targets must be exactly periodic.
+    beats, tb, bpm = [], 0.0, 78.0
+    while tb < 120:
+        beats.append(tb)
+        bpm = 78.0 + 4.0 * tb / 120.0
+        tb += 60.0 / bpm
+    beats = np.asarray(beats)
+    assert engine.beat_grid_trusted(80.0, beats)
+    pins, targets = engine.build_beat_timemap(beats, 80.0, 80.0,
+                                              int(120 * SR), SR)
+    periods = np.diff(targets)
+    assert np.allclose(periods, 60.0 / 80.0, atol=1e-4), periods[:5]
+    # Pins are strictly monotonic and end at the full source length.
+    src = [p[0] for p in pins]
+    tgt = [p[1] for p in pins]
+    assert all(a < b for a, b in zip(src, src[1:]))
+    assert all(a < b for a, b in zip(tgt, tgt[1:]))
+    assert pins[-1][0] == int(120 * SR)
+
+
+def test_beatmapped_stretch_fixes_internal_drift(tmp_path):
+    """The case uniform stretching cannot fix: a track whose tempo drifts
+    internally. After beat-mapping, its crossfade against a steady track
+    stays locked to the grid the whole way through."""
+    folder = tmp_path / "warp"
+    folder.mkdir()
+    a = drifting_tone(78.5, 81.5, 60, freq=330, fade_tail=10)  # drifts through 80
+    sf.write(folder / "a.wav", np.stack([a, a], axis=1), SR)
+    b = pulsed_tone(80.0, 60, freq=550)
+    sf.write(folder / "b.wav", np.stack([b, b], axis=1), SR)
+
+    specs = []
+    for name in ["a.wav", "b.wav"]:
+        info = engine.analyze_track(folder / name)
+        specs.append({
+            "path": str(folder / name), "name": name, "bpm": 80.0,
+            "rms_env": info["rms_env"], "rms_hop": info["rms_hop"],
+            "rms_sr": info["rms_sr"], "beats": info["beats"],
+        })
+    result = engine.render_mix(specs, output_bpm=80.0, crossfade_seconds=12.0,
+                               output_path=tmp_path / "warp_mix.wav")
+    assert "beat-mapped" in "\n".join(result["log"])
+
+    import librosa
+    mix, _ = sf.read(str(tmp_path / "warp_mix.wav"))
+    onsets = librosa.onset.onset_detect(y=mix.mean(axis=1).astype(np.float32),
+                                        sr=SR, units="time", backtrack=False)
+    period = 60.0 / 80.0
+    gaps = np.diff(onsets)
+    offsets = np.minimum(gaps % period, period - gaps % period)
+    assert float(np.max(offsets)) < 0.05, f"off-grid gaps: {gaps[offsets >= 0.05]}"
+
+
+def test_render_mix_in_offsets_skip_incoming_head(track_folder, tmp_path):
+    specs = make_specs(track_folder, ["b_middle.wav", "c_mono.wav"])
+    base = engine.render_mix(specs, output_bpm=80.0, crossfade_seconds=8.0,
+                             output_path=tmp_path / "no_skip.wav")
+    skipped = engine.render_mix(specs, output_bpm=80.0, crossfade_seconds=8.0,
+                                output_path=tmp_path / "skip.wav",
+                                in_offsets=[10.0])
+    log = "\n".join(skipped["log"])
+    assert "enters 10.0 s into the track" in log
+    assert skipped["duration"] == pytest.approx(base["duration"] - 10.0, abs=1.5)
+
+
+def test_preview_in_start_offset(track_folder):
+    out_spec, in_spec = full_specs(
+        track_folder, ["b_middle.wav", "c_mono.wav"], [80.0, 90.0])
+    base = engine.render_transition_preview(out_spec, in_spec, 80.0, 8.0)
+    shifted = engine.render_transition_preview(out_spec, in_spec, 80.0, 8.0,
+                                               in_start_s=10.0)
+    # The incoming panel now shows material from 10 s into the track, so its
+    # content must differ from the from-the-start preview.
+    n = min(len(base["in_env"]), len(shifted["in_env"]))
+    assert not np.allclose(shifted["in_env"][:n], base["in_env"][:n], atol=1e-4)
+    # Beat ticks are relative to the entry point and still present.
+    assert len(shifted["in_beats"]) > 0
 
 
 def test_fold_bpm_to_reference():

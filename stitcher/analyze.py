@@ -4,10 +4,11 @@ Visual analysis for clip ordering.
 
 Samples a handful of frames from each clip and summarizes its look:
 color palette (hue/saturation histogram), brightness, and motion. The
-recommended order chains clips greedily so that visually similar clips
-sit next to each other — which is exactly what makes crossfades and
-dissolves read as intentional instead of jarring — starting from the
-calmest/darkest clip (a natural opener) unless an anchor says otherwise.
+recommended order follows two rules: near-duplicate clips (slight
+variations of the same shot) are spread as far apart as possible and
+never adjacent, and the fastest-moving third of clips is interspersed
+evenly between the calmer ones — with a calm clip opening the sequence
+unless an anchor says otherwise.
 """
 
 from __future__ import annotations
@@ -88,44 +89,157 @@ def clip_distance(f1: dict, f2: dict) -> float:
     )
 
 
+def _calmness(features: dict, i) -> float:
+    """Lower = calmer/darker — the clip that eases the viewer in."""
+    return 0.5 * features[i]["brightness"] + 0.5 * features[i]["motion"]
+
+
+def _cluster_variations(ids: list, features: dict) -> dict:
+    """Group near-duplicate clips (slight variations of the same shot).
+
+    Returns {id: cluster_label}. Two clips are variations when their
+    visual distance is far below the typical pairwise distance in the
+    set (relative threshold, with absolute floor/ceiling so it behaves
+    on both very uniform and very diverse folders).
+    """
+    labels = {i: i for i in ids}
+    if len(ids) < 2:
+        return labels
+
+    def find(i):
+        while labels[i] != i:
+            labels[i] = labels[labels[i]]
+            i = labels[i]
+        return i
+
+    pairs = [
+        (clip_distance(features[a], features[b]), a, b)
+        for k, a in enumerate(ids) for b in ids[k + 1:]
+    ]
+    dists = sorted(d for d, _, _ in pairs)
+    median = dists[len(dists) // 2]
+    threshold = min(max(0.05, 0.35 * median), 0.30)
+
+    for d, a, b in pairs:
+        if d < threshold:
+            labels[find(a)] = find(b)
+    return {i: find(i) for i in ids}
+
+
+def _spread_deal(groups: list[list], avoid_cluster_of=None, cluster=None) -> list:
+    """Deal members round-robin across groups — members of the same group
+    end up as far apart as the group count allows."""
+    groups = [list(g) for g in groups if g]
+    if avoid_cluster_of is not None and cluster and len(groups) > 1:
+        # Don't open with a variation of the anchored-first clip.
+        if cluster.get(groups[0][0]) == cluster.get(avoid_cluster_of):
+            groups.append(groups.pop(0))
+    out = []
+    while any(groups):
+        for g in groups:
+            if g:
+                out.append(g.pop(0))
+    return out
+
+
+def _adjacency_violations(seq: list, cluster: dict) -> int:
+    return sum(1 for a, b in zip(seq, seq[1:]) if cluster[a] == cluster[b])
+
+
+def _repair_adjacency(seq: list, cluster: dict, n_fixed_head: int,
+                      n_fixed_tail: int) -> list:
+    """Swap clips until no two same-cluster variations sit next to each
+    other (or no swap improves things — only possible when variations
+    outnumber everything else). Anchored ends stay put."""
+    seq = list(seq)
+    lo, hi = n_fixed_head, len(seq) - n_fixed_tail
+    improved = True
+    while improved and _adjacency_violations(seq, cluster) > 0:
+        improved = False
+        current = _adjacency_violations(seq, cluster)
+        for i in range(lo, hi):
+            for j in range(i + 1, hi):
+                seq[i], seq[j] = seq[j], seq[i]
+                if _adjacency_violations(seq, cluster) < current:
+                    improved = True
+                    break
+                seq[i], seq[j] = seq[j], seq[i]
+            if improved:
+                break
+    return seq
+
+
 def recommend_order(
     ids: list,
     features: dict,
     first: Optional[object] = None,
     last: Optional[object] = None,
 ) -> list:
-    """Greedy visual-flow ordering of `ids` (keys into `features`).
+    """Visual ordering of `ids` (keys into `features`) built on two rules:
 
-    Anchors are honored: `first`/`last` stay pinned and the chain is built
-    between them. Without a first anchor the chain opens on the calmest,
-    darkest clip — the conventional "ease the viewer in" opener.
+    1. **Variations never touch.** Near-duplicate clips (slight
+       variations of the same shot) are detected by visual distance and
+       spread as far apart as possible — never adjacent.
+    2. **Fast clips are punctuation.** The fastest third of clips is
+       interspersed evenly between the calmer ones instead of clumping,
+       and the sequence opens on a calm clip.
+
+    Anchors are honored: `first`/`last` stay pinned, and a variation of
+    the first anchor won't directly follow it.
     """
     ids = list(ids)
     if len(ids) <= 2:
         return ids
 
-    remaining = [i for i in ids if i not in (first, last)]
+    middle = [i for i in ids if i not in (first, last)]
+    cluster = _cluster_variations(
+        middle + [a for a in (first, last) if a is not None], features,
+    )
+
+    n_dyn = max(1, len(middle) // 3) if len(middle) > 2 else 0
+    by_motion = sorted(middle, key=lambda i: features[i]["motion"], reverse=True)
+    dynamic = list(by_motion[:n_dyn])
+    calm = [i for i in middle if i not in set(dynamic)]
+    if not calm:
+        calm, dynamic = dynamic, []
+
+    # Backbone: calm clips dealt round-robin across variation clusters,
+    # calmest clips leading, so same-shot variations sit maximally apart.
+    calm_groups: dict = {}
+    for i in sorted(calm, key=lambda i: _calmness(features, i)):
+        calm_groups.setdefault(cluster[i], []).append(i)
+    groups = sorted(calm_groups.values(), key=len, reverse=True)
+    backbone = _spread_deal(groups, avoid_cluster_of=first, cluster=cluster)
+
+    # Intersperse the dynamic clips at evenly spaced marks, preferring the
+    # candidate most visually different from its neighbor (and never a
+    # variation of it, when avoidable).
+    m = len(dynamic)
+    marks = [(k + 1) * len(backbone) / (m + 1) for k in range(m)]
+    dyn_left = list(dynamic)
+    chain: list = []
+    mi = 0
+    for i, c in enumerate(backbone):
+        chain.append(c)
+        while mi < m and (i + 1) >= marks[mi] and dyn_left:
+            allowed = [d for d in dyn_left if cluster[d] != cluster[c]] or dyn_left
+            pick = max(allowed,
+                       key=lambda d: clip_distance(features[c], features[d]))
+            dyn_left.remove(pick)
+            chain.append(pick)
+            mi += 1
+    chain.extend(dyn_left)
 
     if first is not None:
-        current = first
-    else:
-        # Calm opener: lowest brightness+motion blend.
-        def opener_score(i):
-            f = features[i]
-            return 0.5 * f["brightness"] + 0.5 * f["motion"]
-        current = min(remaining, key=opener_score)
-        remaining.remove(current)
-
-    chain = [current]
-    while remaining:
-        nxt = min(remaining, key=lambda i: clip_distance(features[current], features[i]))
-        remaining.remove(nxt)
-        chain.append(nxt)
-        current = nxt
-
+        chain.insert(0, first)
     if last is not None:
         chain.append(last)
-    return chain
+
+    return _repair_adjacency(
+        chain, cluster,
+        n_fixed_head=1 if first is not None else 0,
+        n_fixed_tail=1 if last is not None else 0,
+    )
 
 
 def shuffle_order(

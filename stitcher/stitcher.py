@@ -232,20 +232,30 @@ def _normalize_clip(
     ken_burns: bool,
     intensity: str,
     rng: random.Random,
+    speed: float = 1.0,
     final: bool = False,
 ) -> None:
-    """Re-encode one clip to the common format (optionally with Ken Burns).
+    """Re-encode one clip to the common format (optionally with Ken Burns
+    and a playback-speed change).
 
     `final=True` uses delivery encode settings (for the single-clip case
     where normalization output is the finished file).
     """
+    if not 0.5 <= speed <= 2.0:
+        # atempo (used to keep audio pitch-correct) only covers 0.5-2.0x
+        # in a single pass; the UI/CLI stay inside that window.
+        raise ValueError(f"speed must be between 0.5 and 2.0, got {speed}")
+    out_duration = clip.duration / speed
+
     if ken_burns:
-        vf = _ken_burns_filter(clip.duration, width, height, fps, rng, intensity)
+        vf = _ken_burns_filter(out_duration, width, height, fps, rng, intensity)
     else:
         vf = (
             f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
             f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps}"
         )
+    if speed != 1.0:
+        vf = f"setpts=PTS/{speed:.4f}," + vf
     vf += ",format=yuv420p"
 
     cmd = ["ffmpeg", "-y", "-i", clip.path]
@@ -253,7 +263,7 @@ def _normalize_clip(
     silent_source = not mute and not clip.has_audio
     if silent_source:
         cmd += [
-            "-f", "lavfi", "-t", f"{clip.duration:.3f}",
+            "-f", "lavfi", "-t", f"{out_duration:.3f}",
             "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
         ]
 
@@ -265,7 +275,11 @@ def _normalize_clip(
         if silent_source:
             cmd += ["-map", "1:a:0"]
         else:
-            cmd += ["-map", "0:a:0", "-af", "aresample=async=1:first_pts=0,apad"]
+            af = "aresample=async=1:first_pts=0"
+            if speed != 1.0:
+                af += f",atempo={speed:.4f}"
+            af += ",apad"
+            cmd += ["-map", "0:a:0", "-af", af]
         cmd += ["-ar", "48000", "-ac", "2", "-c:a", "aac", "-b:a", "192k"]
         cmd += ["-shortest"]
 
@@ -361,6 +375,7 @@ def stitch_videos(
     ken_burns: bool = False,
     ken_burns_intensity: str = "subtle",
     ken_burns_per_clip: Optional[list[bool]] = None,
+    speed_per_clip: Optional[list[float]] = None,
     seed: Optional[int] = None,
     on_progress: Optional[ProgressFn] = None,
 ) -> StitchResult:
@@ -370,6 +385,8 @@ def stitch_videos(
     - `mute`: True (default) drops all audio from the output.
     - `ken_burns`: apply a randomized slow zoom/pan to each clip;
       `ken_burns_per_clip` (same length as paths) can opt clips out.
+    - `speed_per_clip`: per-clip playback speed (0.5-2.0; 1.0 = normal).
+      Audio stays pitch-correct via atempo.
     - `seed`: fix the RNG for reproducible Ken Burns moves / random mixes.
     """
     _require_ffmpeg()
@@ -385,6 +402,8 @@ def stitch_videos(
 
     if ken_burns_per_clip is None:
         ken_burns_per_clip = [ken_burns] * len(paths)
+    if speed_per_clip is None:
+        speed_per_clip = [1.0] * len(paths)
 
     # Pick the xfade name for every cut.
     if transition_style == RANDOM_STYLE:
@@ -396,10 +415,13 @@ def stitch_videos(
     transitions = [rng.choice(pool) for _ in range(len(clips) - 1)] if pool else []
 
     # A transition eats fade_dur off both neighbours — clamp so the
-    # shortest clip survives its two overlaps.
+    # shortest clip (at its adjusted speed) survives its two overlaps.
     fade_dur = transition_duration if transitions else 0.0
     if transitions:
-        max_fade = max(min(c.duration for c in clips) / 2 - 0.05, 0.0)
+        max_fade = max(
+            min(c.duration / s for c, s in zip(clips, speed_per_clip)) / 2 - 0.05,
+            0.0,
+        )
         if fade_dur > max_fade:
             warnings.append(
                 f"Transition duration clamped from {fade_dur:.2f}s to "
@@ -431,6 +453,7 @@ def stitch_videos(
                 ken_burns=ken_burns and ken_burns_per_clip[i],
                 intensity=ken_burns_intensity,
                 rng=rng,
+                speed=speed_per_clip[i],
                 final=single,
             )
             normalized.append(probe_clip(dst))
@@ -487,6 +510,11 @@ def main(argv: Optional[list[str]] = None) -> int:
         "--ken-burns-intensity", default="subtle",
         choices=list(KEN_BURNS_INTENSITY),
     )
+    parser.add_argument(
+        "--speed", type=float, default=1.0,
+        help="Playback speed applied to every clip (0.5-2.0, default 1.0). "
+             "Audio stays pitch-correct.",
+    )
     parser.add_argument("--seed", type=int, default=None,
                         help="RNG seed for reproducible renders.")
     args = parser.parse_args(argv)
@@ -510,6 +538,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         mute=not args.keep_audio,
         ken_burns=args.ken_burns,
         ken_burns_intensity=args.ken_burns_intensity,
+        speed_per_clip=[args.speed] * len(args.inputs),
         seed=args.seed,
         on_progress=on_progress,
     )

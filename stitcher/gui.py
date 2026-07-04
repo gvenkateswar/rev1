@@ -123,6 +123,7 @@ def init_clips(paths: list[str]) -> None:
             "thumb": thumbnail_png(path),
             "selected": True,
             "ken_burns": True,
+            "speed": 1.0,
         }
         prog.progress((i + 1) / len(paths), text=f"Reading clips... {i + 1}/{len(paths)}")
     prog.empty()
@@ -288,7 +289,11 @@ if "clips" in st.session_state and st.session_state.clips:
     order = st.session_state.order
 
     n_sel = len(selected_in_order())
-    total_dur = sum(clips[p]["info"].duration for p in selected_in_order())
+    total_dur = sum(
+        clips[p]["info"].duration
+        / st.session_state.get(f"speed_{p}", clips[p]["speed"])
+        for p in selected_in_order()
+    )
     st.subheader(f"Clips — {n_sel}/{len(order)} selected, {fmt_time(total_dur)} total")
 
     # --- Anchors ---
@@ -336,27 +341,32 @@ if "clips" in st.session_state and st.session_state.clips:
             st.session_state.order = shuffled + unselected
             st.rerun()
     with ob2:
-        if st.button("✨ Recommend order", use_container_width=True,
-                     help="Analyzes color palette, brightness, and motion of "
-                          "each clip, then chains visually similar clips so "
-                          "transitions flow smoothly."):
-            sel = selected_in_order()
-            features = ensure_features(sel)
-            recommended = recommend_order(
-                sel, features,
-                first=st.session_state.anchor_first,
-                last=st.session_state.anchor_last,
-            )
-            unselected = [p for p in order if not clips[p]["selected"]]
-            st.session_state.order = recommended + unselected
-            st.toast("Order updated from visual analysis")
-            st.rerun()
+        recommend_clicked = st.button(
+            "✨ Recommend order", use_container_width=True,
+            help="Analyzes color palette, brightness, and motion of "
+                 "each clip, then builds a paced order.",
+        )
     with ob3:
         st.caption(
-            "Recommended order chains clips with similar palette, brightness, "
-            "and motion next to each other (calmest clip opens), so blends and "
-            "dissolves feel seamless. Anchors are always respected."
+            "Recommended order: near-duplicate clips (slight variations of "
+            "the same shot) are spread as far apart as possible — never "
+            "adjacent — and the fastest third of clips is interspersed "
+            "evenly between the calmer ones, opening on a calm clip. "
+            "Anchors are always respected."
         )
+
+    if recommend_clicked:
+        sel = selected_in_order()
+        features = ensure_features(sel)
+        recommended = recommend_order(
+            sel, features,
+            first=st.session_state.anchor_first,
+            last=st.session_state.anchor_last,
+        )
+        unselected = [p for p in order if not clips[p]["selected"]]
+        st.session_state.order = recommended + unselected
+        st.toast("Order updated from visual analysis")
+        st.rerun()
 
     st.write("")
 
@@ -370,7 +380,7 @@ if "clips" in st.session_state and st.session_state.clips:
         is_first_anchor = path == st.session_state.anchor_first
         is_last_anchor = path == st.session_state.anchor_last
 
-        cols = st.columns([0.5, 1.4, 4, 1, 1, 0.6, 0.6])
+        cols = st.columns([0.5, 1.4, 3.2, 0.9, 1.0, 1.1, 0.6, 0.6])
 
         with cols[0]:
             st.markdown(
@@ -403,15 +413,29 @@ if "clips" in st.session_state and st.session_state.clips:
                 "Ken Burns", value=clip["ken_burns"], key=f"kb_{path}",
                 disabled=not ken_burns,
             )
+        with cols[5]:
+            # Default from the clips dict, not a constant: a mid-script
+            # st.rerun() (order buttons) wipes the state of widgets that
+            # didn't render that run, and the dict is what survives.
+            speed_options = [0.5, 0.75, 0.8, 0.9, 0.95, 1.0,
+                             1.05, 1.1, 1.2, 1.25, 1.5, 2.0]
+            clip["speed"] = st.selectbox(
+                "Speed",
+                options=speed_options,
+                index=speed_options.index(clip["speed"]),
+                key=f"speed_{path}",
+                format_func=lambda v: f"{v:g}x",
+                help="Playback speed for this clip. Audio stays pitch-correct.",
+            )
         # Up/down move within the selected middle; anchors stay pinned.
         movable = clip["selected"] and path not in anchored
-        with cols[5]:
+        with cols[6]:
             if st.button("⬆", key=f"up_{path}", disabled=not movable or pos == 0):
                 o = st.session_state.order
                 o[pos - 1], o[pos] = o[pos], o[pos - 1]
                 st.session_state.order = apply_anchors(o)
                 st.rerun()
-        with cols[6]:
+        with cols[7]:
             if st.button("⬇", key=f"dn_{path}",
                          disabled=not movable or pos == len(order) - 1):
                 o = st.session_state.order
@@ -433,10 +457,12 @@ if "clips" in st.session_state and st.session_state.clips:
         n_kb = sum(1 for p in sel_paths if clips[p]["ken_burns"])
         kb_note = f" · Ken Burns ({kb_intensity}) on {n_kb}/{len(sel_paths)} clips"
     audio_note = "muted" if mute_all else "audio crossfaded"
+    n_speed = sum(1 for p in sel_paths if clips[p]["speed"] != 1.0)
+    speed_note = f" · speed adjusted on {n_speed} clips" if n_speed else ""
     st.caption(
         f"**{len(sel_paths)} clips** → {size_name} @ {fps} fps · "
         f"{transition_style} ({transition_duration:.2f}s) · "
-        f"{audio_note}{kb_note}"
+        f"{audio_note}{kb_note}{speed_note}"
     )
 
     render_clicked = st.button(
@@ -470,6 +496,7 @@ if "clips" in st.session_state and st.session_state.clips:
                 ken_burns=ken_burns,
                 ken_burns_per_clip=[clips[p]["ken_burns"] for p in sel_paths],
                 ken_burns_intensity=kb_intensity,
+                speed_per_clip=[clips[p]["speed"] for p in sel_paths],
                 on_progress=on_progress,
             )
             progress_bar.progress(1.0)

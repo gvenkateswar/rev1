@@ -26,10 +26,14 @@ Then in the browser:
    - **Anchor as FIRST / LAST** pins a clip to an end — anchors survive
      shuffles and recommendations.
    - **🔀 Shuffle order** randomizes the middle.
-   - **✨ Recommend order** samples frames from each clip, measures color
-     palette, brightness, and motion, and chains visually similar clips
-     next to each other (opening on the calmest clip) so blends and
-     dissolves feel seamless.
+   - **✨ Recommend order** samples frames from each clip and measures
+     color palette, brightness, and motion, then builds a paced order:
+     near-duplicate clips (slight variations of the same shot) are
+     spread as far apart as possible — never adjacent — and the fastest
+     third of clips is interspersed evenly between the calmer ones, with
+     a calm clip opening the sequence.
+   - **Speed** per clip (0.5x-2x) slows down or speeds up individual
+     clips; audio stays pitch-correct.
 3. Pick an output resolution — 4K landscape (3840x2160, the default),
    4K vertical, 1440p, 1080p landscape/vertical, square 4K/1080, or 720p
    — then a transition style and duration, optionally enable **Ken Burns**
@@ -75,6 +79,7 @@ python stitcher.py clip1.mp4 clip2.mp4 clip3.mp4 -o out.mp4
 python stitcher.py *.mp4 -o out.mp4 --transition "Fade to black" --duration 1.0
 python stitcher.py *.mp4 -o out.mp4 --ken-burns --keep-audio --size 1080x1920
 python stitcher.py *.mp4 -o out.mp4 --size 3840x2160   # 4K (any WxH works)
+python stitcher.py *.mp4 -o out.mp4 --speed 0.9        # 0.9x on every clip
 python stitcher.py *.mp4 -o out.mp4 --seed 42   # reproducible randomness
 ```
 

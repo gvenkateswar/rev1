@@ -25,6 +25,8 @@ from analyze import (
     thumbnail_png,
 )
 from stitcher import (
+    DEFAULT_RANDOM_INCLUDE,
+    MIXABLE_STYLES,
     RANDOM_STYLE,
     SIZE_PRESETS,
     TRANSITION_STYLES,
@@ -214,6 +216,23 @@ with st.sidebar:
             "per cut, leaning on blends and dips to black."
         ),
     )
+    mix_include = None
+    if transition_style == RANDOM_STYLE:
+        mix_include = st.multiselect(
+            "Include in random mix",
+            options=MIXABLE_STYLES,
+            default=DEFAULT_RANDOM_INCLUDE,
+            help=(
+                "Which transitions the random mix may draw from. The "
+                "weighting still applies: blends and dips to black show "
+                "up most, dissolves and wipes as accents. Fade-to-white "
+                "is off by default (repeated white flashes read as "
+                "strobing) but can be added here."
+            ),
+        )
+        if not mix_include:
+            st.warning("Pick at least one style for the random mix.")
+
     transition_duration = st.slider(
         "Transition duration (s)",
         min_value=0.3, max_value=2.0, value=0.75, step=0.05,
@@ -511,31 +530,70 @@ if "clips" in st.session_state and st.session_state.clips:
         f"{audio_note}{kb_note}{speed_note}"
     )
 
-    render_clicked = st.button(
-        "Render Stitched Video",
-        type="primary",
-        use_container_width=True,
-        disabled=len(sel_paths) == 0,
-    )
+    mix_empty = transition_style == RANDOM_STYLE and not mix_include
+    rb1, rb2 = st.columns(2)
+    with rb1:
+        preview_clicked = st.button(
+            "⚡ Render Quick Preview",
+            use_container_width=True,
+            disabled=len(sel_paths) == 0 or mix_empty,
+            help=(
+                "A small, fast render (max 640px wide, fast encode) to "
+                "check the sequence before committing to the full "
+                "resolution. Uses the same random transition picks and "
+                "Ken Burns moves as the full render."
+            ),
+        )
+    with rb2:
+        render_clicked = st.button(
+            "Render Stitched Video",
+            type="primary",
+            use_container_width=True,
+            disabled=len(sel_paths) == 0 or mix_empty,
+        )
 
-    if render_clicked:
+    def preview_size(w: int, h: int, max_dim: int = 640) -> tuple[int, int]:
+        s = max_dim / max(w, h)
+        return max(int(w * s) // 2 * 2, 2), max(int(h * s) // 2 * 2, 2)
+
+    def run_render(preview: bool):
+        # One seed shared by preview and final render (per clip selection /
+        # session) so the random transition mix and Ken Burns moves in the
+        # preview are exactly what the full render produces.
+        if "render_seed" not in st.session_state:
+            st.session_state.render_seed = random.randrange(2**31)
+
+        if preview:
+            w, h = preview_size(out_w, out_h)
+            render_fps = min(fps, 24)
+        else:
+            w, h = out_w, out_h
+            render_fps = fps
+
         out_dir = tempfile.mkdtemp(prefix="stitcher_out_")
-        out_path = os.path.join(out_dir, "stitched.mp4")
+        out_path = os.path.join(
+            out_dir, "preview.mp4" if preview else "stitched.mp4",
+        )
 
-        progress_bar = st.progress(0.0)
+        st.caption("Overall")
+        overall_bar = st.progress(0.0)
+        st.caption("Current step")
+        step_bar = st.progress(0.0)
         status_text = st.empty()
 
-        def on_progress(step, total, message):
-            progress_bar.progress(step / total)
-            status_text.markdown(f"**Step {step}/{total}:** {message}")
+        def on_progress(step, total, message, frac=0.0):
+            overall_bar.progress(min((step - 1 + frac) / total, 1.0))
+            step_bar.progress(min(frac, 1.0))
+            pct = f" — {frac * 100:.0f}%" if frac > 0 else ""
+            status_text.markdown(f"**Step {step}/{total}:** {message}{pct}")
 
         try:
             result = stitch_videos(
                 sel_paths,
                 out_path,
-                width=out_w,
-                height=out_h,
-                fps=fps,
+                width=w,
+                height=h,
+                fps=render_fps,
                 transition_style=transition_style,
                 transition_duration=transition_duration,
                 mute=mute_all,
@@ -543,11 +601,16 @@ if "clips" in st.session_state and st.session_state.clips:
                 ken_burns_per_clip=[clips[p]["ken_burns"] for p in sel_paths],
                 ken_burns_intensity=kb_intensity,
                 speed_per_clip=[clips[p]["speed"] for p in sel_paths],
+                random_include=mix_include,
+                seed=st.session_state.render_seed,
+                preview=preview,
                 on_progress=on_progress,
             )
-            progress_bar.progress(1.0)
+            overall_bar.progress(1.0)
+            step_bar.progress(1.0)
             status_text.markdown("**Done!**")
-            st.session_state.render_result = result
+            key = "preview_result" if preview else "render_result"
+            st.session_state[key] = result
         except FileNotFoundError as e:
             st.error(
                 f"**{e}**\n\n"
@@ -558,9 +621,29 @@ if "clips" in st.session_state and st.session_state.clips:
         except Exception as e:
             st.error(f"Render failed: {e}")
 
+    if preview_clicked:
+        run_render(preview=True)
+    elif render_clicked:
+        run_render(preview=False)
+
+    if "preview_result" in st.session_state:
+        result = st.session_state.preview_result
+        if os.path.isfile(result.output_path):
+            pw, ph = preview_size(out_w, out_h)
+            st.markdown("#### ⚡ Quick preview")
+            st.caption(
+                f"Preview quality ({pw}x{ph}, fast encode) — the full render "
+                f"will use the same transitions and Ken Burns moves at "
+                f"{out_w}x{out_h}."
+            )
+            for w in result.warnings:
+                st.warning(w)
+            st.video(result.output_path)
+
     if "render_result" in st.session_state:
         result = st.session_state.render_result
         if os.path.isfile(result.output_path):
+            st.markdown("#### Full render")
             for w in result.warnings:
                 st.warning(w)
             if result.transitions_used:

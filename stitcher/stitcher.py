@@ -55,17 +55,25 @@ TRANSITION_STYLES: dict[str, list[str]] = {
     "Hard cut (no transition)": [],
 }
 
-# The random mix leans on the two workhorses (crossfade / dip-to-black) and
-# sprinkles in dissolves and wipes. Fade-to-white is excluded on purpose —
-# repeated white flashes read as strobing.
-RANDOM_MIX = (
-    ["fade"] * 35
-    + ["fadeblack"] * 30
-    + ["dissolve"] * 20
-    + ["smoothleft"] * 8
-    + ["smoothright"] * 7
-)
+# Random-mix weights per xfade name: the mix leans on the two workhorses
+# (crossfade / dip-to-black) and sprinkles in dissolves and wipes.
+RANDOM_MIX_WEIGHTS = {
+    "fade": 35,
+    "fadeblack": 30,
+    "dissolve": 20,
+    "smoothleft": 8,
+    "smoothright": 7,
+    "fadewhite": 10,   # only drawn if explicitly included — see default below
+}
 RANDOM_STYLE = "Random mix (curated)"
+
+# Styles that can take part in the random mix (everything but hard cut).
+MIXABLE_STYLES = [name for name, pool in TRANSITION_STYLES.items() if pool]
+# Fade-to-white is excluded by default — repeated white flashes read as
+# strobing — but can be opted in.
+DEFAULT_RANDOM_INCLUDE = [
+    "Blend (crossfade)", "Fade to black", "Film dissolve", "Smooth wipe",
+]
 
 KEN_BURNS_INTENSITY = {
     # (min max-zoom, max max-zoom) — how far in the move travels.
@@ -118,11 +126,41 @@ def _require_ffmpeg() -> None:
             )
 
 
-def _run(cmd: list[str]) -> None:
-    proc = subprocess.run(cmd, capture_output=True, text=True)
-    if proc.returncode != 0:
-        tail = "\n".join(proc.stderr.strip().splitlines()[-12:])
-        raise RuntimeError(f"ffmpeg failed ({' '.join(cmd[:3])} ...):\n{tail}")
+def _run(
+    cmd: list[str],
+    on_frac: Optional[Callable[[float], None]] = None,
+    expected_duration: Optional[float] = None,
+) -> None:
+    """Run ffmpeg. With `on_frac` + `expected_duration`, stream ffmpeg's
+    -progress output and report completion as a 0-1 fraction."""
+    if on_frac is None or not expected_duration or expected_duration <= 0:
+        proc = subprocess.run(cmd, capture_output=True, text=True)
+        if proc.returncode != 0:
+            tail = "\n".join(proc.stderr.strip().splitlines()[-12:])
+            raise RuntimeError(f"ffmpeg failed ({' '.join(cmd[:3])} ...):\n{tail}")
+        return
+
+    # cmd always starts ["ffmpeg", "-y", ...]; -progress must precede -i.
+    full = cmd[:2] + ["-nostats", "-progress", "pipe:1"] + cmd[2:]
+    with tempfile.TemporaryFile(mode="w+", errors="replace") as errf:
+        proc = subprocess.Popen(
+            full, stdout=subprocess.PIPE, stderr=errf,
+            text=True, errors="replace",
+        )
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            if line.startswith("out_time_us="):
+                try:
+                    us = int(line.strip().split("=", 1)[1])
+                except ValueError:  # "N/A" before the first frame lands
+                    continue
+                on_frac(max(0.0, min(us / 1e6 / expected_duration, 1.0)))
+        proc.wait()
+        if proc.returncode != 0:
+            errf.seek(0)
+            tail = "\n".join(errf.read().strip().splitlines()[-12:])
+            raise RuntimeError(f"ffmpeg failed ({' '.join(cmd[:3])} ...):\n{tail}")
+    on_frac(1.0)
 
 
 def probe_clip(path: str) -> ClipInfo:
@@ -234,12 +272,15 @@ def _normalize_clip(
     rng: random.Random,
     speed: float = 1.0,
     final: bool = False,
+    preview: bool = False,
+    on_frac: Optional[Callable[[float], None]] = None,
 ) -> None:
     """Re-encode one clip to the common format (optionally with Ken Burns
     and a playback-speed change).
 
     `final=True` uses delivery encode settings (for the single-clip case
-    where normalization output is the finished file).
+    where normalization output is the finished file); `preview=True`
+    trades quality for encode speed everywhere.
     """
     if not 0.5 <= speed <= 2.0:
         # atempo (used to keep audio pitch-correct) only covers 0.5-2.0x
@@ -283,7 +324,11 @@ def _normalize_clip(
         cmd += ["-ar", "48000", "-ac", "2", "-c:a", "aac", "-b:a", "192k"]
         cmd += ["-shortest"]
 
-    if final:
+    if preview:
+        cmd += ["-c:v", "libx264", "-crf", "26", "-preset", "ultrafast"]
+        if final:
+            cmd += ["-movflags", "+faststart"]
+    elif final:
         cmd += ["-c:v", "libx264", "-crf", "18", "-preset", "medium",
                 "-movflags", "+faststart"]
     else:
@@ -292,7 +337,7 @@ def _normalize_clip(
         cmd += ["-c:v", "libx264", "-crf", "16", "-preset", "veryfast"]
 
     cmd += [dst]
-    _run(cmd)
+    _run(cmd, on_frac=on_frac, expected_duration=out_duration)
 
 
 # ---------------------------------------------------------------------------
@@ -305,6 +350,8 @@ def _stitch_normalized(
     fade_dur: float,
     mute: bool,
     out_path: str,
+    preview: bool = False,
+    on_frac: Optional[Callable[[float], None]] = None,
 ) -> None:
     n = len(clips)
     cmd = ["ffmpeg", "-y"]
@@ -350,12 +397,16 @@ def _stitch_normalized(
         cmd += ["-an"]
     else:
         cmd += ["-map", "[aout]", "-c:a", "aac", "-b:a", "192k"]
-    cmd += [
-        "-c:v", "libx264", "-crf", "18", "-preset", "medium",
+    if preview:
+        quality = ["-c:v", "libx264", "-crf", "26", "-preset", "ultrafast"]
+    else:
+        quality = ["-c:v", "libx264", "-crf", "18", "-preset", "medium"]
+    cmd += quality + [
         "-pix_fmt", "yuv420p", "-movflags", "+faststart",
         out_path,
     ]
-    _run(cmd)
+    expected = sum(c.duration for c in clips) - len(transitions) * fade_dur
+    _run(cmd, on_frac=on_frac, expected_duration=expected)
 
 
 # ---------------------------------------------------------------------------
@@ -376,7 +427,9 @@ def stitch_videos(
     ken_burns_intensity: str = "subtle",
     ken_burns_per_clip: Optional[list[bool]] = None,
     speed_per_clip: Optional[list[float]] = None,
+    random_include: Optional[list[str]] = None,
     seed: Optional[int] = None,
+    preview: bool = False,
     on_progress: Optional[ProgressFn] = None,
 ) -> StitchResult:
     """Stitch `paths` into `output_path`. Returns a StitchResult.
@@ -387,7 +440,16 @@ def stitch_videos(
       `ken_burns_per_clip` (same length as paths) can opt clips out.
     - `speed_per_clip`: per-clip playback speed (0.5-2.0; 1.0 = normal).
       Audio stays pitch-correct via atempo.
+    - `random_include`: which styles (MIXABLE_STYLES names) the random mix
+      may draw from; defaults to DEFAULT_RANDOM_INCLUDE. Only used when
+      `transition_style` is RANDOM_STYLE.
     - `seed`: fix the RNG for reproducible Ken Burns moves / random mixes.
+      Pass the same seed (with the same settings) to make a preview and a
+      final render use identical transition picks and Ken Burns moves.
+    - `preview`: fast, lower-quality encode for a quick look.
+    - `on_progress(step, total, message, frac=0.0)`: called at each step
+      start, then repeatedly with `frac` (0-1) as ffmpeg works through the
+      step. Callbacks that only accept (step, total, message) still work.
     """
     _require_ffmpeg()
     if not paths:
@@ -395,8 +457,16 @@ def stitch_videos(
 
     rng = random.Random(seed)
     warnings: list[str] = []
-    progress = on_progress or (lambda *a: None)
     total_steps = len(paths) + 1
+
+    _raw_progress = on_progress or (lambda *a: None)
+
+    def progress(step: int, message: str, frac: float = 0.0) -> None:
+        try:
+            _raw_progress(step, total_steps, message, frac)
+        except TypeError:  # older 3-arg callback
+            if frac == 0.0:
+                _raw_progress(step, total_steps, message)
 
     clips = [probe_clip(p) for p in paths]
 
@@ -407,7 +477,19 @@ def stitch_videos(
 
     # Pick the xfade name for every cut.
     if transition_style == RANDOM_STYLE:
-        pool: list[str] = list(RANDOM_MIX)
+        include = random_include if random_include is not None else DEFAULT_RANDOM_INCLUDE
+        unknown = [n for n in include if n not in MIXABLE_STYLES]
+        if unknown:
+            raise ValueError(f"Not mixable transition styles: {unknown}")
+        allowed = {t for n in include for t in TRANSITION_STYLES[n]}
+        if not allowed:
+            raise ValueError(
+                "Random mix needs at least one transition style included."
+            )
+        pool: list[str] = [
+            t for t, weight in RANDOM_MIX_WEIGHTS.items()
+            for _ in range(weight) if t in allowed
+        ]
     elif transition_style in TRANSITION_STYLES:
         pool = list(TRANSITION_STYLES[transition_style])
     else:
@@ -441,11 +523,9 @@ def stitch_videos(
         single = len(clips) == 1
         normalized: list[ClipInfo] = []
         for i, clip in enumerate(clips):
-            progress(
-                i + 1, total_steps,
-                f"Preparing clip {i + 1}/{len(clips)}: "
-                f"{os.path.basename(clip.path)}",
-            )
+            msg = (f"Preparing clip {i + 1}/{len(clips)}: "
+                   f"{os.path.basename(clip.path)}")
+            progress(i + 1, msg)
             dst = output_path if single else os.path.join(work_dir, f"norm_{i:03d}.mp4")
             _normalize_clip(
                 clip, dst, width, height, fps,
@@ -455,13 +535,19 @@ def stitch_videos(
                 rng=rng,
                 speed=speed_per_clip[i],
                 final=single,
+                preview=preview,
+                on_frac=lambda f, step=i + 1, m=msg: progress(step, m, f),
             )
             normalized.append(probe_clip(dst))
 
         if not single:
-            progress(total_steps, total_steps,
-                     f"Stitching {len(clips)} clips with transitions...")
-            _stitch_normalized(normalized, transitions, fade_dur, mute, output_path)
+            msg = f"Stitching {len(clips)} clips with transitions..."
+            progress(total_steps, msg)
+            _stitch_normalized(
+                normalized, transitions, fade_dur, mute, output_path,
+                preview=preview,
+                on_frac=lambda f, m=msg: progress(total_steps, m, f),
+            )
 
         result = probe_clip(output_path)
         return StitchResult(
@@ -494,6 +580,12 @@ def main(argv: Optional[list[str]] = None) -> int:
         help="Transition duration in seconds (default: 0.75)",
     )
     parser.add_argument(
+        "--mix-include", nargs="+", choices=MIXABLE_STYLES, default=None,
+        metavar="STYLE",
+        help="Styles the random mix may draw from (default: everything "
+             "except fade-to-white). Only used with the random mix.",
+    )
+    parser.add_argument(
         "--size", default="1920x1080",
         help="Output resolution WxH (default: 1920x1080)",
     )
@@ -517,6 +609,12 @@ def main(argv: Optional[list[str]] = None) -> int:
     )
     parser.add_argument("--seed", type=int, default=None,
                         help="RNG seed for reproducible renders.")
+    parser.add_argument(
+        "--preview", action="store_true",
+        help="Fast low-quality encode for a quick look. Combine with a "
+             "small --size and the same --seed as the final render so "
+             "transitions and Ken Burns moves match.",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -524,8 +622,12 @@ def main(argv: Optional[list[str]] = None) -> int:
     except ValueError:
         parser.error(f"--size must look like 1920x1080, got {args.size!r}")
 
-    def on_progress(step: int, total: int, message: str) -> None:
-        print(f"[{step}/{total}] {message}", flush=True)
+    def on_progress(step: int, total: int, message: str, frac: float = 0.0) -> None:
+        if frac == 0.0:
+            print(f"[{step}/{total}] {message}", flush=True)
+        else:
+            end = "\n" if frac >= 1.0 else ""
+            print(f"\r    {frac * 100:5.1f}%", end=end, flush=True)
 
     result = stitch_videos(
         args.inputs,
@@ -539,7 +641,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         ken_burns=args.ken_burns,
         ken_burns_intensity=args.ken_burns_intensity,
         speed_per_clip=[args.speed] * len(args.inputs),
+        random_include=args.mix_include,
         seed=args.seed,
+        preview=args.preview,
         on_progress=on_progress,
     )
     for w in result.warnings:

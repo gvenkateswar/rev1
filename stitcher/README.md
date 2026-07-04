@@ -44,7 +44,13 @@ Then in the browser:
    (per-clip opt-out checkboxes appear in the list), and note that
    **Mute all audio** is ON by default — untick it to keep clip audio,
    which is then crossfaded through every transition.
-4. Click **Render Stitched Video**, preview it inline, and download.
+4. Click **⚡ Render Quick Preview** for a fast, small (max 640px) render
+   to check the sequence — it uses the *same* random transition picks and
+   Ken Burns moves as the full render, so what you preview is what you
+   get. Then **Render Stitched Video** for the full resolution, and
+   download. Two progress bars track the render: overall, and within the
+   current step (per-clip prep and the final stitch each report live
+   percentage from ffmpeg).
 
 ## Transitions
 
@@ -59,6 +65,11 @@ A deliberately small, curated set:
 | Smooth wipe | Soft-edged directional wipe |
 | Random mix (curated) | Varies per cut, weighted toward blends and dips to black (no white flashes) |
 | Hard cut | No transition, straight concat |
+
+When Random mix is selected, a multiselect lets you choose exactly which
+of the styles above the mix may draw from (fade-to-white is off by
+default; CLI: `--mix-include`). The weighting still applies within your
+selection.
 
 ## Ken Burns effect
 

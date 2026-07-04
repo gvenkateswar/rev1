@@ -20,6 +20,7 @@ import streamlit as st
 from analyze import (
     extract_features,
     recommend_order,
+    recommend_speeds,
     shuffle_order,
     thumbnail_png,
 )
@@ -368,6 +369,47 @@ if "clips" in st.session_state and st.session_state.clips:
         st.toast("Order updated from visual analysis")
         st.rerun()
 
+    # --- Speed suggestion buttons ---
+    sb1, sb2, sb3 = st.columns([1, 1, 2])
+    with sb1:
+        slow_clicked = st.button(
+            "🐢 Slow down fast clips", use_container_width=True,
+            help="Analyzes motion and applies a slight slow-down "
+                 "(0.75x-0.9x) to clips that move much faster than "
+                 "the rest. Speeds you set by hand on other clips "
+                 "are left alone.",
+        )
+    with sb2:
+        if st.button("↺ Reset speeds", use_container_width=True,
+                     help="Set every clip back to 1x."):
+            for p in order:
+                clips[p]["speed"] = 1.0
+                st.session_state[f"speed_{p}"] = 1.0
+            st.rerun()
+    with sb3:
+        st.caption(
+            "Slow-down suggestions compare each clip's measured motion to "
+            "the group's median: the more frantic a clip is relative to the "
+            "rest, the stronger the suggested slow-down (never below 0.75x)."
+        )
+
+    if slow_clicked:
+        sel = selected_in_order()
+        features = ensure_features(sel)
+        suggestions = recommend_speeds(sel, features)
+        slowed = []
+        for p, speed in suggestions.items():
+            if speed != 1.0:
+                clips[p]["speed"] = speed
+                st.session_state[f"speed_{p}"] = speed
+                slowed.append(f"{clips[p]['name']} → {speed:g}x")
+        if slowed:
+            st.toast("Slowed " + ", ".join(slowed))
+        else:
+            st.toast("No clip moves fast enough relative to the rest "
+                     "to need slowing.")
+        st.rerun()
+
     st.write("")
 
     # --- Clip rows ---
@@ -414,16 +456,20 @@ if "clips" in st.session_state and st.session_state.clips:
                 disabled=not ken_burns,
             )
         with cols[5]:
-            # Default from the clips dict, not a constant: a mid-script
-            # st.rerun() (order buttons) wipes the state of widgets that
-            # didn't render that run, and the dict is what survives.
+            # Seed widget state from the clips dict, not a default param:
+            # a mid-script st.rerun() (order/speed buttons) wipes the state
+            # of widgets that didn't render that run, and the dict is what
+            # survives. Seeding via session state also lets the slow-down/
+            # reset buttons write values without a default-conflict warning.
             speed_options = [0.5, 0.75, 0.8, 0.9, 0.95, 1.0,
                              1.05, 1.1, 1.2, 1.25, 1.5, 2.0]
+            speed_key = f"speed_{path}"
+            if speed_key not in st.session_state:
+                st.session_state[speed_key] = clip["speed"]
             clip["speed"] = st.selectbox(
                 "Speed",
                 options=speed_options,
-                index=speed_options.index(clip["speed"]),
-                key=f"speed_{path}",
+                key=speed_key,
                 format_func=lambda v: f"{v:g}x",
                 help="Playback speed for this clip. Audio stays pitch-correct.",
             )

@@ -34,6 +34,10 @@ Then in the browser:
      a calm clip opening the sequence.
    - **Speed** per clip (0.5x-2x) slows down or speeds up individual
      clips; audio stays pitch-correct.
+   - **🐢 Slow down fast clips** measures each clip's motion and applies
+     a slight slow-down (0.75x-0.9x, scaled by how frantic the clip is
+     relative to the group) to the ones that move much faster than the
+     rest; **↺ Reset speeds** puts everything back to 1x.
 3. Pick an output resolution — 4K landscape (3840x2160, the default),
    4K vertical, 1440p, 1080p landscape/vertical, square 4K/1080, or 720p
    — then a transition style and duration, optionally enable **Ken Burns**

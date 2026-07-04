@@ -242,6 +242,45 @@ def recommend_order(
     )
 
 
+# Speed suggestions, gentlest to strongest. A clip must be meaningfully
+# faster than the set's typical motion (and above an absolute floor, so a
+# folder of all-calm footage never triggers) before a slow-down is suggested.
+SPEED_LADDER = [
+    (3.0, 0.75),   # motion >= 3x the median -> 0.75x
+    (2.0, 0.8),
+    (1.5, 0.9),
+]
+MOTION_FLOOR = 0.02
+
+
+def recommend_speeds(ids: list, features: dict) -> dict:
+    """Suggest a slow-down for clips that move much faster than the rest.
+
+    Returns {id: speed} for every id (1.0 = leave alone). Slow-downs stay
+    in the 0.75-0.9x "slight" range — taming frantic footage for an
+    ambient edit, not turning it into slow motion.
+    """
+    ids = list(ids)
+    if not ids:
+        return {}
+    motions = sorted(features[i]["motion"] for i in ids)
+    median = motions[len(motions) // 2]
+    baseline = max(median, 1e-6)
+
+    out = {}
+    for i in ids:
+        motion = features[i]["motion"]
+        speed = 1.0
+        if motion > max(1.5 * baseline, MOTION_FLOOR):
+            ratio = motion / baseline
+            for threshold, s in SPEED_LADDER:
+                if ratio >= threshold:
+                    speed = s
+                    break
+        out[i] = speed
+    return out
+
+
 def shuffle_order(
     ids: list,
     first: Optional[object] = None,

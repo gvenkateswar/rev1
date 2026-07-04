@@ -30,7 +30,9 @@ Then in the browser:
      palette, brightness, and motion, and chains visually similar clips
      next to each other (opening on the calmest clip) so blends and
      dissolves feel seamless.
-3. Pick a transition style and duration, optionally enable **Ken Burns**
+3. Pick an output resolution — 4K landscape (3840x2160, the default),
+   4K vertical, 1440p, 1080p landscape/vertical, square 4K/1080, or 720p
+   — then a transition style and duration, optionally enable **Ken Burns**
    (per-clip opt-out checkboxes appear in the list), and note that
    **Mute all audio** is ON by default — untick it to keep clip audio,
    which is then crossfaded through every transition.
@@ -72,6 +74,7 @@ cd stitcher
 python stitcher.py clip1.mp4 clip2.mp4 clip3.mp4 -o out.mp4
 python stitcher.py *.mp4 -o out.mp4 --transition "Fade to black" --duration 1.0
 python stitcher.py *.mp4 -o out.mp4 --ken-burns --keep-audio --size 1080x1920
+python stitcher.py *.mp4 -o out.mp4 --size 3840x2160   # 4K (any WxH works)
 python stitcher.py *.mp4 -o out.mp4 --seed 42   # reproducible randomness
 ```
 

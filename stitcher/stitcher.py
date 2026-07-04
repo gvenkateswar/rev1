@@ -74,9 +74,13 @@ KEN_BURNS_INTENSITY = {
 }
 
 SIZE_PRESETS = {
+    "4K landscape (16:9)": (3840, 2160),
+    "4K vertical (9:16)": (2160, 3840),
+    "1440p landscape (16:9)": (2560, 1440),
     "1080p landscape (16:9)": (1920, 1080),
     "1080p vertical (9:16)": (1080, 1920),
-    "Square (1:1)": (1080, 1080),
+    "Square 4K (1:1)": (2160, 2160),
+    "Square 1080 (1:1)": (1080, 1080),
     "720p landscape (16:9)": (1280, 720),
 }
 
@@ -200,7 +204,12 @@ def _ken_burns_filter(
     x_expr = f"(iw-iw/zoom)*({fx0:.4f}+({fx1:.4f}-{fx0:.4f})*{prog})"
     y_expr = f"(ih-ih/zoom)*({fy0:.4f}+({fy1:.4f}-{fy0:.4f})*{prog})"
 
-    big_w, big_h = width * 2, height * 2
+    # Supersample before zoompan so the integer-rounded crop origin moves in
+    # sub-output-pixel steps. 2x is right for HD; at 4K the per-pixel error is
+    # already tiny, so 1.5x avoids pushing intermediates to 7680-wide frames.
+    factor = 2.0 if width <= 1920 and height <= 1920 else 1.5
+    big_w = int(width * factor) // 2 * 2
+    big_h = int(height * factor) // 2 * 2
     return (
         f"scale={big_w}:{big_h}:force_original_aspect_ratio=increase,"
         f"crop={big_w}:{big_h},setsar=1,fps={fps},"

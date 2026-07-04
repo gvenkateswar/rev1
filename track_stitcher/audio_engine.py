@@ -924,6 +924,109 @@ def integrated_loudness_blockwise(audio: np.ndarray, sr: int) -> float:
     return -0.691 + 10.0 * np.log10(gated.mean())
 
 
+def highpass_inplace(mix: np.ndarray, sr: int, cutoff_hz: float = 20.0) -> None:
+    """Remove DC offset and subsonic rumble in place (2nd-order Butterworth).
+
+    Inaudible content below ~20 Hz eats limiter headroom and can wobble
+    speaker cones; stripping it is the standard first step of a master chain.
+    Processes blockwise with filter state carried across chunks.
+    """
+    from scipy.signal import butter, sosfilt, sosfilt_zi
+
+    sos = butter(2, cutoff_hz, btype="highpass", fs=sr, output="sos")
+    for ch in range(mix.shape[1]):
+        zi = sosfilt_zi(sos) * float(mix[0, ch])
+        chunk = 1 << 20
+        for s in range(0, len(mix), chunk):
+            seg = mix[s:s + chunk, ch].astype(np.float64)
+            out, zi = sosfilt(sos, seg, zi=zi)
+            mix[s:s + chunk, ch] = out.astype(np.float32)
+
+
+def true_peak_limiter(
+    mix: np.ndarray,
+    sr: int,
+    ceiling_db: float = TRUE_PEAK_CEILING_DBTP,
+    lookahead_ms: float = 40.0,
+    hold_ms: float = 250.0,
+    smooth_ms: float = 40.0,
+) -> float:
+    """Transparent brickwall true-peak limiter, applied in place.
+
+    Offline design (no latency constraint): a 4x-oversampled true-peak
+    envelope drives a gain curve built from a windowed minimum (looking
+    lookahead_ms ahead and holding hold_ms behind) smoothed with a
+    triangular window — so gain dips just before each peak, holds, and
+    recovers gently, only where the ceiling would be exceeded. Everything
+    below the ceiling passes bit-transparent (gain 1). Returns the maximum
+    gain reduction in dB (0.0 if the limiter never engaged).
+
+    The gain envelope runs at sr/4 (the triangular smoothing makes it far
+    smoother than that resolution) and is linearly interpolated to full
+    rate, keeping memory bounded for hour-long mixes.
+    """
+    from scipy.ndimage import minimum_filter1d, uniform_filter1d
+    from scipy.signal import resample_poly
+
+    # Small margin so envelope-interpolation error never breaches the ceiling.
+    ceiling = 10.0 ** ((ceiling_db - 0.05) / 20.0)
+    dec = 16                      # envelope decimation (of the 4x stream)
+    env_rate = sr * 4 // dec
+
+    n = len(mix)
+    env_len = (n * 4 + dec - 1) // dec
+    env = np.zeros(env_len, dtype=np.float32)
+    chunk = 1 << 20
+    pad = 256
+    for s in range(0, n, chunk):
+        lo, hi = max(0, s - pad), min(n, s + chunk + pad)
+        up = resample_poly(mix[lo:hi].astype(np.float64), 4, 1, axis=0)
+        core = np.abs(up[(s - lo) * 4:(s - lo) * 4 + chunk * 4]).max(axis=1)
+        if len(core) % dec:
+            core = np.concatenate([core, np.zeros(dec - len(core) % dec)])
+        blocks = core.reshape(-1, dec).max(axis=1).astype(np.float32)
+        env[s * 4 // dec:s * 4 // dec + len(blocks)] = blocks
+
+    gain = np.minimum(1.0, ceiling / np.maximum(env, 1e-12)).astype(np.float32)
+    max_reduction_db = float(-20.0 * math.log10(max(float(gain.min()), 1e-6)))
+    if max_reduction_db < 0.01:
+        return 0.0  # nothing over the ceiling — bit-transparent
+
+    ahead = max(1, int(lookahead_ms / 1000.0 * env_rate))
+    hold = max(1, int(hold_ms / 1000.0 * env_rate))
+    smooth = max(1, int(smooth_ms / 1000.0 * env_rate))
+    # Windowed minimum over [n - hold, n + ahead] ...
+    gain = minimum_filter1d(gain, size=ahead + hold + 1,
+                            origin=(ahead - hold) // 2, mode="nearest")
+    # ... then triangular smoothing (two box passes). ahead >= smooth keeps
+    # the smoothed value at each peak equal to the true minimum there.
+    gain = uniform_filter1d(gain, size=smooth, mode="nearest")
+    gain = uniform_filter1d(gain, size=smooth, mode="nearest")
+
+    env_idx = np.arange(env_len, dtype=np.float64) * (dec / 4.0)  # in samples
+    for s in range(0, n, chunk):
+        hi = min(n, s + chunk)
+        lo_e = max(0, int(s / (dec / 4.0)) - 2)
+        hi_e = min(env_len, int(hi / (dec / 4.0)) + 3)
+        g = np.interp(np.arange(s, hi, dtype=np.float64),
+                      env_idx[lo_e:hi_e], gain[lo_e:hi_e])
+        mix[s:hi] *= g[:, None].astype(np.float32)
+    return max_reduction_db
+
+
+def tpdf_dither_inplace(mix: np.ndarray, bits: int = 24) -> None:
+    """Add 1-LSB TPDF dither before bit-depth reduction (standard practice
+    when quantizing float masters to fixed point)."""
+    lsb = 2.0 ** -(bits - 1)
+    rng = np.random.default_rng(0)  # deterministic renders
+    chunk = 1 << 20
+    for s in range(0, len(mix), chunk):
+        hi = min(len(mix), s + chunk)
+        noise = (rng.random((hi - s, mix.shape[1]), dtype=np.float32)
+                 + rng.random((hi - s, mix.shape[1]), dtype=np.float32) - 1.0)
+        mix[s:hi] += noise * lsb
+
+
 def true_peak_dbtp(audio: np.ndarray, sr: int, oversample: int = 4) -> float:
     """True peak in dBTP via 4x oversampling, processed in chunks."""
     from scipy.signal import resample_poly
@@ -955,6 +1058,7 @@ def render_mix(
     anchor_offsets: Optional[Sequence[float]] = None,
     in_offsets: Optional[Sequence[float]] = None,
     final_fade_seconds: float = 0.0,
+    mastering: bool = True,
 ) -> dict:
     """Render the full mix and write a 24-bit WAV.
 
@@ -978,6 +1082,12 @@ def render_mix(
 
     final_fade_seconds: when > 0, fade the end of the mix smoothly to
     silence over this many seconds (for final tracks that end abruptly).
+
+    mastering: when True (default), run the studio mastering chain —
+    20 Hz high-pass, loudness normalize, oversampled lookahead true-peak
+    brickwall limiter with loudness convergence, and TPDF dither at the
+    24-bit write. When False, fall back to a simple normalize +
+    whole-mix peak protection (no filtering, limiting, or dither).
 
     Returns {output_path, duration, integrated_lufs, true_peak_dbtp, log}.
     """
@@ -1154,15 +1264,54 @@ def render_mix(
     stage = "master"
     report(0.92, "Mastering: measuring loudness…")
     try:
-        lufs = integrated_loudness_blockwise(mix, sample_rate)
-        if math.isfinite(lufs):
-            master_gain_db = TARGET_LUFS - lufs
-            mix *= np.float32(10.0 ** (master_gain_db / 20.0))
-            log.append(
-                f"Master: {master_gain_db:+.1f} dB to reach {TARGET_LUFS:g} LUFS "
-                f"integrated (was {lufs:.1f})"
-            )
-        report(0.95, "Mastering: checking true peak…")
+        if mastering:
+            # Studio chain: subsonic high-pass -> loudness normalize ->
+            # oversampled lookahead true-peak brickwall limiter (touches
+            # only the peaks, instead of scaling the whole mix down) ->
+            # loudness convergence -> TPDF dither at the 24-bit write.
+            highpass_inplace(mix, sample_rate)
+            log.append("Master: 20 Hz high-pass (DC/subsonic rumble removed)")
+            lufs = integrated_loudness_blockwise(mix, sample_rate)
+            if math.isfinite(lufs):
+                master_gain_db = TARGET_LUFS - lufs
+                mix *= np.float32(10.0 ** (master_gain_db / 20.0))
+                log.append(
+                    f"Master: {master_gain_db:+.1f} dB to reach {TARGET_LUFS:g} "
+                    f"LUFS integrated (was {lufs:.1f})"
+                )
+            report(0.94, "Mastering: true-peak limiting…")
+            reduction_db = true_peak_limiter(mix, sample_rate)
+            if reduction_db > 0:
+                log.append(
+                    f"Master: true-peak limiter engaged (max "
+                    f"{reduction_db:.1f} dB gain reduction at "
+                    f"{TRUE_PEAK_CEILING_DBTP:g} dBTP ceiling)"
+                )
+            else:
+                log.append("Master: true-peak limiter transparent (no peaks "
+                           "over the ceiling)")
+            # Limiting shaves a little loudness on peaky mixes — converge.
+            lufs_after = integrated_loudness_blockwise(mix, sample_rate)
+            if math.isfinite(lufs_after) and lufs_after < TARGET_LUFS - 0.2:
+                makeup = min(2.0, TARGET_LUFS - lufs_after)
+                mix *= np.float32(10.0 ** (makeup / 20.0))
+                true_peak_limiter(mix, sample_rate)
+                log.append(
+                    f"Master: +{makeup:.1f} dB makeup after limiting, "
+                    f"re-limited (loudness convergence)"
+                )
+        else:
+            log.append("Master: studio mastering chain OFF — simple "
+                       "normalize + peak protection only")
+            lufs = integrated_loudness_blockwise(mix, sample_rate)
+            if math.isfinite(lufs):
+                master_gain_db = TARGET_LUFS - lufs
+                mix *= np.float32(10.0 ** (master_gain_db / 20.0))
+                log.append(
+                    f"Master: {master_gain_db:+.1f} dB to reach {TARGET_LUFS:g} "
+                    f"LUFS integrated (was {lufs:.1f})"
+                )
+        report(0.955, "Mastering: checking true peak…")
         peak_db = true_peak_dbtp(mix, sample_rate)
         if peak_db > TRUE_PEAK_CEILING_DBTP:
             mix *= np.float32(10.0 ** ((TRUE_PEAK_CEILING_DBTP - peak_db) / 20.0))
@@ -1178,6 +1327,9 @@ def render_mix(
     stage = "write"
     report(0.97, "Writing 24-bit WAV…")
     try:
+        if mastering:
+            tpdf_dither_inplace(mix, bits=24)
+            log.append("Master: TPDF dither applied at 24-bit quantization")
         sf.write(str(output_path), mix, sample_rate, subtype="PCM_24")
     except Exception as exc:
         raise RenderError("(full mix)", stage, exc) from exc

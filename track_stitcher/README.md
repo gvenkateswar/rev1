@@ -34,8 +34,19 @@ WAV. Everything runs locally — no cloud services, no external APIs.
    output BPM (rubberband), gain-matched to −18 LUFS, joined with equal-power
    crossfades anchored where the outgoing track's energy is already decaying
    and beat-aligned so both tracks' beats coincide exactly through the
-   overlap, then the whole mix is mastered to −14 LUFS integrated with a
-   −1 dBTP true-peak ceiling and written into the source folder.
+   overlap, then mastered and written into the source folder.
+
+## Mastering
+
+With **Studio mastering chain** checked (the default), the final mix goes
+through the standard streaming-master chain: a 20 Hz high-pass (removes DC
+and subsonic rumble that eats headroom), loudness normalization to −14 LUFS
+integrated (BS.1770-4), a transparent 4×-oversampled lookahead true-peak
+brickwall limiter at −1 dBTP (gain dips only around peaks that would exceed
+the ceiling; everything else passes bit-identical), a loudness-convergence
+pass, and TPDF dither at the 24-bit quantization. Unchecked, you get a plain
+loudness normalize with whole-mix peak protection instead — render both and
+compare. The render log lists exactly what the chain did.
 
 ## Setup (macOS)
 

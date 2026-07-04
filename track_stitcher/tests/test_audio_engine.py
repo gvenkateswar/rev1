@@ -414,6 +414,76 @@ def test_short_track_shortens_crossfade(track_folder, tmp_path):
         (track_folder / "short.wav").unlink()
 
 
+# ---------------------------------------------------------------------------
+# Mastering chain
+# ---------------------------------------------------------------------------
+
+def test_highpass_removes_dc_and_keeps_audio():
+    t = np.arange(SR * 5) / SR
+    sig = (0.3 * np.sin(2 * np.pi * 220 * t) + 0.2).astype(np.float32)  # +DC
+    mix = np.stack([sig, sig], axis=1)
+    engine.highpass_inplace(mix, SR)
+    assert abs(float(mix[SR:].mean())) < 1e-3          # DC gone
+    assert float(np.abs(mix[SR:]).max()) > 0.25        # audio content intact
+
+
+def test_limiter_transparent_below_ceiling():
+    t = np.arange(SR * 3) / SR
+    sig = (0.5 * np.sin(2 * np.pi * 220 * t)).astype(np.float32)  # ~-6 dBTP
+    mix = np.stack([sig, sig], axis=1)
+    before = mix.copy()
+    reduction = engine.true_peak_limiter(mix, SR)
+    assert reduction == 0.0
+    assert np.array_equal(mix, before)  # bit-transparent when not engaged
+
+
+def test_limiter_catches_peaks_transparently():
+    t = np.arange(SR * 6) / SR
+    sig = (0.2 * np.sin(2 * np.pi * 220 * t)).astype(np.float32)
+    burst = slice(3 * SR, 3 * SR + SR // 5)
+    sig[burst] *= 6.0  # a loud 200 ms burst well over the ceiling
+    mix = np.stack([sig, sig], axis=1)
+    quiet_before = float(np.sqrt(np.mean(mix[:SR] ** 2)))
+    reduction = engine.true_peak_limiter(mix, SR)
+    assert reduction > 1.0
+    assert engine.true_peak_dbtp(mix, SR) <= engine.TRUE_PEAK_CEILING_DBTP + 0.05
+    # Material away from the burst passes untouched.
+    quiet_after = float(np.sqrt(np.mean(mix[:SR] ** 2)))
+    assert quiet_after == pytest.approx(quiet_before, rel=1e-4)
+
+
+def test_mastering_chain_hits_loudness_target_on_peaky_material(tmp_path):
+    """A quiet mix with one hot transient: whole-mix peak scaling (the
+    non-mastered path) must undershoot -14 LUFS, while the limiter-based
+    chain reaches it."""
+    t = np.arange(30 * SR) / SR
+    pad = (0.04 * np.sin(2 * np.pi * 220 * t)).astype(np.float32)
+    ph = (t % 0.75) / 0.75
+    pad *= (0.4 + 0.6 * np.exp(-ph * 10)).astype(np.float32)  # beats for analysis
+    pad[15 * SR:15 * SR + SR // 10] += 0.85  # the transient
+    folder = tmp_path / "peaky"
+    folder.mkdir()
+    sf.write(folder / "p.wav", np.stack([pad, pad], axis=1), SR)
+    info = engine.analyze_track(folder / "p.wav")
+    spec = {"path": str(folder / "p.wav"), "name": "p.wav", "bpm": 80.0, **info}
+
+    mastered = engine.render_mix([spec], output_bpm=80.0, crossfade_seconds=8.0,
+                                 output_path=tmp_path / "m.wav", mastering=True)
+    plain = engine.render_mix([spec], output_bpm=80.0, crossfade_seconds=8.0,
+                              output_path=tmp_path / "p.wav", mastering=False)
+
+    log_m = "\n".join(mastered["log"])
+    assert "true-peak limiter engaged" in log_m
+    assert "high-pass" in log_m and "TPDF dither" in log_m
+    assert mastered["integrated_lufs"] == pytest.approx(engine.TARGET_LUFS, abs=0.5)
+    assert mastered["true_peak_dbtp"] <= engine.TRUE_PEAK_CEILING_DBTP + 0.05
+
+    log_p = "\n".join(plain["log"])
+    assert "mastering chain OFF" in log_p and "limiter" not in log_p
+    # The whole-mix scale-down leaves the plain version clearly quieter.
+    assert plain["integrated_lufs"] < mastered["integrated_lufs"] - 3.0
+
+
 def test_final_fade_out_option(tmp_path):
     """With the option on, a mix whose last track ends abruptly must end in
     silence; without it, the abrupt ending is preserved."""

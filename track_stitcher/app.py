@@ -337,6 +337,15 @@ with gc3:
     output_name = st.text_input(
         "Output filename (written into the source folder)", value=default_name
     )
+    mastering_on = st.checkbox(
+        "Studio mastering chain",
+        value=True,
+        key="mastering_on",
+        help="20 Hz high-pass, loudness normalize to −14 LUFS, transparent "
+        "true-peak brickwall limiter at −1 dBTP (only touches peaks), and "
+        "TPDF dither at the 24-bit write. Uncheck for a plain normalize with "
+        "simple whole-mix peak protection instead — render both and compare.",
+    )
 
 st.caption(
     "Stretch % color code — normal within ±8%, :orange[amber beyond ±8%], "
@@ -823,6 +832,7 @@ if st.session_state.pop("render_requested", False):
                 for a, b in zip(included_paths[:-1], included_paths[1:])
             ],
             final_fade_seconds=float(final_fade_s),
+            mastering=bool(mastering_on),
         )
     except engine.RenderError as exc:
         progress_bar.empty()

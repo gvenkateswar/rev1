@@ -80,11 +80,13 @@ var Levels = (function () {
   /* ================= 1-1  Dandaka Forest ================= */
   function kanda1() {
     var g = new Grid(214);
-    // three gaps, each three tiles wide -- clearable at a walk
-    g.ground(0, 68);            // gap 68-70
-    g.ground(71, 44);           // gap 115-117
-    g.ground(118, 45);          // gap 163-165
-    g.ground(166, 48);
+    // three gaps, each two tiles wide. A walking jump carries just under
+    // four tiles, so the opening stage leaves room to mistime the take-off
+    // rather than demanding it from the very edge.
+    g.ground(0, 68);            // gap 68-69
+    g.ground(70, 45);           // gap 115-116
+    g.ground(117, 46);          // gap 163-164
+    g.ground(165, 49);
 
     g.put(16, 9, 'B?BMB');
     g.coins(17, 6, 3);
@@ -99,7 +101,7 @@ var Levels = (function () {
     g.put(60, 9, 'BB?BB');
     g.set(62, 5, 'M');
     g.set(66, 12, 'g');
-    g.coins(68, 9, 3);
+    g.coins(68, 9, 2);
 
     g.put(74, 9, 'B?B');
     g.set(78, 12, 'g');
@@ -113,7 +115,7 @@ var Levels = (function () {
     g.rect(101, 8, 4, 1, '=');
     g.set(103, 4, '?');
     g.pillar(109, 10);
-    g.coins(115, 9, 3);
+    g.coins(115, 9, 2);
 
     g.put(120, 9, 'BTB');
     g.set(124, 12, 'g');
@@ -127,7 +129,7 @@ var Levels = (function () {
     g.set(150, 10, 'c');
     g.set(155, 12, 'g');
     g.pillar(159, 11);
-    g.coins(163, 10, 3);
+    g.coins(163, 10, 2);
 
     g.set(168, 12, 'd');
     g.put(170, 9, 'B?B');
@@ -278,7 +280,7 @@ var Levels = (function () {
     g.rect(108, 11, 5, 1, '=');
     g.coins(108, 10, 5);
     g.rect(114, 10, 4, 1, '=');
-    g.coins(115, 9, 3);
+    g.coins(115, 9, 2);
     g.set(112, 7, 'c');
 
     g.put(122, 9, 'BMB');

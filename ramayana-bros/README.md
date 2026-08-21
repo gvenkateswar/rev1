@@ -32,11 +32,25 @@ straight off disk.
 | `Z` / `Space` | jump — hold it longer to jump higher |
 | `X` / `Shift` | run, and loose an arrow once you carry the bow |
 | `↓` | duck (only when Rama is tall) |
-| `P` / `Esc` | pause |
+| `P` / `Esc` | pause — and set the speed |
 | `M` | mute |
 | `Enter` | start / continue |
 
 On a phone or tablet an on-screen D-pad and A/B buttons appear.
+
+## Speed
+
+Pause and press `←` / `→` to move between **calm**, **steady** (the
+default) and **brisk**. The choice is remembered.
+
+This is a change of time scale rather than a difficulty setting: every
+velocity is multiplied by the tempo and every acceleration by its square,
+which slows the game down without moving a single jump arc. A jump reaches
+exactly the same height and carries exactly the same distance at all three
+settings — measured at 140px apex and 3.9 tiles walking, 7.2 running — so
+the same gaps clear and the same pillars are reachable whichever you pick.
+The stage clock counts ground covered rather than seconds, so a slower
+setting is not also a tighter time limit.
 
 ## The cast
 
@@ -98,17 +112,21 @@ the geometry rules the layouts obey — a held jump clears about 54px, so
 pillars are never more than three tiles tall and gaps never more than
 three tiles wide.
 
-**Physics** uses three gravities, as the original did: light while the
-jump button is held, heavier once it is released, heaviest on the way
-down. A tap clears about two tiles and a held jump about three and a half.
-Ground contact carries six frames of coyote time and the jump button is
-buffered for eight, so jumps at the edge of a ledge or a beat early still
-fire.
+**Physics** runs on a fixed 60-tick timestep that is independent of the
+display: the same 60 ticks a second on a 60Hz panel and on a 240Hz one.
+There are three gravities, as the original had: light while the jump
+button is held, heavier once it is released, heaviest on the way down. A
+tap clears about two tiles and a held jump about three and a half. Ground
+contact carries six frames of coyote time and the jump button is buffered
+for eight, so jumps at the edge of a ledge or a beat early still fire. Pace
+comes from `TEMPO` alone (see **Speed** above), so retuning the feel never
+invalidates a level.
 
 **Sprites** are plotted as rectangles on the 16px grid through a pen that
 mirrors horizontally, so each character is only ever drawn facing right.
 
 While the page is open, `RamayanaBros` in the browser console is the live
-game state — `RamayanaBros.warp(2)` jumps straight to Lanka, and
+game state — `RamayanaBros.warp(2)` jumps straight to Lanka,
+`RamayanaBros.setSpeed(0)` drops to the calm tempo, and
 `RamayanaBros.player.bow = true` hands Rama the Kodanda. Useful when
 editing levels.

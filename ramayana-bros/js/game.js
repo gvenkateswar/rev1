@@ -13,16 +13,66 @@
 
   var TILE = 16, VW = 256, VH = 240, ROWS = 15;
 
-  /* physics (units are pixels per 1/60s frame) */
-  /* Three gravities, as in the original: light while the jump button is
+  /* ---- physics -----------------------------------------------------
+   * Units are pixels per 1/60s tick. The loop always runs 60 ticks a
+   * second whatever the display does; pace is set by TEMPO instead.
+   *
+   * Every velocity is scaled by TEMPO and every acceleration by TEMPO
+   * squared. That is a change of time scale, so it slows the game down
+   * without moving a single jump arc: the same gaps clear, the same
+   * pillars are reachable, and the levels play exactly as designed at
+   * any speed setting.
+   *
+   * Three gravities, as in the original: light while the jump button is
    * held, heavier once it is released, heaviest on the way down. A tap
-   * clears about two tiles, a held jump about three and a half.        */
-  var GRAV_HOLD = 0.22, GRAV_RISE = 0.34, GRAV_FALL = 0.5, MAX_FALL = 7.2;
-  var ACC = 0.14, AIR_ACC = 0.10, FRICTION = 0.17;
-  var MAX_WALK = 1.7, MAX_RUN = 2.8;
-  var JUMP_V = -4.9, JUMP_RUN_V = -5.4;
-  var ENEMY_SPEED = 0.45, SHELL_SPEED = 3.1;
+   * clears about two tiles, a held jump about three and a half.       */
+
+  var SPEEDS = [
+    { name: 'CALM', tempo: 0.68 },
+    { name: 'STEADY', tempo: 0.82 },
+    { name: 'BRISK', tempo: 1.00 }
+  ];
+  var TEMPO, TEMPO2;
+  var GRAV_HOLD, GRAV_RISE, GRAV_FALL, MAX_FALL;
+  var ACC, AIR_ACC, FRICTION, MAX_WALK, MAX_RUN, JUMP_V, JUMP_RUN_V;
+  var ENEMY_SPEED, SHELL_SPEED, TICKS_PER_TIME;
+  /* Timers are in ticks, so they are wall-clock and tempo does not touch them. */
   var STAR_TIME = 660, HURT_TIME = 100, SHELL_WAKE = 380;
+
+  var speedIndex = 1;
+  function setSpeed(i, rescale) {
+    var prev = TEMPO;
+    speedIndex = Math.max(0, Math.min(i, SPEEDS.length - 1));
+    TEMPO = SPEEDS[speedIndex].tempo;
+    TEMPO2 = TEMPO * TEMPO;
+    GRAV_HOLD = 0.22 * TEMPO2; GRAV_RISE = 0.34 * TEMPO2; GRAV_FALL = 0.5 * TEMPO2;
+    MAX_FALL = 7.2 * TEMPO;
+    ACC = 0.14 * TEMPO2; AIR_ACC = 0.10 * TEMPO2; FRICTION = 0.17 * TEMPO2;
+    MAX_WALK = 1.7 * TEMPO; MAX_RUN = 2.8 * TEMPO;
+    JUMP_V = -4.9 * TEMPO; JUMP_RUN_V = -5.4 * TEMPO;
+    ENEMY_SPEED = 0.45 * TEMPO; SHELL_SPEED = 3.1 * TEMPO;
+    /* The clock counts ground covered rather than seconds, so a slower
+       setting is not also a tighter time limit. */
+    TICKS_PER_TIME = Math.round(25 / TEMPO);
+    try { localStorage.setItem('ramayana-bros-speed', String(speedIndex)); } catch (e) {}
+    // whatever is already moving gets carried onto the new time scale
+    if (rescale && prev && G) {
+      var r = TEMPO / prev;
+      var lists = [G.enemies, G.items, G.shots, G.fx, G.player ? [G.player] : []];
+      for (var l = 0; l < lists.length; l++) {
+        for (var n = 0; n < (lists[l] || []).length; n++) {
+          var e = lists[l][n];
+          if (e.vx) e.vx *= r;
+          if (e.vy) e.vy *= r;
+        }
+      }
+    }
+  }
+  (function () {
+    var saved = NaN;
+    try { saved = parseInt(localStorage.getItem('ramayana-bros-speed'), 10); } catch (e) {}
+    setSpeed(isNaN(saved) ? 1 : saved);
+  })();
 
   var canvas = document.getElementById('screen');
   var ctx = canvas.getContext('2d', { alpha: false });
@@ -79,6 +129,8 @@
     '/': '....#....#...#...#...#...#....#....',
     '+': '.......#....#..#####..#....#.......',
     '*': '.....#.#.#.###.#####.###.#.#.#.....',
+    '<': '........#...#...#.....#.....#......',
+    '>': '......#.....#.....#...#...#........',
     ' ': '...................................'
   };
   /* Glyph strings are trusted to be 35 chars; pad/trim defensively. */
@@ -243,15 +295,20 @@
     };
   }
 
+  /* Resizing Rama keeps his feet planted. Growing the box downward instead
+     would leave him standing inside the floor, and shrinking it upward lifts
+     him off the ground -- which made ducking flicker on and off every frame
+     as onGround dropped out from under it. */
   function playerBox(p) {
     p.w = 12;
-    p.h = p.big ? (p.ducking ? 17 : 27) : 15;
+    var h = p.big ? (p.ducking ? 17 : 27) : 15;
+    if (h !== p.h) { p.y += p.h - h; p.h = h; }
   }
 
   function grow(p) {
     if (p.big) return;
     p.morph = 34; p.morphTo = true;
-    p.y -= 12; p.big = true; playerBox(p);
+    p.big = true; playerBox(p);
     Sound.fx.powerup();
   }
   function shrink(p) {
@@ -267,7 +324,7 @@
   }
   function killPlayer(p) {
     if (p.dead) return;
-    p.dead = true; p.deadT = 0; p.vy = -5.2; p.vx = 0;
+    p.dead = true; p.deadT = 0; p.vy = -5.2 * TEMPO; p.vx = 0;
     p.big = false; p.bow = false; p.star = 0;
     playerBox(p);
     Sound.music.stop();
@@ -277,7 +334,7 @@
   function updatePlayer(p) {
     if (p.dead) {
       p.deadT++;
-      if (p.deadT > 24) { p.y += p.vy; p.vy = Math.min(p.vy + 0.32, MAX_FALL); }
+      if (p.deadT > 24) { p.y += p.vy; p.vy = Math.min(p.vy + 0.32 * TEMPO2, MAX_FALL); }
       if (p.deadT > 190) loseLife();
       return;
     }
@@ -327,7 +384,7 @@
     if (pressed.run && p.bow && !p.autoWalk && countShots() < 2) {
       G.shots.push({
         x: p.x + (p.dir > 0 ? p.w : -8), y: p.y + (p.big ? 8 : 4),
-        w: 8, h: 8, vx: 5 * p.dir, vy: 0.4, dir: p.dir, life: 200, kind: 'arrow'
+        w: 8, h: 8, vx: 5 * TEMPO * p.dir, vy: 0.4 * TEMPO, dir: p.dir, life: 200, kind: 'arrow'
       });
       Sound.fx.arrow();
     }
@@ -395,7 +452,7 @@
       setTile(cx, cy, 'U');
       G.bumps.push({ x: cx, y: cy, t: 0 });
       if (ch === '?') {
-        G.fx.push({ kind: 'coin', x: cx * TILE, y: cy * TILE, vy: -3.4, life: 46 });
+        G.fx.push({ kind: 'coin', x: cx * TILE, y: cy * TILE, vy: -3.4 * TEMPO, life: 46 });
         takeCoin(cx * TILE, cy * TILE - 8);
       } else {
         var type = ch === 'M' ? (p.big ? 'bless' : 'herb') : (ch === 'W' ? 'bow' : 'bless');
@@ -410,7 +467,7 @@
         for (var i = 0; i < 4; i++) {
           G.fx.push({
             kind: 'chunk', x: cx * TILE + (i % 2) * 8, y: cy * TILE + (i > 1 ? 8 : 0),
-            vx: (i % 2 ? 1.3 : -1.3), vy: (i > 1 ? -2.2 : -3.4), rot: i, life: 100
+            vx: (i % 2 ? 1.3 : -1.3) * TEMPO, vy: (i > 1 ? -2.2 : -3.4) * TEMPO, rot: i, life: 100
           });
         }
       } else {
@@ -495,10 +552,10 @@
     } else if (ch === 'c') {
       // a deliberately forgiving hitbox -- the wings are decoration
       e = { type: 'crow', w: 12, h: 8, sw: 16, sh: 14, ox: -2, oy: -3,
-            vx: -0.75, vy: 0, gravity: false };
+            vx: -0.75 * TEMPO, vy: 0, gravity: false };
     } else {
       e = { type: 'ravana', w: 28, h: 42, sw: 32, sh: 44, ox: -2, oy: -2,
-            vx: -0.32, vy: 0, gravity: true, hp: 6, flash: 0, fireT: 90, jumpT: 200 };
+            vx: -0.32 * TEMPO, vy: 0, gravity: true, hp: 6, flash: 0, fireT: 90, jumpT: 200 };
     }
     e.x = cx * TILE + (TILE - e.w) / 2;
     e.y = (cy + 1) * TILE - e.h;
@@ -513,7 +570,7 @@
 
   function flipEnemy(e, dir) {
     if (e.type === 'ravana') return;
-    e.dying = 1; e.vy = -3.6; e.vx = 0.8 * dir; e.flip = true;
+    e.dying = 1; e.vy = -3.6 * TEMPO; e.vx = 0.8 * TEMPO * dir; e.flip = true;
     G.score += 200;
     popup(e.x, e.y, '200');
     Sound.fx.kick();
@@ -525,7 +582,7 @@
       else return;
     }
     if (e.dying) {
-      e.vy += 0.3; e.y += e.vy; e.x += e.vx;
+      e.vy += 0.3 * TEMPO2; e.y += e.vy; e.x += e.vx;
       e.dying++;
       if (e.y > VH + 40 || e.dying > 200) e.remove = true;
       return;
@@ -565,7 +622,7 @@
       }
     }
 
-    e.vy += 0.35;
+    e.vy += 0.35 * TEMPO2;
     if (e.vy > MAX_FALL) e.vy = MAX_FALL;
     var prevBottom = e.y + e.h;
     e.bump = 0;
@@ -579,13 +636,13 @@
     resolveY(e, prevBottom, false);
     e.dir = e.vx === 0 ? e.dir : (e.vx > 0 ? 1 : -1);
 
-    e.animT += Math.abs(e.vx) + 0.35;
+    e.animT += Math.abs(e.vx) + 0.35 * TEMPO;
     if (e.animT > 8) { e.animT = 0; e.frame = (e.frame + 1) % 2; }
 
     // drowning / falling out of the world
     var mid = Math.floor((e.x + e.w / 2) / TILE);
     var foot = Math.floor((e.y + e.h - 2) / TILE);
-    if (tileChar(mid, foot) === '~') { e.dying = 1; e.vy = -1; }
+    if (tileChar(mid, foot) === '~') { e.dying = 1; e.vy = -1 * TEMPO; }
     if (e.y > VH + 40) e.remove = true;
 
     // a spinning shell scatters whatever it meets
@@ -602,7 +659,7 @@
   }
 
   function stompEnemy(e, p) {
-    p.vy = keys.jump ? -4.6 : -3.4;
+    p.vy = (keys.jump ? -4.6 : -3.4) * TEMPO;
     if (e.type === 'rakshasa') {
       e.squash = 30; e.h = 8; e.y += 6; e.oy = 0;
       G.score += 100; popup(e.x, e.y, '100');
@@ -648,7 +705,7 @@
       var stomping = p.vy > 0 && (p.y + p.h) - e.y < 12;
 
       if (e.type === 'ravana') {
-        if (stomping) { damageBoss(e, p.dir); p.vy = -4.6; }
+        if (stomping) { damageBoss(e, p.dir); p.vy = -4.6 * TEMPO; }
         else hurtPlayer(p);
         continue;
       }
@@ -672,11 +729,11 @@
 
     var toward = (p.x + p.w / 2) < (e.x + e.w / 2) ? -1 : 1;
     e.dir = toward;
-    e.vx = 0.42 * toward;
+    e.vx = 0.42 * TEMPO * toward;
 
     e.jumpT--;
     if (e.jumpT <= 0 && e.onGround) {
-      e.vy = -5.6; e.jumpT = 150 + Math.floor(Math.random() * 120);
+      e.vy = -5.6 * TEMPO; e.jumpT = 150 + Math.floor(Math.random() * 120);
       Sound.fx.bossRoar();
     }
     e.fireT--;
@@ -684,12 +741,12 @@
       e.fireT = 95 + Math.floor(Math.random() * 70);
       G.shots.push({
         kind: 'fire', x: e.x + (toward > 0 ? e.w : -10), y: e.y + 14,
-        w: 10, h: 10, vx: 2.6 * toward, vy: -0.6, life: 320
+        w: 10, h: 10, vx: 2.6 * TEMPO * toward, vy: -0.6 * TEMPO, life: 320
       });
       Sound.fx.fire();
     }
 
-    e.vy += 0.4;
+    e.vy += 0.4 * TEMPO2;
     if (e.vy > MAX_FALL) e.vy = MAX_FALL;
     var prevBottom = e.y + e.h;
     e.bump = 0;
@@ -706,7 +763,7 @@
     e.flash = 26; e.iframes = 34;
     G.shake = 10;
     if (e.hp <= 0) {
-      e.dying = 1; e.vy = -3; e.vx = 0.6 * dir;
+      e.dying = 1; e.vy = -3 * TEMPO; e.vx = 0.6 * TEMPO * dir;
       G.bossDefeated = true;
       G.score += 5000;
       popup(e.x, e.y, '5000');
@@ -716,7 +773,7 @@
         G.fx.push({
           kind: 'burst', x: e.x + 14 + (Math.random() - 0.5) * 26,
           y: e.y + 20 + (Math.random() - 0.5) * 36,
-          vx: (Math.random() - 0.5) * 4, vy: -Math.random() * 4 - 0.5,
+          vx: (Math.random() - 0.5) * 4 * TEMPO, vy: (-Math.random() * 4 - 0.5) * TEMPO,
           life: 40 + Math.random() * 30,
           color: ['#ffd042', '#ff8a2b', '#e0403a', '#ffffff'][i % 4]
         });
@@ -736,7 +793,7 @@
   function spawnItem(type, x, y) {
     G.items.push({
       type: type, x: x, y: y, w: 14, h: 14,
-      vx: type === 'herb' ? 0.9 : (type === 'bless' ? 1.3 : 0.7),
+      vx: (type === 'herb' ? 0.9 : (type === 'bless' ? 1.3 : 0.7)) * TEMPO,
       vy: 0, rise: 16, born: 0
     });
   }
@@ -744,14 +801,14 @@
   function updateItem(it) {
     it.born++;
     if (it.rise > 0) { it.y -= 1; it.rise--; return; }
-    it.vy += it.type === 'bless' ? 0.32 : 0.34;
+    it.vy += (it.type === 'bless' ? 0.32 : 0.34) * TEMPO2;
     if (it.vy > MAX_FALL) it.vy = MAX_FALL;
     var prevBottom = it.y + it.h;
     it.bump = 0;
     it.x += it.vx; resolveX(it);
     if (it.bump) it.vx = -it.vx;
     it.y += it.vy; resolveY(it, prevBottom, false);
-    if (it.onGround && it.type === 'bless') it.vy = -3.6;
+    if (it.onGround && it.type === 'bless') it.vy = -3.6 * TEMPO;
     if (it.y > VH + 20) it.remove = true;
     var mid = Math.floor((it.x + it.w / 2) / TILE);
     var foot = Math.floor((it.y + it.h - 2) / TILE);
@@ -781,8 +838,8 @@
   function updateShot(s) {
     s.life--;
     if (s.life <= 0) { s.remove = true; return; }
-    s.vy += s.kind === 'arrow' ? 0.13 : 0.11;
-    if (s.vy > 5) s.vy = 5;
+    s.vy += (s.kind === 'arrow' ? 0.13 : 0.11) * TEMPO2;
+    if (s.vy > 5 * TEMPO) s.vy = 5 * TEMPO;
     var prevBottom = s.y + s.h;
     s.bump = 0;
     s.x += s.vx; resolveX(s);
@@ -791,7 +848,7 @@
       else s.vx = -s.vx;
     }
     s.y += s.vy; resolveY(s, prevBottom, false);
-    if (s.onGround) s.vy = s.kind === 'arrow' ? -2.1 : -2.6;
+    if (s.onGround) s.vy = (s.kind === 'arrow' ? -2.1 : -2.6) * TEMPO;
     if (s.x < G.camX - 32 || s.x > G.camX + VW + 32 || s.y > VH + 20) s.remove = true;
 
     if (s.kind === 'arrow') {
@@ -815,18 +872,18 @@
   function popup(x, y, str) { G.fx.push({ kind: 'text', x: x, y: y, str: str, life: 46 }); }
   function puff(x, y) {
     for (var i = 0; i < 4; i++) {
-      G.fx.push({ kind: 'burst', x: x + 4, y: y + 4, vx: (Math.random() - 0.5) * 2.4,
-                  vy: (Math.random() - 0.5) * 2.4, life: 16, color: '#ffe9b0' });
+      G.fx.push({ kind: 'burst', x: x + 4, y: y + 4, vx: (Math.random() - 0.5) * 2.4 * TEMPO,
+                  vy: (Math.random() - 0.5) * 2.4 * TEMPO, life: 16, color: '#ffe9b0' });
     }
   }
 
   function updateFx(f) {
     f.life--;
     if (f.life <= 0) { f.remove = true; return; }
-    if (f.kind === 'text') { f.y -= 0.55; }
-    else if (f.kind === 'chunk') { f.vy += 0.3; f.x += f.vx; f.y += f.vy; }
-    else if (f.kind === 'coin') { f.vy += 0.28; f.y += f.vy; }
-    else if (f.kind === 'burst') { f.vy += 0.14; f.x += f.vx; f.y += f.vy; }
+    if (f.kind === 'text') { f.y -= 0.55 * TEMPO; }
+    else if (f.kind === 'chunk') { f.vy += 0.3 * TEMPO2; f.x += f.vx; f.y += f.vy; }
+    else if (f.kind === 'coin') { f.vy += 0.28 * TEMPO2; f.y += f.vy; }
+    else if (f.kind === 'burst') { f.vy += 0.14 * TEMPO2; f.x += f.vx; f.y += f.vy; }
   }
 
   function prune(list) {
@@ -886,6 +943,10 @@
   function updatePlay() {
     var p = G.player;
     updatePlayer(p);
+    /* Dying, clearing the stage and winning all happen inside the call
+       above, and the first of them swaps G.player and reloads the level.
+       Stop here rather than steering the camera with a stale player. */
+    if (G.state !== 'play') return;
 
     if (!p.dead && p.morph === 0) {
       playerVsEnemies(p);
@@ -914,7 +975,7 @@
     // clock
     if (!p.dead) {
       G.timeAcc++;
-      if (G.timeAcc >= 25) {
+      if (G.timeAcc >= TICKS_PER_TIME) {
         G.timeAcc = 0;
         G.time--;
         if (G.time === 100) { G.hurry = true; Sound.fx.pause(); }
@@ -962,6 +1023,8 @@
         updatePlay();
         break;
       case 'paused':
+        if (pressed.left && speedIndex > 0) { setSpeed(speedIndex - 1, true); Sound.fx.bump(); }
+        if (pressed.right && speedIndex < SPEEDS.length - 1) { setSpeed(speedIndex + 1, true); Sound.fx.bump(); }
         if (pressed.pause || pressed.start) { G.state = 'play'; Sound.fx.pause(); }
         break;
       case 'clear':
@@ -1041,7 +1104,8 @@
     });
     if (p.star > 0 && G.t % 3 === 0) {
       G.fx.push({ kind: 'burst', x: p.x + Math.random() * 12, y: p.y + Math.random() * sz.h,
-                  vx: (Math.random() - 0.5), vy: -0.5, life: 14, color: '#ffd042' });
+                  vx: (Math.random() - 0.5) * TEMPO, vy: -0.5 * TEMPO, life: 14,
+                  color: '#ffd042' });
     }
   }
 
@@ -1192,9 +1256,19 @@
 
   function drawPaused() {
     drawScene();
-    dim(0.55);
-    textC('PAUSED', 100, '#ffffff', 2, '#000000');
-    textC('P TO RESUME   M TO MUTE', 130, '#ffd042', 1, '#000000');
+    dim(0.62);
+    textC('PAUSED', 78, '#ffffff', 2, '#000000');
+
+    var name = SPEEDS[speedIndex].name;
+    var w = textWidth('SPEED   ' + name, 1);
+    var x = Math.round((VW - w) / 2);
+    text('SPEED', x, 118, '#8fc4f5', 1, '#000000');
+    text(name, x + textWidth('SPEED   ', 1), 118, '#ffd042', 1, '#000000');
+    if (speedIndex > 0) text('<', x - 14, 118, '#ffffff', 1, '#000000');
+    if (speedIndex < SPEEDS.length - 1) text('>', x + w + 8, 118, '#ffffff', 1, '#000000');
+    textC('ARROWS CHANGE SPEED', 132, '#6f7f9f', 1, '#000000');
+
+    textC('P TO RESUME   M TO MUTE', 156, '#ffffff', 1, '#000000');
   }
 
   function drawGameOver() {
@@ -1268,8 +1342,10 @@
   resize();
 
   /* Exposed for debugging and level authoring from the console:
-   *   RamayanaBros.warp(2)  -> jump straight to Lanka
+   *   RamayanaBros.warp(2)      -> jump straight to Lanka
+   *   RamayanaBros.setSpeed(0)   -> 0 calm, 1 steady, 2 brisk
    *   RamayanaBros.player.big = true                                  */
+  G.setSpeed = function (i) { setSpeed(i, true); return SPEEDS[speedIndex].name; };
   G.warp = function (i) {
     G.levelIndex = Math.max(0, Math.min(i, Levels.list.length - 1));
     loadLevel(G.levelIndex);

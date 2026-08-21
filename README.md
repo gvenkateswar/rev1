@@ -1,12 +1,16 @@
 # Video & Audio Tools
 
-This repo holds two independent tools:
+This repo holds three independent projects:
 
 1. **Video Shorts Generator** (below) — find the best 30s clips in a long video.
 2. **[Speaker & Emotion Transcriber](transcriber/README.md)** — transcribe
    audio/video, tell speakers apart, and tag each segment with an emotion fused
    from voice tone *and* the words. CLI + local Streamlit GUI. See
    [`transcriber/`](transcriber/).
+3. **[Ramayana Bros.](ramayana-bros/README.md)** — a browser platformer in the
+   style of the 1985 classic, cast with characters from the Ramayana. Vanilla
+   HTML5 canvas, no dependencies, no asset files. Open
+   [`ramayana-bros/index.html`](ramayana-bros/index.html) and play.
 
 ---
 

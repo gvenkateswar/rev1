@@ -1,0 +1,2636 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>Ramayana Bros.</title>
+<style>
+/* Ramayana Bros. -- shell styling. The game itself is drawn on the canvas. */
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: #0d0b14;
+  color: #f5e2b8;
+  font-family: "Trebuchet MS", "Segoe UI", system-ui, sans-serif;
+  overflow: hidden;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background:
+    radial-gradient(120% 90% at 50% 0%, #241a3a 0%, #0d0b14 70%);
+}
+
+#frame {
+  position: relative;
+  line-height: 0;
+  box-shadow: 0 0 0 3px #3a2c1b, 0 0 40px rgba(255, 190, 80, 0.18);
+  border-radius: 2px;
+}
+
+#screen {
+  display: block;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  background: #000;
+}
+
+#help {
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  opacity: 0.75;
+  text-align: center;
+  max-width: 90vw;
+}
+
+#help b { color: #ffd042; }
+
+/* ---- touch controls (shown on coarse pointers) ---- */
+
+#touch {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 12px max(12px, env(safe-area-inset-left)) max(12px, env(safe-area-inset-bottom));
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  pointer-events: none;
+}
+
+#touch.hidden { display: none; }
+
+#touch .pad, #touch .acts { display: flex; gap: 10px; pointer-events: auto; }
+
+.tbtn {
+  width: 60px;
+  height: 60px;
+  border: 2px solid #6b563a;
+  border-radius: 12px;
+  background: rgba(38, 30, 22, 0.78);
+  color: #ffd042;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1;
+  touch-action: none;
+}
+
+.tbtn.round { border-radius: 50%; width: 66px; height: 66px; }
+.tbtn.pressed { background: rgba(255, 208, 66, 0.35); color: #241a10; }
+
+@media (max-height: 620px) {
+  #help { display: none; }
+}
+</style>
+</head>
+<body>
+<div id="frame">
+  <canvas id="screen" width="256" height="240"></canvas>
+
+  <div id="touch" class="hidden">
+    <div class="pad">
+      <button class="tbtn" data-key="left">◀</button>
+      <button class="tbtn" data-key="down">▼</button>
+      <button class="tbtn" data-key="right">▶</button>
+    </div>
+    <div class="acts">
+      <button class="tbtn round" data-key="run">B</button>
+      <button class="tbtn round" data-key="jump">A</button>
+    </div>
+  </div>
+</div>
+
+<div id="help">
+  <p>
+    <b>←&nbsp;→</b> walk &nbsp;·&nbsp; <b>Z&nbsp;/&nbsp;Space</b> jump &nbsp;·&nbsp;
+    <b>X&nbsp;/&nbsp;Shift</b> run &amp; shoot &nbsp;·&nbsp; <b>↓</b> duck &nbsp;·&nbsp;
+    <b>P</b> pause &nbsp;·&nbsp; <b>M</b> mute
+  </p>
+</div>
+
+<script>
+/* ------------------------------------------------------------------
+ * Ramayana Bros. -- sound.
+ *
+ * Everything is synthesised with WebAudio: no asset files, no loading.
+ * Sound.fx.*() plays a one-shot blip; Sound.music.play(name) starts a
+ * looping two-voice tune that must be pumped from the game loop with
+ * Sound.music.update().
+ * ------------------------------------------------------------------ */
+
+var Sound = (function () {
+  var ac = null;
+  var master = null;
+  var muted = false;
+  var ready = false;
+
+  function init() {
+    if (ac) return;
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    ac = new AC();
+    master = ac.createGain();
+    master.gain.value = 0.22;
+    master.connect(ac.destination);
+    ready = true;
+  }
+
+  /* Browsers only allow audio after a gesture; call this from input. */
+  function unlock() {
+    init();
+    if (ac && ac.state === 'suspended') ac.resume();
+  }
+
+  function now() { return ac.currentTime; }
+
+  /* A single enveloped oscillator note. */
+  function note(o) {
+    if (!ready || muted) return;
+    var t0 = (o.at || now()) + (o.delay || 0);
+    var dur = o.dur || 0.12;
+    var osc = ac.createOscillator();
+    var g = ac.createGain();
+    osc.type = o.type || 'square';
+    osc.frequency.setValueAtTime(o.freq, t0);
+    if (o.to && o.to !== o.freq) {
+      if (o.slide === 'linear') osc.frequency.linearRampToValueAtTime(o.to, t0 + dur);
+      else osc.frequency.exponentialRampToValueAtTime(Math.max(1, o.to), t0 + dur);
+    }
+    var vol = o.vol == null ? 0.3 : o.vol;
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(vol, t0 + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    osc.connect(g);
+    g.connect(o.bus || master);
+    osc.start(t0);
+    osc.stop(t0 + dur + 0.02);
+  }
+
+  /* Filtered white noise -- used for thuds, breaks and explosions. */
+  function noise(o) {
+    if (!ready || muted) return;
+    var t0 = (o.at || now()) + (o.delay || 0);
+    var dur = o.dur || 0.15;
+    var frames = Math.max(1, Math.floor(ac.sampleRate * dur));
+    var buf = ac.createBuffer(1, frames, ac.sampleRate);
+    var data = buf.getChannelData(0);
+    for (var i = 0; i < frames; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / frames);
+    var src = ac.createBufferSource();
+    src.buffer = buf;
+    var flt = ac.createBiquadFilter();
+    flt.type = o.filter || 'bandpass';
+    flt.frequency.setValueAtTime(o.freq || 900, t0);
+    if (o.to) flt.frequency.exponentialRampToValueAtTime(Math.max(20, o.to), t0 + dur);
+    flt.Q.value = o.q == null ? 1.2 : o.q;
+    var g = ac.createGain();
+    g.gain.setValueAtTime(o.vol == null ? 0.35 : o.vol, t0);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    src.connect(flt); flt.connect(g); g.connect(master);
+    src.start(t0);
+  }
+
+  var fx = {
+    jump:      function () { note({ freq: 300, to: 720, dur: 0.16, type: 'square', vol: 0.22 }); },
+    bigJump:   function () { note({ freq: 240, to: 660, dur: 0.22, type: 'square', vol: 0.24 }); },
+    coin:      function () { note({ freq: 988, dur: 0.06, vol: 0.2, type: 'square' });
+                             note({ freq: 1319, dur: 0.24, vol: 0.2, type: 'square', delay: 0.06 }); },
+    stomp:     function () { noise({ freq: 500, to: 120, dur: 0.12, vol: 0.3 });
+                             note({ freq: 180, to: 60, dur: 0.1, type: 'triangle', vol: 0.25 }); },
+    bump:      function () { note({ freq: 180, to: 90, dur: 0.09, type: 'square', vol: 0.22 }); },
+    brick:     function () { noise({ freq: 2200, to: 300, dur: 0.22, vol: 0.35, filter: 'highpass' }); },
+    sprout:    function () { note({ freq: 262, to: 1047, dur: 0.5, type: 'triangle', vol: 0.2, slide: 'linear' }); },
+    powerup:   function () { var s = [523, 659, 784, 1047, 1319];
+                             for (var i = 0; i < s.length; i++)
+                               note({ freq: s[i], dur: 0.12, vol: 0.22, delay: i * 0.07, type: 'square' }); },
+    arrow:     function () { note({ freq: 1400, to: 500, dur: 0.09, type: 'sawtooth', vol: 0.14 }); },
+    hit:       function () { note({ freq: 500, to: 120, dur: 0.25, type: 'sawtooth', vol: 0.2 }); },
+    shrink:    function () { note({ freq: 700, to: 200, dur: 0.3, type: 'square', vol: 0.2 }); },
+    kick:      function () { note({ freq: 260, to: 620, dur: 0.08, type: 'square', vol: 0.2 }); },
+    die:       function () { var s = [523, 392, 330, 262, 196];
+                             for (var i = 0; i < s.length; i++)
+                               note({ freq: s[i], dur: 0.18, vol: 0.24, delay: i * 0.13, type: 'square' }); },
+    oneUp:     function () { var s = [784, 1047, 1319, 1568];
+                             for (var i = 0; i < s.length; i++)
+                               note({ freq: s[i], dur: 0.12, vol: 0.2, delay: i * 0.08, type: 'triangle' }); },
+    bossHit:   function () { noise({ freq: 1400, to: 200, dur: 0.3, vol: 0.4 });
+                             note({ freq: 160, to: 50, dur: 0.35, type: 'sawtooth', vol: 0.25 }); },
+    bossRoar:  function () { note({ freq: 110, to: 55, dur: 0.7, type: 'sawtooth', vol: 0.28 });
+                             noise({ freq: 300, to: 80, dur: 0.7, vol: 0.25, filter: 'lowpass' }); },
+    fire:      function () { noise({ freq: 1200, to: 400, dur: 0.18, vol: 0.16 }); },
+    pause:     function () { note({ freq: 660, dur: 0.08, vol: 0.18, type: 'square' });
+                             note({ freq: 440, dur: 0.1, vol: 0.18, type: 'square', delay: 0.08 }); },
+    flag:      function () { var s = [392, 523, 659, 784, 1047, 1319];
+                             for (var i = 0; i < s.length; i++)
+                               note({ freq: s[i], dur: 0.11, vol: 0.2, delay: i * 0.06, type: 'triangle' }); }
+  };
+
+  /* ---------------- music ----------------
+   * Tunes are written on a pentatonic scale (Mohanam-flavoured) so the
+   * loops sit somewhere between a Ramayana serial title card and a NES
+   * overworld theme. Notes are [scaleDegree, beats]; null = rest.
+   * Degrees index SCALE; +7 jumps an octave.                         */
+
+  var SCALE = [0, 2, 4, 7, 9];           // semitone offsets, pentatonic
+  function deg(d, base) {
+    var oct = Math.floor(d / SCALE.length);
+    var s = SCALE[((d % SCALE.length) + SCALE.length) % SCALE.length];
+    return base * Math.pow(2, (s + 12 * oct) / 12);
+  }
+
+  var TUNES = {
+    forest: {
+      tempo: 152, base: 261.63, lead: 'square', bass: 'triangle',
+      melody: [[5,1],[4,1],[5,1],[7,1],[6,1],[5,1],[4,2],[2,1],[4,1],[5,1],[4,1],[2,1],[1,1],[2,2],
+               [5,1],[7,1],[9,1],[7,1],[6,1],[5,1],[4,2],[4,1],[2,1],[1,1],[0,1],[1,2],[2,2]],
+      bassline: [[0,2],[2,2],[4,2],[2,2],[0,2],[3,2],[2,2],[1,2]]
+    },
+    mountain: {
+      tempo: 138, base: 220.00, lead: 'square', bass: 'triangle',
+      melody: [[2,2],[4,1],[5,1],[7,2],[5,2],[4,1],[2,1],[1,2],[2,2],
+               [7,2],[9,1],[7,1],[6,2],[5,2],[4,2],[2,4]],
+      bassline: [[0,2],[0,2],[3,2],[3,2],[4,2],[4,2],[2,2],[0,2]]
+    },
+    lanka: {
+      tempo: 168, base: 196.00, lead: 'sawtooth', bass: 'square',
+      melody: [[0,1],[1,1],[0,1],[-1,1],[0,2],[3,2],[2,1],[1,1],[0,1],[-1,1],[0,4],
+               [5,1],[4,1],[3,1],[2,1],[1,2],[0,2]],
+      bassline: [[0,1],[0,1],[3,1],[0,1],[-2,1],[-2,1],[1,1],[-2,1]]
+    },
+    boss: {
+      tempo: 186, base: 174.61, lead: 'sawtooth', bass: 'square',
+      melody: [[0,1],[0,1],[1,1],[0,1],[3,1],[2,1],[1,1],[0,1],
+               [-1,1],[-1,1],[0,1],[-1,1],[2,1],[1,1],[0,1],[-1,1]],
+      bassline: [[0,1],[0,1],[0,1],[1,1],[-1,1],[-1,1],[-1,1],[0,1]]
+    }
+  };
+
+  var cur = null, curName = null, nextTime = 0, mi = 0, bi = 0, mAcc = 0, bAcc = 0;
+  var LOOKAHEAD = 0.25;
+
+  var music = {
+    play: function (name) {
+      init();
+      if (curName === name) return;
+      curName = name;
+      cur = TUNES[name] || null;
+      mi = bi = 0; mAcc = bAcc = 0;
+      nextTime = ready ? now() + 0.05 : 0;
+    },
+    stop: function () { cur = null; curName = null; },
+    /* Schedules a little ahead of the clock; safe to call every frame. */
+    update: function () {
+      if (!ready || !cur || muted) return;
+      var beat = 60 / cur.tempo / 2;          // an eighth note
+      var t = now();
+      if (nextTime < t) nextTime = t + 0.02;
+      while (nextTime < t + LOOKAHEAD) {
+        if (mAcc <= 0) {
+          var m = cur.melody[mi % cur.melody.length];
+          mi++;
+          mAcc = m[1];
+          if (m[0] !== null) {
+            note({ freq: deg(m[0], cur.base), dur: beat * m[1] * 0.85, type: cur.lead,
+                   vol: 0.075, at: nextTime });
+          }
+        }
+        if (bAcc <= 0) {
+          var b = cur.bassline[bi % cur.bassline.length];
+          bi++;
+          bAcc = b[1];
+          note({ freq: deg(b[0], cur.base) / 2, dur: beat * b[1] * 0.9, type: cur.bass,
+                 vol: 0.09, at: nextTime });
+        }
+        mAcc--; bAcc--;
+        nextTime += beat;
+      }
+    }
+  };
+
+  return {
+    unlock: unlock,
+    fx: fx,
+    music: music,
+    isMuted: function () { return muted; },
+    toggleMute: function () {
+      muted = !muted;
+      if (master) master.gain.value = muted ? 0 : 0.22;
+      if (!muted) { nextTime = ready ? now() + 0.05 : 0; }
+      return muted;
+    }
+  };
+})();
+</script>
+<script>
+/* ------------------------------------------------------------------
+ * Ramayana Bros. -- sprite art.
+ *
+ * Every character, item, tile and backdrop is plotted as coloured
+ * rectangles on the 256x240 pixel grid, so the whole game ships as
+ * source with no binary assets. Each draw*() call takes the top-left
+ * corner of the sprite box and draws inside it.
+ * ------------------------------------------------------------------ */
+
+var Sprites = (function () {
+
+  var C = {
+    // Rama
+    skin: '#5b9de0', skinD: '#3d78b8', skinL: '#8fc4f5',
+    hair: '#181528', dhoti: '#ffb327', dhotiD: '#cf7f0d',
+    gold: '#ffd042', goldD: '#c8901a', goldL: '#fff2b0',
+    white: '#fdfdfd', black: '#12101a', red: '#e0403a', sandal: '#5a3a1c',
+    // rakshasa
+    demon: '#4e8c3a', demonD: '#2f5f26', bone: '#e8dbb4', eyeY: '#ffe24a',
+    // deer
+    deer: '#f0b53c', deerL: '#ffdd97', deerD: '#a9741a',
+    // crow
+    crow: '#2b2438', crowL: '#453a5e', beak: '#f0a83c',
+    // ravana
+    rav: '#4a2f63', ravD: '#2e1c3f', ravL: '#6b4a8a', ravSkin: '#7b4f9c',
+    // sita
+    sari: '#3fa66b', sariD: '#2b7a4c', sariR: '#d9434f'
+  };
+
+  /* Palette swaps used while the Hanuman blessing (star) is active. */
+  var STAR_SETS = [
+    { skin: '#ffe066', dhoti: '#ff6a3d', gold: '#fff6c9' },
+    { skin: '#8ef0a0', dhoti: '#ffd042', gold: '#ffffff' },
+    { skin: '#ff9de0', dhoti: '#6ec8ff', gold: '#fff2b0' },
+    { skin: '#c0a6ff', dhoti: '#ff5f6d', gold: '#ffe066' }
+  ];
+
+  function shade(base, key, on) { return on ? on[key] || base[key] : base[key]; }
+
+  /* ---------------- low level ---------------- */
+
+  function makePen(ctx, x, y, w, flip) {
+    // Returns r(px,py,pw,ph,colour) in sprite-local coords, mirrored when
+    // the sprite faces left so every sprite only needs a right-facing pose.
+    if (flip) {
+      return function (px, py, pw, ph, c) {
+        ctx.fillStyle = c;
+        ctx.fillRect(x + (w - px - pw), y + py, pw, ph);
+      };
+    }
+    return function (px, py, pw, ph, c) {
+      ctx.fillStyle = c;
+      ctx.fillRect(x + px, y + py, pw, ph);
+    };
+  }
+
+  /* ---------------- Rama (the player) ----------------
+   * o = { big, bow, state:'stand'|'walk'|'jump'|'duck'|'dead'|'climb',
+   *       frame, dir, star, t }                                        */
+
+  function heroSize(o) {
+    if (o.state === 'duck') return { w: 16, h: o.big ? 18 : 16 };
+    return { w: 16, h: o.big ? 28 : 16 };
+  }
+
+  function drawHero(ctx, x, y, o) {
+    var big = !!o.big, duck = o.state === 'duck' && big;
+    var W = 16, H = duck ? 18 : (big ? 28 : 16);
+    var p = makePen(ctx, x, y, W, o.dir < 0);
+
+    // palette: cycles while invincible, pales while the bow is held
+    var sk = C.skin, skD = C.skinD, dh = C.dhoti, gd = C.gold;
+    if (o.bow) { dh = '#f4f4f8'; }
+    if (o.star) {
+      var st = STAR_SETS[(o.t >> 1) % STAR_SETS.length];
+      sk = st.skin; dh = st.dhoti; gd = st.gold;
+    }
+
+    var crownH = big ? 4 : 3;
+    var headH  = big ? 9 : 6;
+    var torsoH = big ? 8 : 4;
+    if (duck) { crownH = 3; headH = 6; torsoH = 6; }
+    var crownY = 0, headY = crownY + crownH, torsoY = headY + headH;
+    var legY = torsoY + torsoH, legH = H - legY;
+    var hairH = big ? 2 : 1;
+
+    // ---- crown (mukuta)
+    p(7, crownY, 3, 1, gd);
+    p(5, crownY + 1, 7, crownH - 2, gd);
+    p(8, crownY + 1, 2, 1, C.red);
+    p(3, crownY + crownH - 1, 11, 1, C.goldD);
+
+    // ---- head
+    p(3, headY, 11, hairH, C.hair);              // hair
+    p(3, headY, 2, headH - 1, C.hair);           // hair falling behind
+    p(5, headY + hairH, 9, headH - hairH - 1, sk);
+    p(5, headY + headH - 1, 9, 1, skD);          // jaw shadow
+    p(4, headY + hairH + 1, 1, 2, C.hair);       // ear lock
+    p(8, headY + hairH, 1, 2, C.red);            // tilak
+    if (o.state === 'dead') {
+      p(10, headY + hairH + 1, 3, 1, C.black);   // closed eyes
+      p(10, headY + headH - 2, 2, 1, skD);
+    } else {
+      p(10, headY + hairH + 1, 2, big ? 3 : 2, C.white);
+      p(11, headY + hairH + 1, 1, big ? 2 : 1, C.black);
+      if (big) p(11, headY + headH - 2, 2, 1, skD);
+    }
+
+    // ---- torso
+    var tw = big ? 10 : 8, tx = big ? 3 : 4;
+    p(tx, torsoY, tw, torsoH, sk);
+    p(tx + 1, torsoY, tw - 2, 1, gd);            // necklace
+    for (var i = 0; i < torsoH - 2; i++) p(tx + 2 + i, torsoY + i, 1, 1, C.white);
+    p(tx, torsoY + torsoH - 2, tw, 2, dh);       // waist cloth
+    p(tx, torsoY + torsoH - 2, tw, 1, C.goldD);  // belt
+
+    // ---- arms
+    var armH = big ? 5 : 3, swing = 0;
+    if (o.state === 'walk') swing = (o.frame % 4 === 1) ? -1 : (o.frame % 4 === 3 ? 1 : 0);
+    if (o.state === 'jump') {
+      p(1, torsoY - 1, 2, armH, sk);
+      p(13, torsoY - 2, 2, armH, sk);
+    } else if (o.state === 'dead') {
+      p(1, torsoY - 3, 2, armH, sk);
+      p(13, torsoY - 3, 2, armH, sk);
+    } else if (duck) {
+      p(2, torsoY + 1, 3, 2, sk);
+      p(12, torsoY + 1, 3, 2, sk);
+    } else {
+      p(1, torsoY + 1 + swing, 2, armH, sk);
+      p(13, torsoY + 1 - swing, 2, armH, sk);
+    }
+
+    // ---- the Kodanda bow, carried in the forward hand
+    if (o.bow && o.state !== 'dead') {
+      var by = torsoY - 2, bh = big ? 11 : 8;
+      p(14, by + 2, 1, bh - 3, gd);
+      p(13, by + 1, 1, 1, gd); p(13, by + bh - 1, 1, 1, gd);
+      p(12, by, 1, 1, gd);     p(12, by + bh, 1, 1, gd);
+      p(12, by + 1, 1, bh - 1, '#efe6cc');       // string
+    }
+
+    // ---- legs
+    if (o.state === 'dead') {
+      p(5, legY, 3, legH, sk); p(9, legY, 3, legH, sk);
+      p(4, legY + legH - 1, 4, 1, C.sandal); p(9, legY + legH - 1, 4, 1, C.sandal);
+    } else if (duck) {
+      p(3, legY, 11, legH - 1, dh);
+      p(3, legY, 11, 1, C.goldD);
+      p(3, legY + legH - 1, 5, 1, C.sandal);
+      p(9, legY + legH - 1, 5, 1, C.sandal);
+    } else {
+      p(3, legY, 11, 1, dh);                     // dhoti hem
+      var pose;
+      if (o.state === 'jump') pose = [2, 9];
+      else if (o.state === 'walk') pose = [[4, 9], [1, 10], [5, 8], [1, 10]][o.frame % 4];
+      else pose = [4, 9];
+      p(pose[0], legY + 1, 3, legH - 1, sk);
+      p(pose[1], legY + 1, 3, legH - 1, sk);
+      p(pose[0] - 1, legY + legH - 1, 4, 1, C.sandal);
+      p(pose[1], legY + legH - 1, 4, 1, C.sandal);
+    }
+  }
+
+  /* ---------------- Rakshasa (walking demon) ---------------- */
+
+  function drawRakshasa(ctx, x, y, frame, dir, squashed) {
+    var p = makePen(ctx, x, y, 16, dir < 0);
+    if (squashed) {
+      p(1, 10, 14, 4, C.demonD);
+      p(3, 8, 10, 2, C.demon);
+      p(2, 8, 1, 2, C.bone); p(13, 8, 1, 2, C.bone);
+      p(4, 11, 2, 1, C.eyeY); p(10, 11, 2, 1, C.eyeY);
+      return;
+    }
+    // horns
+    p(2, 0, 1, 1, C.bone); p(2, 1, 2, 3, C.bone);
+    p(13, 0, 1, 1, C.bone); p(12, 1, 2, 3, C.bone);
+    // body
+    p(3, 3, 10, 9, C.demon);
+    p(2, 5, 12, 6, C.demon);
+    p(3, 10, 10, 2, C.demonD);
+    p(2, 4, 1, 1, C.demonD); p(13, 4, 1, 1, C.demonD);
+    // face
+    p(4, 5, 3, 1, C.demonD); p(9, 5, 3, 1, C.demonD);
+    p(4, 6, 3, 2, C.eyeY); p(9, 6, 3, 2, C.eyeY);
+    p(5, 7, 1, 1, C.black); p(10, 7, 1, 1, C.black);
+    p(5, 9, 6, 2, '#2a1220');
+    p(5, 9, 1, 1, C.white); p(10, 9, 1, 1, C.white);
+    // feet
+    var f = frame % 2;
+    if (f) { p(1, 12, 5, 4, C.demonD); p(10, 12, 5, 4, C.demonD); }
+    else   { p(2, 12, 5, 4, C.demonD); p(9, 12, 5, 4, C.demonD); }
+    p(1, 15, 5, 1, '#1d3a18'); p(10, 15, 5, 1, '#1d3a18');
+  }
+
+  /* ---------------- Maricha, the golden deer ---------------- */
+
+  function drawDeer(ctx, x, y, frame, dir) {
+    var p = makePen(ctx, x, y, 16, dir < 0);
+    // antlers
+    p(9, 0, 1, 3, C.deerD); p(8, 1, 1, 1, C.deerD); p(10, 1, 1, 1, C.deerD);
+    p(12, 0, 1, 3, C.deerD); p(13, 1, 1, 1, C.deerD);
+    // head + neck
+    p(9, 3, 5, 5, C.deer);
+    p(13, 6, 3, 2, C.deerL);
+    p(15, 6, 1, 1, C.black);
+    p(11, 4, 1, 1, C.black);
+    p(8, 7, 3, 4, C.deer);
+    // body
+    p(2, 9, 11, 7, C.deer);
+    p(2, 14, 11, 2, C.deerD);
+    p(4, 11, 1, 1, C.white); p(7, 10, 1, 1, C.white); p(9, 12, 1, 1, C.white);
+    p(1, 9, 2, 3, C.deerL);            // tail
+    // legs
+    var f = frame % 2;
+    if (f) { p(2, 16, 2, 6, C.deerD); p(11, 16, 2, 6, C.deerD); }
+    else   { p(4, 16, 2, 6, C.deerD); p(9, 16, 2, 6, C.deerD); }
+    p(2, 21, 3, 1, '#6b4611'); p(9, 21, 3, 1, '#6b4611');
+  }
+
+  /* Curled-up deer: the shell you can kick. */
+  function drawDeerShell(ctx, x, y, frame, spinning) {
+    var p = makePen(ctx, x, y, 16, false);
+    p(3, 1, 10, 3, C.deer);
+    p(1, 3, 14, 8, C.deer);
+    p(1, 10, 14, 3, C.deerD);
+    p(2, 0, 1, 2, C.deerD); p(13, 0, 1, 2, C.deerD);      // antler nubs
+    var o = spinning ? (frame % 4) : 0;
+    p(3 + o, 5, 2, 2, C.white);
+    p(8 + o, 7, 2, 2, C.white);
+    p(11 - o, 4, 1, 1, C.deerL);
+    p(1, 3, 14, 1, C.deerL);
+  }
+
+  /* ---------------- Kakasura, the crow demon ---------------- */
+
+  function drawCrow(ctx, x, y, frame, dir) {
+    var p = makePen(ctx, x, y, 16, dir < 0);
+    var up = (frame % 2) === 0;
+    if (up) { p(2, 0, 7, 4, C.crowL); p(1, 2, 4, 2, C.crow); }
+    else    { p(1, 7, 8, 4, C.crowL); p(2, 6, 5, 2, C.crow); }
+    p(4, 4, 8, 6, C.crow);
+    p(9, 2, 5, 4, C.crow);
+    p(13, 4, 3, 2, C.beak);
+    p(11, 3, 1, 1, C.red);
+    p(0, 5, 4, 2, C.crow);              // tail
+    p(6, 9, 2, 3, C.beak);              // talons
+  }
+
+  /* ---------------- Ravana (boss, 32x44) ---------------- */
+
+  function drawRavana(ctx, x, y, o) {
+    var p = makePen(ctx, x, y, 32, o.dir < 0);
+    var skin = o.flash ? '#ffd7d7' : C.ravSkin;
+    var robe = o.flash ? '#ffb0b0' : C.rav;
+    // the ten heads: a back row of nine plus the crowned central face
+    for (var i = 0; i < 5; i++) {
+      var hx = 1 + i * 6;
+      p(hx, 4, 5, 6, C.ravD);
+      p(hx + 1, 5, 3, 4, skin);
+      p(hx + 1, 6, 1, 1, C.red); p(hx + 3, 6, 1, 1, C.red);
+      p(hx, 3, 5, 1, C.gold);
+    }
+    for (var j = 0; j < 4; j++) {
+      var bx = 4 + j * 6;
+      p(bx, 0, 5, 5, C.ravD);
+      p(bx + 1, 1, 3, 3, skin);
+      p(bx + 1, 2, 1, 1, C.red); p(bx + 3, 2, 1, 1, C.red);
+    }
+    // central head
+    p(11, 6, 10, 10, C.ravD);
+    p(12, 8, 8, 7, skin);
+    p(11, 5, 10, 2, C.gold);
+    p(13, 4, 6, 1, C.gold);
+    p(15, 5, 2, 1, C.red);
+    p(13, 10, 2, 2, C.red); p(17, 10, 2, 2, C.red);       // burning eyes
+    p(12, 13, 8, 1, C.black);                             // moustache
+    p(14, 14, 4, 1, C.white);                             // bared teeth
+    // torso
+    var f = o.frame % 2;
+    p(7, 16, 18, 3, C.gold);                              // shoulder plate
+    p(8, 19, 16, 9, robe);
+    p(8, 19, 1, 9, C.ravD); p(23, 19, 1, 9, C.ravD);      // edge shading
+    p(10, 20, 12, 1, C.goldD);
+    p(14, 21, 4, 4, C.gold);                              // chest jewel
+    p(15, 22, 2, 2, C.red);
+    p(8, 26, 16, 2, C.goldD);                             // waist sash
+    p(4, 18, 4, 8, skin);  p(24, 18, 4, 8, skin);         // arms
+    p(4, 17, 4, 1, C.gold); p(24, 17, 4, 1, C.gold);
+    p(3, 25, 5, 4, C.ravD); p(24, 25, 5, 4, C.ravD);      // fists
+    // mace, swung with the walk cycle
+    p(27, 10 + f, 3, 16, '#6f6f7d');
+    p(25, 6 + f, 7, 6, '#9aa0b0');
+    p(26, 5 + f, 5, 1, '#c9d0dd');
+    p(24, 8 + f, 1, 2, '#6f6f7d'); p(31, 8 + f, 1, 2, '#6f6f7d');
+    // legs
+    p(9, 28, 6, 12 + (f ? 0 : 1), robe);
+    p(17, 28, 6, 13 - (f ? 0 : 1), robe);
+    p(9, 28, 1, 12, C.ravD); p(22, 28, 1, 12, C.ravD);
+    p(8, 40, 8, 4, C.ravD); p(16, 40, 8, 4, C.ravD);
+    p(8, 43, 8, 1, C.gold); p(16, 43, 8, 1, C.gold);
+  }
+
+  /* ---------------- Sita ---------------- */
+
+  function drawSita(ctx, x, y, t) {
+    var p = makePen(ctx, x, y, 16, false);
+    var bob = (Math.floor(t / 20) % 2);
+    y += bob;
+    p = makePen(ctx, x, y, 16, false);
+    p(4, 0, 8, 3, C.hair);
+    p(3, 2, 10, 2, C.hair);
+    p(4, 3, 8, 6, '#f0c08a');
+    p(4, 3, 2, 6, C.hair); p(11, 3, 2, 5, C.hair);
+    p(7, 5, 1, 1, C.black); p(10, 5, 1, 1, C.black);
+    p(8, 4, 1, 1, C.red);
+    p(5, 2, 6, 1, C.gold);
+    p(4, 9, 8, 2, C.gold);                     // necklace
+    p(3, 10, 10, 8, C.sari);
+    p(3, 10, 10, 2, C.sariR);
+    p(9, 12, 4, 6, C.sariR);                   // pallu
+    p(3, 17, 10, 1, C.gold);
+    p(2, 12, 2, 4, '#f0c08a'); p(12, 12, 2, 4, '#f0c08a');
+    p(5, 18, 3, 3, C.sari); p(9, 18, 3, 3, C.sari);
+    p(5, 21, 3, 1, '#f0c08a'); p(9, 21, 3, 1, '#f0c08a');
+  }
+
+  /* ---------------- items ---------------- */
+
+  function drawSanjeevani(ctx, x, y) {          // grow power-up
+    var p = makePen(ctx, x, y, 16, false);
+    p(4, 2, 8, 2, '#5fbf4a');
+    p(2, 4, 12, 5, '#5fbf4a');
+    p(2, 4, 12, 1, '#8ee06f');
+    p(1, 6, 2, 3, '#3f9633'); p(13, 6, 2, 3, '#3f9633');
+    p(6, 5, 4, 3, C.red);
+    p(7, 5, 1, 1, '#ff9a94');
+    p(3, 9, 10, 2, '#3f9633');
+    p(6, 11, 4, 3, '#c98f56');
+    p(4, 14, 8, 2, '#8b5a2b');
+    p(4, 14, 8, 1, '#b87c42');
+  }
+
+  function drawBow(ctx, x, y, t) {             // Kodanda -- shoot arrows
+    var p = makePen(ctx, x, y, 16, false);
+    var g = ((t >> 3) % 2) ? C.goldL : C.gold;
+    // the limb, curving away from the string
+    p(6, 0, 3, 1, g);
+    p(4, 1, 2, 1, g);
+    p(3, 2, 2, 2, g);
+    p(2, 4, 2, 8, g);
+    p(3, 12, 2, 2, g);
+    p(4, 14, 2, 1, g);
+    p(6, 15, 3, 1, g);
+    p(2, 6, 1, 4, C.goldL);                    // highlight
+    p(3, 7, 3, 2, C.goldD);                    // grip
+    // string
+    p(9, 1, 1, 14, '#efe6cc');
+    // nocked arrow
+    p(6, 7, 8, 2, '#c98f56');
+    p(13, 6, 3, 4, '#dfe4ec');
+    p(6, 6, 1, 1, C.white); p(6, 9, 1, 1, C.white);
+  }
+
+  function drawBlessing(ctx, x, y, t) {        // Hanuman's blessing -- star
+    var p = makePen(ctx, x, y, 16, false);
+    var pulse = (t >> 2) % 4;
+    var a = ['#ff8a2b', '#ffb347', '#ffd042', '#ff6a3d'][pulse];
+    var b = ['#ffd042', '#fff2b0', '#ff8a2b', '#ffd042'][pulse];
+    p(7, 0, 2, 3, a);
+    p(6, 3, 4, 2, a);
+    p(1, 5, 14, 2, a);
+    p(2, 7, 12, 2, b);
+    p(3, 9, 10, 2, a);
+    p(2, 11, 4, 3, a); p(10, 11, 4, 3, a);
+    p(1, 14, 3, 2, a); p(12, 14, 3, 2, a);
+    p(6, 6, 4, 4, C.white);
+    p(7, 7, 2, 2, '#c8501e');                  // tiny Hanuman face mark
+  }
+
+  var COIN_W = [8, 6, 4, 2, 4, 6];
+  function drawCoin(ctx, x, y, frame) {
+    var w = COIN_W[((frame % COIN_W.length) + COIN_W.length) % COIN_W.length];
+    var cx = x + 8 - Math.floor(w / 2);
+    if (w > 2) {                                 // bevelled top and bottom
+      ctx.fillStyle = C.goldD;
+      ctx.fillRect(cx + 1, y + 2, w - 2, 1);
+      ctx.fillRect(cx + 1, y + 13, w - 2, 1);
+    }
+    ctx.fillStyle = C.goldD; ctx.fillRect(cx, y + 3, w, 10);
+    ctx.fillStyle = C.gold;  ctx.fillRect(cx, y + 4, w, 8);
+    if (w > 3) {
+      ctx.fillStyle = C.goldL; ctx.fillRect(cx + 1, y + 4, 1, 8);
+      ctx.fillStyle = C.goldD; ctx.fillRect(cx + Math.floor(w / 2), y + 6, 1, 4);
+    }
+  }
+
+  function drawArrow(ctx, x, y, dir) {
+    var p = makePen(ctx, x, y, 8, dir < 0);
+    p(0, 3, 6, 2, '#c98f56');
+    p(6, 2, 2, 4, '#dfe4ec');
+    p(0, 1, 2, 2, C.white); p(0, 5, 2, 2, C.white);
+    p(0, 3, 6, 1, '#e0b783');
+  }
+
+  function drawFireball(ctx, x, y, t) {
+    var p = makePen(ctx, x, y, 10, false);
+    var f = (t >> 2) % 2;
+    p(2, 2, 6, 6, '#ff8a2b');
+    p(3, 3, 4, 4, '#ffd042');
+    p(4, 4, 2, 2, C.white);
+    p(f ? 0 : 1, 3, 2, 4, '#e0403a');
+    p(8, f ? 2 : 4, 2, 3, '#e0403a');
+  }
+
+  /* ---------------- tiles ---------------- */
+
+  var THEME = {
+    forest: { dirt: '#9c5a2b', dirtD: '#6d3d1b', top: '#4aa83f', topD: '#2f7a2b',
+              brick: '#c1682f', brickD: '#8a4520', stone: '#a9a29a', stoneD: '#6f6a63' },
+    mountain: { dirt: '#7d7b8c', dirtD: '#535163', top: '#b8b3c6', topD: '#7d7b8c',
+              brick: '#8d8598', brickD: '#5d566b', stone: '#b0aab8', stoneD: '#6f6a7a' },
+    lanka:  { dirt: '#4a2b3a', dirtD: '#2c1723', top: '#7a2f3c', topD: '#4a1a24',
+              brick: '#7b3140', brickD: '#4d1c27', stone: '#6a5a72', stoneD: '#3f3547' }
+  };
+
+  function drawTile(ctx, x, y, ch, theme, t, openAbove) {
+    var T = THEME[theme] || THEME.forest;
+    var f;
+    switch (ch) {
+      case '#':
+        ctx.fillStyle = T.dirt; ctx.fillRect(x, y, 16, 16);
+        ctx.fillStyle = T.dirtD;
+        ctx.fillRect(x, y + 15, 16, 1); ctx.fillRect(x + 7, y + 4, 2, 2);
+        ctx.fillRect(x + 2, y + 10, 2, 2); ctx.fillRect(x + 12, y + 8, 2, 2);
+        if (openAbove) {
+          ctx.fillStyle = T.top; ctx.fillRect(x, y, 16, 5);
+          ctx.fillStyle = T.topD; ctx.fillRect(x, y + 5, 16, 1);
+          ctx.fillStyle = T.top;
+          ctx.fillRect(x + 1, y - 2, 2, 2); ctx.fillRect(x + 6, y - 3, 2, 3);
+          ctx.fillRect(x + 12, y - 2, 2, 2);
+        }
+        break;
+      case 'S':
+        ctx.fillStyle = T.stone; ctx.fillRect(x, y, 16, 16);
+        ctx.fillStyle = T.stoneD;
+        ctx.fillRect(x, y, 16, 1); ctx.fillRect(x, y + 15, 16, 1);
+        ctx.fillRect(x, y, 1, 16); ctx.fillRect(x + 15, y, 1, 16);
+        ctx.fillRect(x + 3, y + 3, 10, 1); ctx.fillRect(x + 3, y + 12, 10, 1);
+        ctx.fillStyle = '#ffffff22'; ctx.fillRect(x + 2, y + 5, 12, 6);
+        break;
+      case 'B':
+        ctx.fillStyle = T.brick; ctx.fillRect(x, y, 16, 16);
+        ctx.fillStyle = T.brickD;
+        ctx.fillRect(x, y, 16, 1);
+        ctx.fillRect(x, y + 7, 16, 1);
+        ctx.fillRect(x, y + 15, 16, 1);
+        ctx.fillRect(x + 7, y + 1, 1, 6);
+        ctx.fillRect(x + 3, y + 8, 1, 7);
+        ctx.fillRect(x + 11, y + 8, 1, 7);
+        break;
+      case '?': case 'M': case 'W': case 'T':
+        f = (t >> 3) % 4;
+        ctx.fillStyle = f === 3 ? '#d99b1c' : C.gold;
+        ctx.fillRect(x, y, 16, 16);
+        ctx.fillStyle = C.goldD;
+        ctx.fillRect(x, y, 16, 1); ctx.fillRect(x, y + 15, 16, 1);
+        ctx.fillRect(x, y, 1, 16); ctx.fillRect(x + 15, y, 1, 16);
+        ctx.fillRect(x + 1, y + 1, 2, 2); ctx.fillRect(x + 13, y + 1, 2, 2);
+        ctx.fillRect(x + 1, y + 13, 2, 2); ctx.fillRect(x + 13, y + 13, 2, 2);
+        // a lotus mark instead of the question mark
+        ctx.fillStyle = f === 3 ? '#8a5f0c' : '#a3711a';
+        ctx.fillRect(x + 7, y + 4, 2, 4);
+        ctx.fillRect(x + 4, y + 6, 8, 2);
+        ctx.fillRect(x + 5, y + 5, 2, 2); ctx.fillRect(x + 9, y + 5, 2, 2);
+        ctx.fillRect(x + 5, y + 8, 6, 2);
+        ctx.fillRect(x + 6, y + 10, 4, 1);
+        break;
+      case 'U':
+        ctx.fillStyle = T.stoneD; ctx.fillRect(x, y, 16, 16);
+        ctx.fillStyle = '#00000044';
+        ctx.fillRect(x, y, 16, 2); ctx.fillRect(x, y + 14, 16, 2);
+        ctx.fillStyle = '#ffffff18'; ctx.fillRect(x + 2, y + 3, 12, 10);
+        break;
+      case 'P': case 'p':
+        // temple pillar; 'P' is a capital (top) tile, 'p' is the shaft
+        ctx.fillStyle = '#cfc6b0'; ctx.fillRect(x, y, 16, 16);
+        ctx.fillStyle = '#9c9078'; ctx.fillRect(x + 13, y, 3, 16);
+        ctx.fillStyle = '#efe8d5'; ctx.fillRect(x + 2, y, 3, 16);
+        if (ch === 'P') {
+          ctx.fillStyle = '#b8a878'; ctx.fillRect(x - 1, y, 18, 5);
+          ctx.fillStyle = C.gold;    ctx.fillRect(x - 1, y + 1, 18, 1);
+          ctx.fillStyle = '#8d7f58'; ctx.fillRect(x - 1, y + 5, 18, 1);
+        } else {
+          ctx.fillStyle = '#9c9078';
+          ctx.fillRect(x, y + 5, 16, 1); ctx.fillRect(x, y + 11, 16, 1);
+        }
+        break;
+      case '=':
+        ctx.fillStyle = '#8b5a2b'; ctx.fillRect(x, y, 16, 6);
+        ctx.fillStyle = '#b87c42'; ctx.fillRect(x, y, 16, 2);
+        ctx.fillStyle = '#5d3a18'; ctx.fillRect(x, y + 5, 16, 1);
+        ctx.fillRect(x + 5, y + 2, 1, 3); ctx.fillRect(x + 11, y + 2, 1, 3);
+        break;
+      case '~':
+        var deep = theme === 'lanka' ? '#8e1f12' : '#1e4f9c';
+        var mid  = theme === 'lanka' ? '#c8321e' : '#2f6fd0';
+        var crest = theme === 'lanka' ? '#ff8a2b' : '#5fa0f0';
+        ctx.fillStyle = openAbove ? mid : deep;
+        ctx.fillRect(x, y, 16, 16);
+        if (openAbove) {
+          f = Math.round(Math.sin((t + x) / 11) * 1.5);
+          ctx.fillStyle = crest;
+          ctx.fillRect(x, y + 1 + f, 16, 3);
+          ctx.fillStyle = theme === 'lanka' ? '#ffd042' : '#a8d0ff';
+          ctx.fillRect(x + ((t >> 2) % 13), y + 2 + f, 3, 1);
+          ctx.fillStyle = mid;
+          ctx.fillRect(x, y + 4 + f, 16, 12 - f);
+        }
+        break;
+    }
+  }
+
+  /* Debris thrown out when a brick is smashed. */
+  function drawChunk(ctx, x, y, theme, rot) {
+    var T = THEME[theme] || THEME.forest;
+    ctx.fillStyle = T.brick; ctx.fillRect(x, y, 6, 6);
+    ctx.fillStyle = T.brickD;
+    ctx.fillRect(x, y, 6, 1);
+    ctx.fillRect(x + (rot % 2 ? 1 : 4), y + 2, 1, 4);
+  }
+
+  /* ---------------- the goal shrine ---------------- */
+
+  function drawShrine(ctx, x, y, t, raised) {
+    // x,y = bottom-left of a 32x80 shrine
+    var top = y - 80;
+    ctx.fillStyle = '#e8dfc8'; ctx.fillRect(x + 4, top + 24, 24, 56);
+    ctx.fillStyle = '#c9bd9c'; ctx.fillRect(x + 4, top + 24, 24, 2);
+    ctx.fillStyle = '#b8a878'; ctx.fillRect(x, top + 72, 32, 8);
+    ctx.fillStyle = '#d9cfae'; ctx.fillRect(x + 8, top + 34, 16, 20);
+    ctx.fillStyle = '#5b3a6b'; ctx.fillRect(x + 10, top + 38, 12, 16);
+    // stepped tower
+    for (var i = 0; i < 4; i++) {
+      ctx.fillStyle = i % 2 ? '#f0e6cd' : '#e0d3b2';
+      ctx.fillRect(x + 6 + i * 2, top + 24 - i * 5 - 5, 20 - i * 4, 5);
+    }
+    ctx.fillStyle = C.gold; ctx.fillRect(x + 14, top - 4, 4, 6);
+    ctx.fillStyle = C.goldL; ctx.fillRect(x + 15, top - 8, 2, 5);
+    // banner
+    var wave = Math.sin(t / 8) * 1.5;
+    ctx.fillStyle = C.red;
+    ctx.fillRect(x + 18, top + 30 + (raised ? 0 : 0) + Math.round(wave), 10, 8);
+    ctx.fillStyle = C.gold;
+    ctx.fillRect(x + 20, top + 32 + Math.round(wave), 6, 2);
+  }
+
+  /* ---------------- backdrops ---------------- */
+
+  function hash(n) { var s = Math.sin(n * 127.1) * 43758.5453; return s - Math.floor(s); }
+
+  function background(ctx, theme, camX, t) {
+    if (theme === 'lanka') {
+      var g = ctx.createLinearGradient(0, 0, 0, 240);
+      g.addColorStop(0, '#160a1e'); g.addColorStop(0.6, '#3a1024'); g.addColorStop(1, '#6b1a1e');
+      ctx.fillStyle = g; ctx.fillRect(0, 0, 256, 240);
+      // moon
+      ctx.fillStyle = '#f6d9a0';
+      ctx.beginPath(); ctx.arc(206 - camX * 0.02, 40, 14, 0, 7); ctx.fill();
+      ctx.fillStyle = '#3a1024';
+      ctx.beginPath(); ctx.arc(200 - camX * 0.02, 35, 12, 0, 7); ctx.fill();
+      // palace silhouettes
+      var off = (camX * 0.3) % 96;
+      for (var i = -1; i < 4; i++) {
+        var bx = i * 96 - off;
+        ctx.fillStyle = '#22101f';
+        ctx.fillRect(bx + 8, 150, 30, 60);
+        ctx.fillRect(bx + 46, 130, 22, 80);
+        ctx.fillRect(bx + 74, 160, 26, 50);
+        ctx.beginPath();
+        ctx.moveTo(bx + 46, 130); ctx.lineTo(bx + 57, 108); ctx.lineTo(bx + 68, 130); ctx.fill();
+        ctx.fillStyle = '#ffb347';
+        ctx.fillRect(bx + 14, 160, 4, 5); ctx.fillRect(bx + 26, 160, 4, 5);
+        ctx.fillRect(bx + 52, 142, 4, 5); ctx.fillRect(bx + 82, 172, 4, 5);
+      }
+      // embers
+      for (var e = 0; e < 18; e++) {
+        var ex = (hash(e) * 256 + t * (0.2 + hash(e + 9) * 0.3)) % 256;
+        var ey = 220 - ((t * (0.4 + hash(e) * 0.5) + hash(e + 3) * 200) % 220);
+        ctx.fillStyle = e % 3 ? '#ff8a2b' : '#ffd042';
+        ctx.fillRect(Math.floor(ex), Math.floor(ey), 2, 2);
+      }
+      return;
+    }
+
+    if (theme === 'mountain') {
+      var g2 = ctx.createLinearGradient(0, 0, 0, 240);
+      g2.addColorStop(0, '#2a2a5e'); g2.addColorStop(0.45, '#7a4a7a');
+      g2.addColorStop(0.8, '#e07a4a'); g2.addColorStop(1, '#f0a860');
+      ctx.fillStyle = g2; ctx.fillRect(0, 0, 256, 240);
+      ctx.fillStyle = '#ffe9c0';
+      ctx.beginPath(); ctx.arc(60 - camX * 0.02, 54, 11, 0, 7); ctx.fill();
+      for (var s = 0; s < 22; s++) {
+        ctx.fillStyle = '#ffffff' + (s % 2 ? '99' : 'cc');
+        ctx.fillRect(Math.floor(hash(s) * 256), Math.floor(hash(s + 40) * 70), 1, 1);
+      }
+      var mo = (camX * 0.25) % 128;
+      for (var m = -1; m < 4; m++) {
+        var mx = m * 128 - mo;
+        ctx.fillStyle = '#4a3a6e';
+        ctx.beginPath();
+        ctx.moveTo(mx - 10, 210); ctx.lineTo(mx + 40, 96); ctx.lineTo(mx + 90, 210); ctx.fill();
+        ctx.beginPath();
+        ctx.moveTo(mx + 60, 210); ctx.lineTo(mx + 100, 120); ctx.lineTo(mx + 140, 210); ctx.fill();
+        ctx.fillStyle = '#d8d0e8';
+        ctx.beginPath();
+        ctx.moveTo(mx + 28, 122); ctx.lineTo(mx + 40, 96); ctx.lineTo(mx + 52, 122); ctx.fill();
+      }
+      ctx.fillStyle = '#33254f'; ctx.fillRect(0, 200, 256, 40);
+      return;
+    }
+
+    // forest (default)
+    var g3 = ctx.createLinearGradient(0, 0, 0, 240);
+    g3.addColorStop(0, '#5aa8f0'); g3.addColorStop(0.7, '#9ed3f7'); g3.addColorStop(1, '#d8f0c8');
+    ctx.fillStyle = g3; ctx.fillRect(0, 0, 256, 240);
+    ctx.fillStyle = '#fff3b0';
+    ctx.beginPath(); ctx.arc(212 - camX * 0.02, 36, 16, 0, 7); ctx.fill();
+    ctx.fillStyle = '#fffbd8';
+    ctx.beginPath(); ctx.arc(212 - camX * 0.02, 36, 11, 0, 7); ctx.fill();
+    // clouds
+    var co = (camX * 0.18) % 120;
+    for (var c = -1; c < 4; c++) {
+      var cx = c * 120 - co;
+      cloud(ctx, cx + 10, 30 + Math.sin(t / 60 + c) * 2);
+      cloud(ctx, cx + 74, 62 + Math.sin(t / 50 + c) * 2);
+    }
+    // tree line
+    var to = (camX * 0.45) % 64;
+    for (var tr = -1; tr < 6; tr++) {
+      var tx = tr * 64 - to;
+      tree(ctx, tx + 6, 150, 1);
+      tree(ctx, tx + 38, 162, 0.8);
+    }
+    ctx.fillStyle = '#25611f'; ctx.fillRect(0, 206, 256, 34);
+  }
+
+  function cloud(ctx, x, y) {
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(x + 6, y, 20, 8);
+    ctx.fillRect(x, y + 5, 34, 8);
+    ctx.fillRect(x + 12, y - 4, 12, 6);
+    ctx.fillStyle = '#dceaf7';
+    ctx.fillRect(x, y + 11, 34, 2);
+  }
+
+  /* Muted on purpose: the tree line is scenery and must not compete with
+     the tiles and characters drawn in front of it. */
+  function tree(ctx, x, y, s) {
+    var h = Math.round(46 * s), w = Math.round(34 * s);
+    ctx.fillStyle = '#4a3018';
+    ctx.fillRect(x + w / 2 - 3, y + h - 20, 6, 26);
+    ctx.fillStyle = '#245c2c';
+    ctx.fillRect(x + 4, y + 12, w - 8, h - 26);
+    ctx.fillRect(x, y + 20, w, h - 36);
+    ctx.fillStyle = '#2d7136';
+    ctx.fillRect(x + 6, y + 6, w - 12, 16);
+    ctx.fillRect(x + 10, y, w - 20, 10);
+    ctx.fillStyle = '#3d8a44';
+    ctx.fillRect(x + 12, y + 2, 8, 5);
+  }
+
+  return {
+    C: C,
+    heroSize: heroSize,
+    hero: drawHero,
+    rakshasa: drawRakshasa,
+    deer: drawDeer,
+    shell: drawDeerShell,
+    crow: drawCrow,
+    ravana: drawRavana,
+    sita: drawSita,
+    sanjeevani: drawSanjeevani,
+    bow: drawBow,
+    blessing: drawBlessing,
+    coin: drawCoin,
+    arrow: drawArrow,
+    fireball: drawFireball,
+    tile: drawTile,
+    chunk: drawChunk,
+    shrine: drawShrine,
+    background: background
+  };
+})();
+</script>
+<script>
+/* ------------------------------------------------------------------
+ * Ramayana Bros. -- level data.
+ *
+ * Levels are 15-row tile grids built through a tiny helper so every
+ * feature lands on an exact column instead of hand-aligned ASCII.
+ *
+ * Geometry rules the layouts stick to (a full jump clears ~54px, a
+ * running jump ~66px, and the floor is row 13):
+ *   - blocks meant to be punched from the ground sit on row 9
+ *   - a second storey of blocks only ever sits above a row-9 cluster
+ *   - pillars are 2-3 tiles tall (cap on row 10 or 11) so they can be
+ *     climbed rather than blocking the road
+ *   - floating platforms start on row 10/11 and step up by <= 2 rows
+ *
+ * Legend
+ *   #  earth (solid)        S  carved stone (solid)
+ *   B  brick (big Rama smashes it)
+ *   ?  block -> coin        M  block -> sanjeevani herb
+ *   W  block -> Kodanda bow T  block -> Hanuman's blessing
+ *   U  spent block          P/p temple pillar (cap / shaft)
+ *   =  rope bridge (stand on top only)
+ *   ~  water / molten rock (deadly)
+ *   G  Ravana's ward (solid until the demon king falls)
+ *   o  loose coin
+ *   g  rakshasa   d  Maricha the golden deer   c  Kakasura the crow
+ *   R  Ravana     F  goal shrine               I  Sita
+ * ------------------------------------------------------------------ */
+
+var Levels = (function () {
+  var H = 15, FLOOR = 13;
+
+  function Grid(w) {
+    this.w = w; this.h = H;
+    this.g = [];
+    for (var y = 0; y < H; y++) {
+      var row = [];
+      for (var x = 0; x < w; x++) row.push(' ');
+      this.g.push(row);
+    }
+  }
+  Grid.prototype.set = function (x, y, ch) {
+    if (x >= 0 && x < this.w && y >= 0 && y < H) this.g[y][x] = ch;
+    return this;
+  };
+  Grid.prototype.rect = function (x, y, w, h, ch) {
+    for (var j = 0; j < h; j++) for (var i = 0; i < w; i++) this.set(x + i, y + j, ch);
+    return this;
+  };
+  Grid.prototype.ground = function (x, w) { return this.rect(x, FLOOR, w, H - FLOOR, '#'); };
+  Grid.prototype.liquid = function (x, w) { return this.rect(x, FLOOR, w, H - FLOOR, '~'); };
+  /* A horizontal strip written as a short string; '.' leaves a hole. */
+  Grid.prototype.put = function (x, y, s) {
+    for (var i = 0; i < s.length; i++) if (s[i] !== '.') this.set(x + i, y, s[i]);
+    return this;
+  };
+  Grid.prototype.pillar = function (x, top, w) {
+    w = w || 2;
+    this.rect(x, top, w, 1, 'P');
+    this.rect(x, top + 1, w, FLOOR - top - 1, 'p');
+    return this;
+  };
+  /* Staircase of stone blocks; dir 1 climbs to the right, -1 to the left. */
+  Grid.prototype.stair = function (x, n, dir) {
+    for (var i = 0; i < n; i++) {
+      var col = dir > 0 ? x + i : x - i;
+      this.rect(col, FLOOR - 1 - i, 1, i + 1, 'S');
+    }
+    return this;
+  };
+  Grid.prototype.coins = function (x, y, n) {
+    for (var i = 0; i < n; i++) this.set(x + i, y, 'o');
+    return this;
+  };
+  Grid.prototype.rows = function () {
+    var out = [];
+    for (var y = 0; y < H; y++) out.push(this.g[y].join(''));
+    return out;
+  };
+
+  /* ================= 1-1  Dandaka Forest ================= */
+  function kanda1() {
+    var g = new Grid(214);
+    // three gaps, each three tiles wide -- clearable at a walk
+    g.ground(0, 68);            // gap 68-70
+    g.ground(71, 44);           // gap 115-117
+    g.ground(118, 45);          // gap 163-165
+    g.ground(166, 48);
+
+    g.put(16, 9, 'B?BMB');
+    g.coins(17, 6, 3);
+    g.set(24, 12, 'g');
+    g.pillar(34, 11);
+    g.set(40, 12, 'd');
+    g.pillar(42, 10);
+    g.coins(46, 10, 3);
+    g.set(50, 12, 'g');
+    g.pillar(52, 11);
+    g.coins(56, 10, 3);
+    g.put(60, 9, 'BB?BB');
+    g.set(62, 5, 'M');
+    g.set(66, 12, 'g');
+    g.coins(68, 9, 3);
+
+    g.put(74, 9, 'B?B');
+    g.set(78, 12, 'g');
+    g.put(84, 9, 'B??B');
+    g.put(84, 6, 'BBBB');
+    g.coins(88, 7, 3);
+    g.set(91, 12, 'd');
+    g.rect(94, 10, 4, 1, '=');
+    g.coins(94, 9, 4);
+    g.set(100, 12, 'g');
+    g.rect(101, 8, 4, 1, '=');
+    g.set(103, 4, '?');
+    g.pillar(109, 10);
+    g.coins(115, 9, 3);
+
+    g.put(120, 9, 'BTB');
+    g.set(124, 12, 'g');
+    g.stair(126, 4, 1);
+    g.set(128, 6, 'c');
+    g.stair(134, 4, -1);
+    g.coins(136, 10, 3);
+    g.put(140, 9, 'B?BB?B');
+    g.set(147, 12, 'g');
+    g.put(150, 9, 'BMB');
+    g.set(150, 10, 'c');
+    g.set(155, 12, 'g');
+    g.pillar(159, 11);
+    g.coins(163, 10, 3);
+
+    g.set(168, 12, 'd');
+    g.put(170, 9, 'B?B');
+    g.set(174, 12, 'g');
+    g.pillar(176, 10);
+    g.put(180, 9, 'BB?BB');
+    g.set(182, 5, '?');
+    g.set(186, 12, 'g');
+    g.stair(188, 8, 1);
+    g.rect(196, 5, 1, 8, 'S');
+    g.set(203, 12, 'F');
+    return {
+      id: '1-1', name: 'DANDAKA FOREST', theme: 'forest', music: 'forest',
+      time: 320, grid: g.rows(),
+      blurb: 'Rama walks south through the great forest.'
+    };
+  }
+
+  /* ================= 1-2  Kishkindha Heights ================= */
+  function kanda2() {
+    var g = new Grid(220);
+    g.ground(0, 26);   g.liquid(26, 14);
+    g.ground(40, 26);  g.liquid(66, 10);
+    g.ground(76, 34);  g.liquid(110, 12);
+    g.ground(122, 30); g.liquid(152, 14);
+    g.ground(166, 54);
+
+    g.put(8, 9, 'BMB');
+    g.set(12, 12, 'g');
+    g.coins(14, 10, 3);
+    g.stair(19, 3, 1);
+
+    g.rect(26, 11, 14, 1, '=');          // rope bridge
+    g.coins(28, 10, 3);
+    g.set(31, 8, 'c');
+    g.coins(34, 10, 3);
+    g.set(37, 8, 'c');
+
+    g.put(44, 9, 'B?B?B');
+    g.set(46, 12, 'd');
+    g.pillar(52, 10);
+    g.set(56, 12, 'g');
+    g.coins(56, 10, 3);
+    g.put(60, 9, 'BBBB');
+    g.set(61, 8, 'c');
+    g.set(64, 12, 'g');
+
+    g.rect(66, 11, 4, 1, '=');
+    g.coins(66, 10, 4);
+    g.rect(72, 9, 4, 1, '=');
+    g.coins(72, 8, 4);
+
+    g.put(80, 9, 'BWB');                 // the Kodanda bow
+    g.set(84, 12, 'g');
+    g.set(86, 12, 'g');
+    g.stair(90, 5, 1);
+    g.rect(95, 8, 5, 1, 'S');
+    g.coins(95, 7, 5);
+    g.set(97, 5, 'c');
+    g.stair(104, 5, -1);
+    g.set(107, 12, 'd');
+
+    g.rect(110, 11, 5, 1, '=');
+    g.coins(110, 10, 4);
+    g.set(115, 7, 'c');
+    g.rect(117, 9, 5, 1, '=');
+    g.coins(117, 8, 4);
+
+    g.put(126, 9, 'B?BTB');
+    g.set(131, 12, 'g');
+    g.pillar(134, 10);
+    g.coins(137, 10, 4);
+    g.set(140, 12, 'd');
+    g.pillar(142, 11);
+    g.put(145, 9, 'BB?BB');
+    g.set(147, 5, '?');
+    g.set(150, 12, 'g');
+
+    g.rect(152, 11, 6, 1, '=');
+    g.coins(153, 10, 4);
+    g.set(158, 9, 'c');
+    g.rect(160, 11, 6, 1, '=');
+    g.coins(161, 10, 4);
+
+    g.put(170, 9, 'BMB');
+    g.set(174, 12, 'g');
+    g.set(176, 12, 'd');
+    g.rect(180, 10, 5, 1, '=');
+    g.coins(180, 9, 5);
+    g.set(186, 12, 'g');
+    g.put(190, 9, 'B?B');
+    g.stair(196, 8, 1);
+    g.rect(204, 5, 1, 8, 'S');
+    g.set(210, 12, 'F');
+    return {
+      id: '1-2', name: 'KISHKINDHA HEIGHTS', theme: 'mountain', music: 'mountain',
+      time: 340, grid: g.rows(),
+      blurb: 'Across the monkey kingdom, down to the southern sea.'
+    };
+  }
+
+  /* ================= 1-3  Lanka ================= */
+  function kanda3() {
+    var g = new Grid(212);
+    g.ground(0, 30);  g.liquid(30, 8);
+    g.ground(38, 28); g.liquid(66, 10);
+    g.ground(76, 32); g.liquid(108, 10);
+    g.ground(118, 94);
+
+    g.put(9, 9, 'BMB');
+    g.set(13, 12, 'g');
+    g.set(16, 12, 'd');
+    g.coins(18, 10, 4);
+    g.put(22, 9, 'B?B');
+    g.set(26, 10, 'c');
+
+    g.rect(30, 11, 4, 1, '=');
+    g.coins(30, 10, 4);
+    g.rect(35, 10, 3, 1, '=');
+    g.coins(35, 9, 3);
+
+    g.put(42, 9, 'BWB');                 // bow, for anyone who missed it
+    g.set(46, 12, 'g');
+    g.set(48, 12, 'g');
+    g.set(50, 12, 'd');
+    g.pillar(52, 10);
+    g.coins(55, 10, 3);
+    g.put(58, 9, 'BB?BB');
+    g.set(60, 5, '?');
+    g.set(64, 12, 'g');
+
+    g.rect(66, 11, 4, 1, '=');
+    g.coins(66, 10, 4);
+    g.set(70, 7, 'c');
+    g.rect(72, 9, 4, 1, '=');
+    g.coins(72, 8, 4);
+
+    g.put(80, 9, 'B?BTB');               // blessing before the hard run
+    g.set(86, 12, 'g');
+    g.stair(88, 5, 1);
+    g.rect(93, 8, 5, 1, 'S');
+    g.coins(93, 7, 5);
+    g.set(95, 5, 'c');
+    g.stair(102, 5, -1);
+    g.set(104, 12, 'g');
+    g.set(105, 12, 'd');
+
+    g.rect(108, 11, 5, 1, '=');
+    g.coins(108, 10, 5);
+    g.rect(114, 10, 4, 1, '=');
+    g.coins(115, 9, 3);
+    g.set(112, 7, 'c');
+
+    g.put(122, 9, 'BMB');
+    g.set(126, 12, 'g');
+    g.set(128, 12, 'd');
+    g.pillar(132, 10);
+    g.coins(135, 10, 4);
+    g.set(140, 12, 'g');
+    g.put(142, 9, 'BB?BB');
+    g.set(144, 5, '?');
+    g.set(148, 12, 'd');
+
+    // the gate of Lanka
+    g.pillar(152, 11);
+    g.rect(152, 6, 16, 1, 'S');
+    g.rect(152, 5, 16, 1, 'S');
+    g.pillar(166, 11);
+    g.put(156, 9, 'BWB');                // last chance at the bow
+    g.set(160, 12, 'g');
+    g.set(163, 10, 'c');
+
+    // Ravana's court
+    g.put(172, 9, 'B?B');
+    g.put(178, 9, 'BWB');                // a bow inside the arena
+    g.set(186, 11, 'R');
+    g.coins(190, 10, 5);
+    g.rect(200, 5, 1, 8, 'G');           // ward -- falls with Ravana
+    g.set(206, 12, 'I');                 // Sita, in the ashoka grove
+    return {
+      id: '1-3', name: 'LANKA', theme: 'lanka', music: 'lanka',
+      time: 400, grid: g.rows(),
+      blurb: 'The island fortress. Ravana waits on his throne.'
+    };
+  }
+
+  return { list: [kanda1(), kanda2(), kanda3()] };
+})();
+</script>
+<script>
+/* ------------------------------------------------------------------
+ * Ramayana Bros. -- engine, entities and game loop.
+ *
+ * A side-scrolling platformer in the shape of the 1985 classic, cast
+ * with characters from the Ramayana. Rama runs east through Dandaka,
+ * over Kishkindha and into Lanka; the sanjeevani herb makes him tall,
+ * the Kodanda bow lets him shoot, and Hanuman's blessing makes him
+ * briefly untouchable. Ravana holds the last gate.
+ * ------------------------------------------------------------------ */
+
+(function () {
+  'use strict';
+
+  var TILE = 16, VW = 256, VH = 240, ROWS = 15;
+
+  /* physics (units are pixels per 1/60s frame) */
+  /* Three gravities, as in the original: light while the jump button is
+   * held, heavier once it is released, heaviest on the way down. A tap
+   * clears about two tiles, a held jump about three and a half.        */
+  var GRAV_HOLD = 0.22, GRAV_RISE = 0.34, GRAV_FALL = 0.5, MAX_FALL = 7.2;
+  var ACC = 0.14, AIR_ACC = 0.10, FRICTION = 0.17;
+  var MAX_WALK = 1.7, MAX_RUN = 2.8;
+  var JUMP_V = -4.9, JUMP_RUN_V = -5.4;
+  var ENEMY_SPEED = 0.45, SHELL_SPEED = 3.1;
+  var STAR_TIME = 660, HURT_TIME = 100, SHELL_WAKE = 380;
+
+  var canvas = document.getElementById('screen');
+  var ctx = canvas.getContext('2d', { alpha: false });
+  ctx.imageSmoothingEnabled = false;
+
+  /* ============================ text ============================
+   * A 5x7 bitmap face, so the HUD reads as part of the picture
+   * rather than as browser text sitting on top of it.            */
+
+  var GLYPHS = {
+    '0': '.###.#...##..###.#.###..##...#.###.',
+    '1': '..#...##....#....#....#....#...###.',
+    '2': '.###.#...#....#...#...#...#...#####',
+    '3': '####.....#....#.###.....#....#####.',
+    '4': '...#...##..#.#.#..#.#####...#....#.',
+    '5': '######....####.....#....##...#.###.',
+    '6': '.###.#...##....####.#...##...#.###.',
+    '7': '#####....#...#...#...#....#....#...',
+    '8': '.###.#...##...#.###.#...##...#.###.',
+    '9': '.###.#...##...#.####....##...#.###.',
+    A: '.###.#...##...#######...##...##...#',
+    B: '####.#...##...#####.#...##...#####.',
+    C: '.###.#...##....#....#....#...#.###.',
+    D: '####.#...##...##...##...##...#####.',
+    E: '######....#....####.#....#....#####',
+    F: '######....#....####.#....#....#....',
+    G: '.###.#...##....#.####...##...#.###.',
+    H: '#...##...##...#######...##...##...#',
+    I: '#####..#....#....#....#....#..#####',
+    J: '..###...#....#....#.#..#.#..#..##..',
+    K: '#...##..#.#.#..##...#.#..#..#.#...#',
+    L: '#....#....#....#....#....#....#####',
+    M: '#...###.###.#.##.#.##...##...##...#',
+    N: '#...###..##.#.##..###...##...##...#',
+    O: '.###.#...##...##...##...##...#.###.',
+    P: '####.#...##...#####.#....#....#....',
+    Q: '.###.#...##...##...##.#.##..#..##.#',
+    R: '####.#...##...#####.#.#..#..#.#...#',
+    S: '.#####....#.....###.....#....#####.',
+    T: '#####..#....#....#....#....#....#..',
+    U: '#...##...##...##...##...##...#.###.',
+    V: '#...##...##...##...##...#.#.#...#..',
+    W: '#...##...##...##.#.##.#.###.###...#',
+    X: '#...##...#.#.#...#...#.#.#...##...#',
+    Y: '#...##...#.#.#...#....#....#....#..',
+    Z: '#####....#...#...#...#...#....#####',
+    '-': '...............#####...............',
+    '.': '..........................##...##..',
+    ',': '.....................##...##...#...',
+    '!': '..#....#....#....#....#.........#..',
+    '?': '.###.#...#....#...#...#.........#..',
+    ':': '......##...##........##...##.......',
+    "'": '..#....#...........................',
+    '/': '....#....#...#...#...#...#....#....',
+    '+': '.......#....#..#####..#....#.......',
+    '*': '.....#.#.#.###.#####.###.#.#.#.....',
+    ' ': '...................................'
+  };
+  /* Glyph strings are trusted to be 35 chars; pad/trim defensively. */
+  (function () {
+    for (var k in GLYPHS) {
+      var s = GLYPHS[k];
+      while (s.length < 35) s += '.';
+      GLYPHS[k] = s.slice(0, 35);
+    }
+  })();
+
+  function textWidth(s, sc) { return s.length * 6 * (sc || 1) - (sc || 1); }
+
+  function text(str, x, y, color, sc, shadow) {
+    sc = sc || 1;
+    str = String(str).toUpperCase();
+    for (var i = 0; i < str.length; i++) {
+      var g = GLYPHS[str[i]];
+      if (!g) continue;
+      var gx = x + i * 6 * sc;
+      for (var r = 0; r < 7; r++) {
+        for (var c = 0; c < 5; c++) {
+          if (g[r * 5 + c] !== '#') continue;
+          if (shadow) {
+            ctx.fillStyle = shadow;
+            ctx.fillRect(gx + c * sc + sc, y + r * sc + sc, sc, sc);
+          }
+          ctx.fillStyle = color;
+          ctx.fillRect(gx + c * sc, y + r * sc, sc, sc);
+        }
+      }
+    }
+  }
+
+  function textC(str, y, color, sc, shadow) {
+    text(str, Math.round((VW - textWidth(String(str), sc)) / 2), y, color, sc, shadow);
+  }
+
+  /* ============================ input ============================ */
+
+  var keys = {}, pressed = {};
+  var KEYMAP = {
+    ArrowLeft: 'left', KeyA: 'left',
+    ArrowRight: 'right', KeyD: 'right',
+    ArrowDown: 'down', KeyS: 'down',
+    ArrowUp: 'up', KeyW: 'up',
+    KeyZ: 'jump', Space: 'jump', KeyK: 'jump',
+    KeyX: 'run', ShiftLeft: 'run', ShiftRight: 'run', KeyJ: 'run',
+    Enter: 'start', KeyP: 'pause', KeyM: 'mute', Escape: 'pause'
+  };
+
+  function setKey(name, down) {
+    if (!name) return;
+    if (down && !keys[name]) pressed[name] = true;
+    keys[name] = down;
+  }
+
+  window.addEventListener('keydown', function (e) {
+    var n = KEYMAP[e.code];
+    if (n) { e.preventDefault(); setKey(n, true); Sound.unlock(); }
+  });
+  window.addEventListener('keyup', function (e) {
+    var n = KEYMAP[e.code];
+    if (n) { e.preventDefault(); setKey(n, false); }
+  });
+  window.addEventListener('blur', function () { for (var k in keys) keys[k] = false; });
+
+  (function touchSetup() {
+    var pad = document.getElementById('touch');
+    if (!pad) return;
+    if (!('ontouchstart' in window) && !navigator.maxTouchPoints) return;
+    pad.classList.remove('hidden');
+    var btns = pad.querySelectorAll('.tbtn');
+    Array.prototype.forEach.call(btns, function (b) {
+      var name = b.getAttribute('data-key');
+      function on(e) { e.preventDefault(); b.classList.add('pressed'); setKey(name, true); setKey('start', true); Sound.unlock(); }
+      function off(e) { e.preventDefault(); b.classList.remove('pressed'); setKey(name, false); }
+      b.addEventListener('touchstart', on, { passive: false });
+      b.addEventListener('touchend', off, { passive: false });
+      b.addEventListener('touchcancel', off, { passive: false });
+      b.addEventListener('mousedown', on);
+      b.addEventListener('mouseup', off);
+      b.addEventListener('mouseleave', off);
+    });
+  })();
+
+  canvas.addEventListener('pointerdown', function () { Sound.unlock(); setKey('start', true); });
+  canvas.addEventListener('pointerup', function () { setKey('start', false); });
+
+  /* ============================ state ============================ */
+
+  var G = {
+    state: 'title', stateT: 0, t: 0,
+    levelIndex: 0, level: null,
+    tiles: [], w: 0, theme: 'forest',
+    player: null, enemies: [], items: [], shots: [], fx: [], bumps: [],
+    camX: 0, goal: null, sita: null, boss: null, bossDefeated: false,
+    lives: 3, score: 0, coins: 0, time: 0, timeAcc: 0,
+    shake: 0, hurry: false, best: 0, ending: 0
+  };
+
+  try { G.best = parseInt(localStorage.getItem('ramayana-bros-best') || '0', 10) || 0; } catch (e) { G.best = 0; }
+  function saveBest() {
+    if (G.score > G.best) {
+      G.best = G.score;
+      try { localStorage.setItem('ramayana-bros-best', String(G.best)); } catch (e) {}
+    }
+  }
+
+  /* ============================ tiles ============================ */
+
+  var SOLIDS = '#SBUP?MWTp';
+
+  function tileChar(cx, cy) {
+    if (cx < 0) return '#';                       // an invisible wall at the start
+    if (cy < 0 || cy >= ROWS || cx >= G.w) return ' ';
+    return G.tiles[cy][cx];
+  }
+  function isSolidChar(ch) {
+    if (ch === 'G') return !G.bossDefeated;
+    return ch !== ' ' && SOLIDS.indexOf(ch) >= 0;
+  }
+  function isSolid(cx, cy) { return isSolidChar(tileChar(cx, cy)); }
+  function setTile(cx, cy, ch) {
+    if (cy >= 0 && cy < ROWS && cx >= 0 && cx < G.w) G.tiles[cy][cx] = ch;
+  }
+
+  /* ============================ loading ============================ */
+
+  function loadLevel(index) {
+    var L = Levels.list[index];
+    G.level = L;
+    G.theme = L.theme;
+    G.w = L.grid[0].length;
+    G.tiles = L.grid.map(function (r) { return r.split(''); });
+    G.enemies = []; G.items = []; G.shots = []; G.fx = []; G.bumps = [];
+    G.camX = 0; G.goal = null; G.sita = null; G.boss = null; G.bossDefeated = false;
+    G.time = L.time; G.timeAcc = 0; G.shake = 0; G.hurry = false;
+
+    for (var y = 0; y < ROWS; y++) {
+      for (var x = 0; x < G.w; x++) {
+        var ch = G.tiles[y][x];
+        if ('gdcR'.indexOf(ch) >= 0) { spawnEnemy(ch, x, y); setTile(x, y, ' '); }
+        else if (ch === 'F') { G.goal = { x: x * TILE, y: (y + 1) * TILE }; setTile(x, y, ' '); }
+        else if (ch === 'I') { G.sita = { x: x * TILE, y: (y + 1) * TILE - 22 }; setTile(x, y, ' '); }
+      }
+    }
+    G.player = makePlayer(2 * TILE, (ROWS - 3) * TILE - 15, G.player);
+    Sound.music.play(L.music);
+  }
+
+  /* ============================ player ============================ */
+
+  function makePlayer(x, y, old) {
+    return {
+      x: x, y: y, w: 12, h: 15, vx: 0, vy: 0,
+      dir: 1, onGround: false, jumping: false, frame: 0, animT: 0,
+      big: old ? old.big : false, bow: old ? old.bow : false,
+      star: 0, hurt: 0, morph: 0, morphTo: false,
+      dead: false, deadT: 0, ducking: false, autoWalk: 0, hidden: false,
+      coyote: 0, jumpBuf: 0
+    };
+  }
+
+  function playerBox(p) {
+    p.w = 12;
+    p.h = p.big ? (p.ducking ? 17 : 27) : 15;
+  }
+
+  function grow(p) {
+    if (p.big) return;
+    p.morph = 34; p.morphTo = true;
+    p.y -= 12; p.big = true; playerBox(p);
+    Sound.fx.powerup();
+  }
+  function shrink(p) {
+    p.morph = 34; p.morphTo = false;
+    p.big = false; p.bow = false; p.ducking = false;
+    playerBox(p);
+    p.hurt = HURT_TIME;
+    Sound.fx.shrink();
+  }
+  function hurtPlayer(p) {
+    if (p.dead || p.hurt > 0 || p.star > 0 || p.morph > 0) return;
+    if (p.big) shrink(p); else killPlayer(p);
+  }
+  function killPlayer(p) {
+    if (p.dead) return;
+    p.dead = true; p.deadT = 0; p.vy = -5.2; p.vx = 0;
+    p.big = false; p.bow = false; p.star = 0;
+    playerBox(p);
+    Sound.music.stop();
+    Sound.fx.die();
+  }
+
+  function updatePlayer(p) {
+    if (p.dead) {
+      p.deadT++;
+      if (p.deadT > 24) { p.y += p.vy; p.vy = Math.min(p.vy + 0.32, MAX_FALL); }
+      if (p.deadT > 190) loseLife();
+      return;
+    }
+
+    if (p.morph > 0) { p.morph--; playerBox(p); return; }
+
+    var left = keys.left && !p.autoWalk;
+    var right = (keys.right || p.autoWalk > 0);
+    var run = keys.run;
+
+    p.ducking = p.big && p.onGround && keys.down && !p.autoWalk;
+    playerBox(p);
+
+    var max = run ? MAX_RUN : MAX_WALK;
+    var acc = p.onGround ? ACC : AIR_ACC;
+
+    if (p.ducking) {
+      p.vx *= 0.88;
+    } else if (left && !right) {
+      p.vx -= acc; p.dir = -1;
+      if (p.vx < -max) p.vx = Math.max(p.vx + FRICTION * 0.5, -max);
+    } else if (right && !left) {
+      p.vx += acc; p.dir = 1;
+      if (p.vx > max) p.vx = Math.min(p.vx - FRICTION * 0.5, max);
+    } else if (p.onGround) {
+      if (Math.abs(p.vx) < FRICTION) p.vx = 0;
+      else p.vx -= FRICTION * Math.sign(p.vx);
+    }
+
+    // jump, with a few frames of leniency at both ends: a press just
+    // before landing still fires, and a press just after running off a
+    // ledge still counts
+    if (pressed.jump) p.jumpBuf = 8;
+    if (p.jumpBuf > 0) p.jumpBuf--;
+    if (p.jumpBuf > 0 && p.coyote > 0 && !p.ducking) {
+      p.vy = Math.abs(p.vx) > MAX_WALK + 0.2 ? JUMP_RUN_V : JUMP_V;
+      p.jumping = true; p.onGround = false;
+      p.jumpBuf = 0; p.coyote = 0;
+      if (p.big) Sound.fx.bigJump(); else Sound.fx.jump();
+    }
+    if (!keys.jump || p.vy > 0) p.jumping = false;
+    if (p.vy < 0) p.vy += p.jumping ? GRAV_HOLD : GRAV_RISE;
+    else p.vy += GRAV_FALL;
+    if (p.vy > MAX_FALL) p.vy = MAX_FALL;
+
+    // shoot
+    if (pressed.run && p.bow && !p.autoWalk && countShots() < 2) {
+      G.shots.push({
+        x: p.x + (p.dir > 0 ? p.w : -8), y: p.y + (p.big ? 8 : 4),
+        w: 8, h: 8, vx: 5 * p.dir, vy: 0.4, dir: p.dir, life: 200, kind: 'arrow'
+      });
+      Sound.fx.arrow();
+    }
+
+    var prevBottom = p.y + p.h;
+    p.x += p.vx;
+    resolveX(p);
+    p.y += p.vy;
+    resolveY(p, prevBottom, true);
+    if (p.onGround) p.coyote = 6; else if (p.coyote > 0) p.coyote--;
+
+    if (p.headHit) { bumpBlock(p, p.headHit.x, p.headHit.y); p.headHit = null; }
+
+    // timers
+    if (p.star > 0) { p.star--; if (p.star === 0 && !G.boss) Sound.music.play(G.level.music); }
+    if (p.hurt > 0) p.hurt--;
+    if (p.autoWalk > 0) p.autoWalk--;
+
+    // animation
+    if (!p.onGround) p.frame = 0;
+    else if (Math.abs(p.vx) > 0.1) {
+      p.animT += Math.abs(p.vx);
+      if (p.animT > 6) { p.animT = 0; p.frame = (p.frame + 1) % 4; }
+    } else { p.frame = 0; p.animT = 0; }
+
+    collectTiles(p);
+
+    if (p.y > VH + 32) killPlayer(p);
+  }
+
+  function countShots() {
+    var n = 0;
+    for (var i = 0; i < G.shots.length; i++) if (G.shots[i].kind === 'arrow') n++;
+    return n;
+  }
+
+  /* Coins, water and the goal are all read straight off the tile map. */
+  function collectTiles(p) {
+    var x1 = Math.floor(p.x / TILE), x2 = Math.floor((p.x + p.w - 1) / TILE);
+    var y1 = Math.floor(p.y / TILE), y2 = Math.floor((p.y + p.h - 1) / TILE);
+    for (var y = y1; y <= y2; y++) {
+      for (var x = x1; x <= x2; x++) {
+        var ch = tileChar(x, y);
+        if (ch === 'o') { setTile(x, y, ' '); takeCoin(x * TILE, y * TILE); }
+        else if (ch === '~') { killPlayer(p); return; }
+      }
+    }
+    if (G.goal && !p.autoWalk && p.x + p.w > G.goal.x + 6) startClear();
+    if (G.sita && G.bossDefeated &&
+        p.x + p.w > G.sita.x - 4 && p.x < G.sita.x + 18 &&
+        p.y + p.h > G.sita.y - 4) startWin();
+  }
+
+  function takeCoin(x, y) {
+    G.coins++; G.score += 200;
+    if (G.coins % 100 === 0) { G.lives++; Sound.fx.oneUp(); popup(x, y, '1UP'); }
+    else Sound.fx.coin();
+    G.fx.push({ kind: 'spark', x: x + 4, y: y, life: 16 });
+  }
+
+  /* Hitting a block from underneath. */
+  function bumpBlock(p, cx, cy) {
+    var ch = tileChar(cx, cy);
+    if (ch === '?' || ch === 'M' || ch === 'W' || ch === 'T') {
+      setTile(cx, cy, 'U');
+      G.bumps.push({ x: cx, y: cy, t: 0 });
+      if (ch === '?') {
+        G.fx.push({ kind: 'coin', x: cx * TILE, y: cy * TILE, vy: -3.4, life: 46 });
+        takeCoin(cx * TILE, cy * TILE - 8);
+      } else {
+        var type = ch === 'M' ? (p.big ? 'bless' : 'herb') : (ch === 'W' ? 'bow' : 'bless');
+        spawnItem(type, cx * TILE, cy * TILE);
+        Sound.fx.sprout();
+      }
+    } else if (ch === 'B') {
+      if (p.big) {
+        setTile(cx, cy, ' ');
+        G.score += 50;
+        Sound.fx.brick();
+        for (var i = 0; i < 4; i++) {
+          G.fx.push({
+            kind: 'chunk', x: cx * TILE + (i % 2) * 8, y: cy * TILE + (i > 1 ? 8 : 0),
+            vx: (i % 2 ? 1.3 : -1.3), vy: (i > 1 ? -2.2 : -3.4), rot: i, life: 100
+          });
+        }
+      } else {
+        G.bumps.push({ x: cx, y: cy, t: 0 });
+        Sound.fx.bump();
+      }
+    } else if (isSolidChar(ch)) {
+      Sound.fx.bump();
+    }
+    // anything standing on the block gets flipped
+    for (var e = 0; e < G.enemies.length; e++) {
+      var en = G.enemies[e];
+      if (en.dying || en.type === 'ravana') continue;
+      if (en.x + en.w > cx * TILE && en.x < (cx + 1) * TILE &&
+          Math.abs((en.y + en.h) - cy * TILE) < 6) flipEnemy(en, en.x < p.x ? -1 : 1);
+    }
+  }
+
+  /* ============================ collision ============================ */
+
+  function resolveX(e) {
+    var y1 = Math.floor(e.y / TILE), y2 = Math.floor((e.y + e.h - 1) / TILE);
+    var cx, y;
+    if (e.vx > 0) {
+      cx = Math.floor((e.x + e.w - 1) / TILE);
+      for (y = y1; y <= y2; y++) {
+        if (isSolid(cx, y)) { e.x = cx * TILE - e.w; e.vx = 0; e.bump = 1; return; }
+      }
+    } else if (e.vx < 0) {
+      cx = Math.floor(e.x / TILE);
+      for (y = y1; y <= y2; y++) {
+        if (isSolid(cx, y)) { e.x = (cx + 1) * TILE; e.vx = 0; e.bump = -1; return; }
+      }
+    }
+  }
+
+  function resolveY(e, prevBottom, wantsHead) {
+    var x1 = Math.floor(e.x / TILE), x2 = Math.floor((e.x + e.w - 1) / TILE);
+    var cy, x;
+    e.onGround = false;
+    if (e.vy >= 0) {
+      // probe the row the feet rest on, so resting flush on a tile still
+      // reads as "on the ground" instead of flickering every frame
+      cy = Math.floor((e.y + e.h) / TILE);
+      for (x = x1; x <= x2; x++) {
+        var ch = tileChar(x, cy);
+        var oneWay = (ch === '=') && prevBottom <= cy * TILE + 3;
+        if (isSolidChar(ch) || oneWay) {
+          e.y = cy * TILE - e.h; e.vy = 0; e.onGround = true; return;
+        }
+      }
+    } else {
+      cy = Math.floor(e.y / TILE);
+      var best = -1, bestD = 99, cxc = (e.x + e.w / 2) / TILE;
+      for (x = x1; x <= x2; x++) {
+        if (isSolid(x, cy)) {
+          var d = Math.abs(x + 0.5 - cxc);
+          if (d < bestD) { bestD = d; best = x; }
+        }
+      }
+      if (best >= 0) {
+        e.y = (cy + 1) * TILE; e.vy = 0;
+        if (wantsHead) e.headHit = { x: best, y: cy };
+      }
+    }
+  }
+
+  function overlaps(a, b) {
+    return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+  }
+
+  /* ============================ enemies ============================ */
+
+  function spawnEnemy(ch, cx, cy) {
+    var e;
+    if (ch === 'g') {
+      e = { type: 'rakshasa', w: 14, h: 14, sw: 16, sh: 16, ox: -1, oy: -2,
+            vx: -ENEMY_SPEED, vy: 0, gravity: true };
+    } else if (ch === 'd') {
+      e = { type: 'deer', w: 13, h: 20, sw: 16, sh: 22, ox: -2, oy: -2,
+            vx: -ENEMY_SPEED, vy: 0, gravity: true, shell: 0, wake: 0 };
+    } else if (ch === 'c') {
+      // a deliberately forgiving hitbox -- the wings are decoration
+      e = { type: 'crow', w: 12, h: 8, sw: 16, sh: 14, ox: -2, oy: -3,
+            vx: -0.75, vy: 0, gravity: false };
+    } else {
+      e = { type: 'ravana', w: 28, h: 42, sw: 32, sh: 44, ox: -2, oy: -2,
+            vx: -0.32, vy: 0, gravity: true, hp: 6, flash: 0, fireT: 90, jumpT: 200 };
+    }
+    e.x = cx * TILE + (TILE - e.w) / 2;
+    e.y = (cy + 1) * TILE - e.h;
+    e.baseY = e.y;
+    e.homeX = e.x;
+    e.dir = -1; e.frame = 0; e.animT = 0;
+    e.dying = 0; e.squash = 0; e.active = false;
+    G.enemies.push(e);
+    if (e.type === 'ravana') G.boss = e;
+    return e;
+  }
+
+  function flipEnemy(e, dir) {
+    if (e.type === 'ravana') return;
+    e.dying = 1; e.vy = -3.6; e.vx = 0.8 * dir; e.flip = true;
+    G.score += 200;
+    popup(e.x, e.y, '200');
+    Sound.fx.kick();
+  }
+
+  function updateEnemy(e) {
+    if (!e.active) {
+      if (e.x < G.camX + VW + 24) e.active = true;
+      else return;
+    }
+    if (e.dying) {
+      e.vy += 0.3; e.y += e.vy; e.x += e.vx;
+      e.dying++;
+      if (e.y > VH + 40 || e.dying > 200) e.remove = true;
+      return;
+    }
+    if (e.squash > 0) {
+      e.squash--;
+      if (e.squash === 0) e.remove = true;
+      return;
+    }
+
+    if (e.type === 'ravana') { updateRavana(e); return; }
+
+    if (e.type === 'crow') {
+      // Kakasura circles the perch he was placed on rather than drifting
+      // off across the level, so a crow stays the obstacle it was drawn as
+      e.x += e.vx;
+      if (e.x < e.homeX - 44 || e.x > e.homeX + 44) { e.vx = -e.vx; e.x += e.vx * 2; }
+      var cx = Math.floor((e.vx > 0 ? e.x + e.w : e.x) / TILE);
+      var cyy = Math.floor((e.y + e.h / 2) / TILE);
+      if (isSolid(cx, cyy)) { e.vx = -e.vx; e.x += e.vx * 2; }
+      e.dir = e.vx > 0 ? 1 : -1;
+      e.frame = Math.floor(G.t / 7) % 2;
+      e.y = e.baseY + Math.sin((G.t + e.homeX) / 26) * 12;
+      return;
+    }
+
+    if (e.type === 'deer' && e.shell) {
+      if (e.shellMoving) {
+        e.vx = SHELL_SPEED * e.shellDir;
+      } else {
+        e.vx = 0;
+        e.wake--;
+        if (e.wake <= 0) {                     // Maricha shakes himself awake
+          e.shell = 0; e.h = 20; e.sh = 22; e.oy = -2; e.y -= 7;
+          e.vx = -ENEMY_SPEED; e.dir = -1;
+        }
+      }
+    }
+
+    e.vy += 0.35;
+    if (e.vy > MAX_FALL) e.vy = MAX_FALL;
+    var prevBottom = e.y + e.h;
+    e.bump = 0;
+    e.x += e.vx;
+    resolveX(e);
+    if (e.bump) {
+      if (e.shellMoving) { e.shellDir = -e.shellDir; Sound.fx.bump(); }
+      else { e.vx = Math.abs(e.vx) * (e.bump > 0 ? -1 : 1); }
+    }
+    e.y += e.vy;
+    resolveY(e, prevBottom, false);
+    e.dir = e.vx === 0 ? e.dir : (e.vx > 0 ? 1 : -1);
+
+    e.animT += Math.abs(e.vx) + 0.35;
+    if (e.animT > 8) { e.animT = 0; e.frame = (e.frame + 1) % 2; }
+
+    // drowning / falling out of the world
+    var mid = Math.floor((e.x + e.w / 2) / TILE);
+    var foot = Math.floor((e.y + e.h - 2) / TILE);
+    if (tileChar(mid, foot) === '~') { e.dying = 1; e.vy = -1; }
+    if (e.y > VH + 40) e.remove = true;
+
+    // a spinning shell scatters whatever it meets
+    if (e.shellMoving) {
+      for (var i = 0; i < G.enemies.length; i++) {
+        var o = G.enemies[i];
+        if (o === e || o.dying || o.squash || o.type === 'ravana') continue;
+        if (overlaps(e, o)) { flipEnemy(o, e.shellDir); }
+      }
+      if (G.boss && !G.boss.dying && overlaps(e, G.boss)) {
+        damageBoss(G.boss, e.shellDir); e.shellDir = -e.shellDir;
+      }
+    }
+  }
+
+  function stompEnemy(e, p) {
+    p.vy = keys.jump ? -4.6 : -3.4;
+    if (e.type === 'rakshasa') {
+      e.squash = 30; e.h = 8; e.y += 6; e.oy = 0;
+      G.score += 100; popup(e.x, e.y, '100');
+      Sound.fx.stomp();
+    } else if (e.type === 'crow') {
+      flipEnemy(e, p.dir);
+      Sound.fx.stomp();
+    } else if (e.type === 'deer') {
+      if (!e.shell) {
+        e.shell = 1; e.shellMoving = false; e.wake = SHELL_WAKE;
+        e.h = 13; e.sh = 14; e.oy = -1; e.y += 7;
+        e.vx = 0;
+        G.score += 100; popup(e.x, e.y, '100');
+        Sound.fx.stomp();
+      } else if (e.shellMoving) {
+        e.shellMoving = false; e.wake = SHELL_WAKE; e.vx = 0;
+        Sound.fx.stomp();
+      } else {
+        kickShell(e, p.x + p.w / 2 < e.x + e.w / 2 ? 1 : -1);
+      }
+    }
+  }
+
+  function kickShell(e, dir) {
+    e.shellMoving = true; e.shellDir = dir; e.wake = SHELL_WAKE;
+    G.score += 100; popup(e.x, e.y, '100');
+    Sound.fx.kick();
+  }
+
+  function playerVsEnemies(p) {
+    if (p.dead || p.morph > 0) return;
+    for (var i = 0; i < G.enemies.length; i++) {
+      var e = G.enemies[i];
+      if (e.dying || e.squash || !e.active || e.remove) continue;
+      if (!overlaps(p, e)) continue;
+
+      if (p.star > 0) {
+        if (e.type === 'ravana') damageBoss(e, p.dir);
+        else flipEnemy(e, p.vx >= 0 ? 1 : -1);
+        continue;
+      }
+
+      var stomping = p.vy > 0 && (p.y + p.h) - e.y < 12;
+
+      if (e.type === 'ravana') {
+        if (stomping) { damageBoss(e, p.dir); p.vy = -4.6; }
+        else hurtPlayer(p);
+        continue;
+      }
+
+      if (stomping) { stompEnemy(e, p); continue; }
+
+      if (e.type === 'deer' && e.shell && !e.shellMoving) {
+        kickShell(e, p.x + p.w / 2 < e.x + e.w / 2 ? 1 : -1);
+        continue;
+      }
+      hurtPlayer(p);
+    }
+  }
+
+  /* ============================ Ravana ============================ */
+
+  function updateRavana(e) {
+    var p = G.player;
+    e.flash = Math.max(0, e.flash - 1);
+    e.iframes = Math.max(0, (e.iframes || 0) - 1);
+
+    var toward = (p.x + p.w / 2) < (e.x + e.w / 2) ? -1 : 1;
+    e.dir = toward;
+    e.vx = 0.42 * toward;
+
+    e.jumpT--;
+    if (e.jumpT <= 0 && e.onGround) {
+      e.vy = -5.6; e.jumpT = 150 + Math.floor(Math.random() * 120);
+      Sound.fx.bossRoar();
+    }
+    e.fireT--;
+    if (e.fireT <= 0) {
+      e.fireT = 95 + Math.floor(Math.random() * 70);
+      G.shots.push({
+        kind: 'fire', x: e.x + (toward > 0 ? e.w : -10), y: e.y + 14,
+        w: 10, h: 10, vx: 2.6 * toward, vy: -0.6, life: 320
+      });
+      Sound.fx.fire();
+    }
+
+    e.vy += 0.4;
+    if (e.vy > MAX_FALL) e.vy = MAX_FALL;
+    var prevBottom = e.y + e.h;
+    e.bump = 0;
+    e.x += e.vx; resolveX(e);
+    e.y += e.vy; resolveY(e, prevBottom, false);
+
+    e.animT += 1;
+    if (e.animT > 10) { e.animT = 0; e.frame = (e.frame + 1) % 2; }
+  }
+
+  function damageBoss(e, dir) {
+    if (e.iframes > 0 || e.dying) return;
+    e.hp--;
+    e.flash = 26; e.iframes = 34;
+    G.shake = 10;
+    if (e.hp <= 0) {
+      e.dying = 1; e.vy = -3; e.vx = 0.6 * dir;
+      G.bossDefeated = true;
+      G.score += 5000;
+      popup(e.x, e.y, '5000');
+      Sound.fx.bossHit();
+      Sound.music.play(G.level.music);
+      for (var i = 0; i < 26; i++) {
+        G.fx.push({
+          kind: 'burst', x: e.x + 14 + (Math.random() - 0.5) * 26,
+          y: e.y + 20 + (Math.random() - 0.5) * 36,
+          vx: (Math.random() - 0.5) * 4, vy: -Math.random() * 4 - 0.5,
+          life: 40 + Math.random() * 30,
+          color: ['#ffd042', '#ff8a2b', '#e0403a', '#ffffff'][i % 4]
+        });
+      }
+    } else {
+      G.score += 500;
+      popup(e.x, e.y, '500');
+      Sound.fx.bossHit();
+    }
+  }
+
+  /* ============================ items & shots ============================ */
+
+  /* Items rise out of the block they were hidden in, then make their own
+   * way down to Rama: the herb walks, the blessing bounces, and the bow
+   * slides. Nothing waits on top of a block where it can't be reached. */
+  function spawnItem(type, x, y) {
+    G.items.push({
+      type: type, x: x, y: y, w: 14, h: 14,
+      vx: type === 'herb' ? 0.9 : (type === 'bless' ? 1.3 : 0.7),
+      vy: 0, rise: 16, born: 0
+    });
+  }
+
+  function updateItem(it) {
+    it.born++;
+    if (it.rise > 0) { it.y -= 1; it.rise--; return; }
+    it.vy += it.type === 'bless' ? 0.32 : 0.34;
+    if (it.vy > MAX_FALL) it.vy = MAX_FALL;
+    var prevBottom = it.y + it.h;
+    it.bump = 0;
+    it.x += it.vx; resolveX(it);
+    if (it.bump) it.vx = -it.vx;
+    it.y += it.vy; resolveY(it, prevBottom, false);
+    if (it.onGround && it.type === 'bless') it.vy = -3.6;
+    if (it.y > VH + 20) it.remove = true;
+    var mid = Math.floor((it.x + it.w / 2) / TILE);
+    var foot = Math.floor((it.y + it.h - 2) / TILE);
+    if (tileChar(mid, foot) === '~') it.remove = true;
+  }
+
+  function playerVsItems(p) {
+    for (var i = 0; i < G.items.length; i++) {
+      var it = G.items[i];
+      if (it.rise > 0 || it.remove) continue;
+      if (!overlaps(p, it)) continue;
+      it.remove = true;
+      if (it.type === 'herb') { G.score += 1000; popup(it.x, it.y, '1000'); grow(p); }
+      else if (it.type === 'bow') {
+        G.score += 1000; popup(it.x, it.y, '1000');
+        if (!p.big) grow(p); else Sound.fx.powerup();
+        p.bow = true;
+      } else {
+        G.score += 1000; popup(it.x, it.y, '1000');
+        p.star = STAR_TIME;
+        Sound.fx.powerup();
+        Sound.music.play('boss');
+      }
+    }
+  }
+
+  function updateShot(s) {
+    s.life--;
+    if (s.life <= 0) { s.remove = true; return; }
+    s.vy += s.kind === 'arrow' ? 0.13 : 0.11;
+    if (s.vy > 5) s.vy = 5;
+    var prevBottom = s.y + s.h;
+    s.bump = 0;
+    s.x += s.vx; resolveX(s);
+    if (s.bump) {
+      if (s.kind === 'arrow') { s.remove = true; puff(s.x, s.y); }
+      else s.vx = -s.vx;
+    }
+    s.y += s.vy; resolveY(s, prevBottom, false);
+    if (s.onGround) s.vy = s.kind === 'arrow' ? -2.1 : -2.6;
+    if (s.x < G.camX - 32 || s.x > G.camX + VW + 32 || s.y > VH + 20) s.remove = true;
+
+    if (s.kind === 'arrow') {
+      for (var i = 0; i < G.enemies.length; i++) {
+        var e = G.enemies[i];
+        if (e.dying || e.squash || !e.active || e.remove) continue;
+        if (!overlaps(s, e)) continue;
+        s.remove = true;
+        if (e.type === 'ravana') damageBoss(e, s.vx > 0 ? 1 : -1);
+        else flipEnemy(e, s.vx > 0 ? 1 : -1);
+        puff(s.x, s.y);
+        break;
+      }
+    } else {
+      if (overlaps(s, G.player) && !G.player.dead) { hurtPlayer(G.player); s.remove = true; }
+    }
+  }
+
+  /* ============================ effects ============================ */
+
+  function popup(x, y, str) { G.fx.push({ kind: 'text', x: x, y: y, str: str, life: 46 }); }
+  function puff(x, y) {
+    for (var i = 0; i < 4; i++) {
+      G.fx.push({ kind: 'burst', x: x + 4, y: y + 4, vx: (Math.random() - 0.5) * 2.4,
+                  vy: (Math.random() - 0.5) * 2.4, life: 16, color: '#ffe9b0' });
+    }
+  }
+
+  function updateFx(f) {
+    f.life--;
+    if (f.life <= 0) { f.remove = true; return; }
+    if (f.kind === 'text') { f.y -= 0.55; }
+    else if (f.kind === 'chunk') { f.vy += 0.3; f.x += f.vx; f.y += f.vy; }
+    else if (f.kind === 'coin') { f.vy += 0.28; f.y += f.vy; }
+    else if (f.kind === 'burst') { f.vy += 0.14; f.x += f.vx; f.y += f.vy; }
+  }
+
+  function prune(list) {
+    for (var i = list.length - 1; i >= 0; i--) if (list[i].remove) list.splice(i, 1);
+  }
+
+  /* ============================ flow ============================ */
+
+  function startGame() {
+    G.lives = 3; G.score = 0; G.coins = 0; G.levelIndex = 0;
+    G.player = null;
+    loadLevel(0);
+    G.state = 'intro'; G.stateT = 0;
+  }
+
+  function loseLife() {
+    G.lives--;
+    saveBest();
+    if (G.lives < 0) {
+      G.state = 'gameover'; G.stateT = 0;
+      Sound.music.stop();
+      return;
+    }
+    var keep = G.player;
+    keep.big = false; keep.bow = false;
+    loadLevel(G.levelIndex);
+    G.state = 'intro'; G.stateT = 0;
+  }
+
+  function startClear() {
+    if (G.state !== 'play') return;
+    G.state = 'clear'; G.stateT = 0;
+    G.player.autoWalk = 240;
+    G.player.star = 0;
+    G.score += 1000;
+    Sound.music.stop();
+    Sound.fx.flag();
+  }
+
+  function startWin() {
+    G.state = 'win'; G.stateT = 0; G.ending = 0;
+    G.score += 10000;
+    saveBest();
+    Sound.music.stop();
+    Sound.fx.flag();
+  }
+
+  function nextLevel() {
+    G.levelIndex++;
+    if (G.levelIndex >= Levels.list.length) { startWin(); return; }
+    loadLevel(G.levelIndex);
+    G.state = 'intro'; G.stateT = 0;
+  }
+
+  /* ============================ update ============================ */
+
+  function updatePlay() {
+    var p = G.player;
+    updatePlayer(p);
+
+    if (!p.dead && p.morph === 0) {
+      playerVsEnemies(p);
+      playerVsItems(p);
+    }
+
+    var i;
+    for (i = 0; i < G.enemies.length; i++) updateEnemy(G.enemies[i]);
+    for (i = 0; i < G.items.length; i++) updateItem(G.items[i]);
+    for (i = 0; i < G.shots.length; i++) updateShot(G.shots[i]);
+    for (i = 0; i < G.fx.length; i++) updateFx(G.fx[i]);
+    for (i = 0; i < G.bumps.length; i++) { G.bumps[i].t++; if (G.bumps[i].t > 10) G.bumps[i].remove = true; }
+    prune(G.enemies); prune(G.items); prune(G.shots); prune(G.fx); prune(G.bumps);
+
+    // boss music once the court is entered
+    if (G.boss && !G.bossDefeated && !G.boss.dying && p.star === 0 &&
+        p.x > G.boss.x - 200) Sound.music.play('boss');
+
+    // camera: follows, and like the original never scrolls back
+    var target = p.x + p.w / 2 - 110;
+    if (target > G.camX) G.camX = target;
+    G.camX = Math.max(0, Math.min(G.camX, G.w * TILE - VW));
+
+    if (G.shake > 0) G.shake--;
+
+    // clock
+    if (!p.dead) {
+      G.timeAcc++;
+      if (G.timeAcc >= 25) {
+        G.timeAcc = 0;
+        G.time--;
+        if (G.time === 100) { G.hurry = true; Sound.fx.pause(); }
+        if (G.time <= 0) { G.time = 0; killPlayer(p); }
+      }
+    }
+  }
+
+  function updateClear() {
+    G.stateT++;
+    var p = G.player;
+    if (G.stateT < 120) {
+      p.autoWalk = 4;
+      updatePlayer(p);
+      var target = p.x + p.w / 2 - 110;
+      if (target > G.camX) G.camX = target;
+      G.camX = Math.max(0, Math.min(G.camX, G.w * TILE - VW));
+      if (G.goal && p.x > G.goal.x + 12) p.hidden = true;
+    } else if (G.time > 0 && G.stateT % 2 === 0) {
+      var step = Math.min(G.time, 5);
+      G.time -= step; G.score += step * 50;
+      Sound.fx.coin();
+    }
+    for (var i = 0; i < G.fx.length; i++) updateFx(G.fx[i]);
+    prune(G.fx);
+    if (G.stateT > 200 && G.time <= 0) nextLevel();
+  }
+
+  function update() {
+    G.t++;
+
+    if (pressed.mute) { Sound.toggleMute(); }
+
+    switch (G.state) {
+      case 'title':
+        G.stateT++;
+        if (pressed.start || pressed.jump) { Sound.unlock(); startGame(); }
+        break;
+      case 'intro':
+        G.stateT++;
+        if (G.stateT > 130 || pressed.start || pressed.jump) { G.state = 'play'; G.stateT = 0; }
+        break;
+      case 'play':
+        if (pressed.pause) { G.state = 'paused'; Sound.fx.pause(); break; }
+        updatePlay();
+        break;
+      case 'paused':
+        if (pressed.pause || pressed.start) { G.state = 'play'; Sound.fx.pause(); }
+        break;
+      case 'clear':
+        updateClear();
+        break;
+      case 'gameover':
+        G.stateT++;
+        if (G.stateT > 90 && (pressed.start || pressed.jump)) { G.state = 'title'; G.stateT = 0; }
+        break;
+      case 'win':
+        G.stateT++;
+        if (G.stateT > 150 && (pressed.start || pressed.jump)) { G.state = 'title'; G.stateT = 0; }
+        break;
+    }
+
+    for (var k in pressed) pressed[k] = false;
+    Sound.music.update();
+  }
+
+  /* ============================ rendering ============================ */
+
+  function drawTiles() {
+    var x0 = Math.floor(G.camX / TILE), x1 = x0 + 17;
+    for (var y = 0; y < ROWS; y++) {
+      for (var x = x0; x <= x1; x++) {
+        var ch = tileChar(x, y);
+        if (ch === ' ' || ch === 'o') continue;
+        var px = x * TILE - Math.round(G.camX), py = y * TILE;
+        if (ch === 'G') {
+          if (G.bossDefeated) continue;
+          var glow = (Math.sin(G.t / 9 + y) + 1) * 0.5;
+          ctx.fillStyle = 'rgba(180,60,220,' + (0.45 + glow * 0.35) + ')';
+          ctx.fillRect(px + 2, py, 12, 16);
+          ctx.fillStyle = 'rgba(255,210,255,' + (0.4 + glow * 0.5) + ')';
+          ctx.fillRect(px + 5, py + ((G.t * 2 + y * 5) % 16), 6, 3);
+          continue;
+        }
+        var bump = 0;
+        for (var b = 0; b < G.bumps.length; b++) {
+          if (G.bumps[b].x === x && G.bumps[b].y === y) {
+            bump = -Math.round(Math.sin(G.bumps[b].t / 10 * Math.PI) * 7);
+          }
+        }
+        var above = tileChar(x, y - 1);
+        Sprites.tile(ctx, px, py + bump, ch, G.theme, G.t, above !== ch && !isSolidChar(above));
+      }
+    }
+    // loose coins
+    for (var yy = 0; yy < ROWS; yy++) {
+      for (var xx = x0; xx <= x1; xx++) {
+        if (tileChar(xx, yy) === 'o') {
+          Sprites.coin(ctx, xx * TILE - Math.round(G.camX), yy * TILE, Math.floor(G.t / 6) + xx);
+        }
+      }
+    }
+  }
+
+  function drawPlayer(p) {
+    if (p.hidden) return;
+    if (p.hurt > 0 && Math.floor(p.hurt / 3) % 2) return;
+    var state = 'stand';
+    if (p.dead) state = 'dead';
+    else if (p.morph > 0) state = 'stand';
+    else if (!p.onGround) state = 'jump';
+    else if (p.ducking) state = 'duck';
+    else if (Math.abs(p.vx) > 0.1) state = 'walk';
+
+    var big = p.big;
+    if (p.morph > 0) big = (Math.floor(p.morph / 4) % 2) ? p.morphTo : !p.morphTo;
+
+    var sz = Sprites.heroSize({ big: big, state: state });
+    var px = Math.round(p.x - Math.round(G.camX) - (16 - p.w) / 2);
+    var py = Math.round(p.y + p.h - sz.h);
+    Sprites.hero(ctx, px, py, {
+      big: big, bow: p.bow, state: state, frame: p.frame, dir: p.dir,
+      star: p.star > 0, t: G.t
+    });
+    if (p.star > 0 && G.t % 3 === 0) {
+      G.fx.push({ kind: 'burst', x: p.x + Math.random() * 12, y: p.y + Math.random() * sz.h,
+                  vx: (Math.random() - 0.5), vy: -0.5, life: 14, color: '#ffd042' });
+    }
+  }
+
+  function drawEnemies() {
+    for (var i = 0; i < G.enemies.length; i++) {
+      var e = G.enemies[i];
+      if (!e.active) continue;
+      var x = Math.round(e.x + e.ox - Math.round(G.camX));
+      var y = Math.round(e.y + e.oy);
+      if (x < -48 || x > VW + 48) continue;
+      ctx.save();
+      if (e.dying && e.flip) { ctx.translate(x + 8, y + 8); ctx.scale(1, -1); ctx.translate(-x - 8, -y - 8); }
+      if (e.type === 'rakshasa') Sprites.rakshasa(ctx, x, y, e.frame, e.dir, e.squash > 0);
+      else if (e.type === 'crow') Sprites.crow(ctx, x, y, e.frame, e.dir);
+      else if (e.type === 'deer') {
+        if (e.shell) Sprites.shell(ctx, x, y, Math.floor(G.t / 4), e.shellMoving || e.wake < 90);
+        else Sprites.deer(ctx, x, y, e.frame, e.dir);
+      } else if (e.type === 'ravana') {
+        Sprites.ravana(ctx, x, y, { frame: e.frame, dir: e.dir, flash: e.flash > 0 && (G.t % 4 < 2) });
+      }
+      ctx.restore();
+    }
+  }
+
+  function drawItems() {
+    for (var i = 0; i < G.items.length; i++) {
+      var it = G.items[i];
+      var x = Math.round(it.x - 1 - Math.round(G.camX)), y = Math.round(it.y - 2);
+      if (it.rise > 0) ctx.save(), ctx.beginPath(),
+        ctx.rect(x - 8, y - 16 + it.rise, 32, 32 - it.rise), ctx.clip();
+      if (it.type === 'herb') Sprites.sanjeevani(ctx, x, y);
+      else if (it.type === 'bow') Sprites.bow(ctx, x, y, G.t);
+      else Sprites.blessing(ctx, x, y, G.t);
+      if (it.rise > 0) ctx.restore();
+    }
+  }
+
+  function drawShots() {
+    for (var i = 0; i < G.shots.length; i++) {
+      var s = G.shots[i];
+      var x = Math.round(s.x - Math.round(G.camX)), y = Math.round(s.y);
+      if (s.kind === 'arrow') Sprites.arrow(ctx, x, y, s.vx > 0 ? 1 : -1);
+      else Sprites.fireball(ctx, x, y, G.t);
+    }
+  }
+
+  function drawFx() {
+    for (var i = 0; i < G.fx.length; i++) {
+      var f = G.fx[i];
+      var x = Math.round(f.x - Math.round(G.camX)), y = Math.round(f.y);
+      if (f.kind === 'text') text(f.str, x, y, '#ffffff', 1, '#00000088');
+      else if (f.kind === 'chunk') Sprites.chunk(ctx, x, y, G.theme, f.rot);
+      else if (f.kind === 'coin') Sprites.coin(ctx, x, y, Math.floor(G.t / 3));
+      else if (f.kind === 'spark') {
+        ctx.fillStyle = '#fff6c9';
+        var r = 16 - f.life;
+        ctx.fillRect(x - r, y + 6, 2, 2); ctx.fillRect(x + r, y + 6, 2, 2);
+        ctx.fillRect(x, y - r + 6, 2, 2);
+      } else if (f.kind === 'burst') {
+        ctx.fillStyle = f.color || '#ffd042';
+        ctx.fillRect(x, y, 2, 2);
+      }
+    }
+  }
+
+  function drawHud() {
+    var sh = '#00000099';
+    text('RAMA', 8, 8, '#ffffff', 1, sh);
+    text(pad6(G.score), 8, 17, '#ffffff', 1, sh);
+
+    Sprites.coin(ctx, 62, 1, 0);
+    text(pad2(G.coins), 80, 8, '#ffffff', 1, sh);
+    for (var i = 0; i < Math.min(G.lives, 4); i++) {
+      var lx = 63 + i * 9;
+      ctx.fillStyle = '#00000099';
+      ctx.fillRect(lx + 1, 20, 7, 6);
+      ctx.fillStyle = '#ffd042';
+      ctx.fillRect(lx, 22, 7, 3);
+      ctx.fillRect(lx, 19, 1, 3); ctx.fillRect(lx + 3, 18, 1, 4); ctx.fillRect(lx + 6, 19, 1, 3);
+      ctx.fillStyle = '#c8901a'; ctx.fillRect(lx, 24, 7, 1);
+    }
+    if (G.lives > 4) text('+' + (G.lives - 4), 63 + 4 * 9, 19, '#ffd042', 1, sh);
+
+    text('KANDA', 140, 8, '#ffffff', 1, sh);
+    text(G.level ? G.level.id : '1-1', 146, 17, '#ffffff', 1, sh);
+
+    text('TIME', 204, 8, '#ffffff', 1, sh);
+    text(pad3(G.time), 207, 17, G.hurry && G.t % 20 < 10 ? '#ff6a3d' : '#ffffff', 1, sh);
+  }
+
+  function pad2(n) { n = String(n); return n.length >= 2 ? n : '0'.repeat(2 - n.length) + n; }
+  function pad3(n) { n = String(Math.max(0, n)); return n.length >= 3 ? n : '0'.repeat(3 - n.length) + n; }
+  function pad6(n) { n = String(n); return n.length >= 6 ? n : '0'.repeat(6 - n.length) + n; }
+
+  function drawScene() {
+    Sprites.background(ctx, G.theme, G.camX, G.t);
+    ctx.save();
+    if (G.shake > 0) ctx.translate((Math.random() - 0.5) * 3, (Math.random() - 0.5) * 3);
+    drawTiles();
+    if (G.goal) Sprites.shrine(ctx, G.goal.x - Math.round(G.camX) - 8, G.goal.y, G.t, G.state === 'clear');
+    if (G.sita) Sprites.sita(ctx, Math.round(G.sita.x - Math.round(G.camX)), Math.round(G.sita.y), G.t);
+    drawItems();
+    drawEnemies();
+    drawShots();
+    if (G.player) drawPlayer(G.player);
+    drawFx();
+    ctx.restore();
+    drawHud();
+  }
+
+  /* ---- full-screen cards ---- */
+
+  function dim(a) { ctx.fillStyle = 'rgba(0,0,0,' + a + ')'; ctx.fillRect(0, 0, VW, VH); }
+
+  function drawTitle() {
+    Sprites.background(ctx, 'forest', G.t * 0.4, G.t);
+    dim(0.25);
+    ctx.fillStyle = 'rgba(20,10,30,0.62)';
+    ctx.fillRect(14, 30, VW - 28, 92);
+    ctx.fillStyle = '#ffd042'; ctx.fillRect(14, 30, VW - 28, 2);
+    ctx.fillRect(14, 120, VW - 28, 2);
+
+    textC('RAMAYANA', 44, '#ffd042', 3, '#5a2a00');
+    textC('BROS.', 74, '#ffffff', 3, '#5a2a00');
+    textC('THE LANKA RUN', 104, '#8fc4f5', 1, '#001028');
+
+    Sprites.hero(ctx, 40, 150, { big: true, bow: false, state: 'walk',
+      frame: Math.floor(G.t / 8) % 4, dir: 1, star: false, t: G.t });
+    Sprites.rakshasa(ctx, 110, 162, Math.floor(G.t / 12) % 2, -1, false);
+    Sprites.deer(ctx, 150, 156, Math.floor(G.t / 12) % 2, -1);
+    Sprites.blessing(ctx, 196, 162, G.t);
+
+    if (Math.floor(G.t / 26) % 2) textC('PRESS ENTER OR TAP', 196, '#ffffff', 1, '#000000aa');
+    textC('TOP ' + pad6(G.best), 212, '#ffd042', 1, '#000000aa');
+    textC('ARROWS MOVE   Z JUMP   X RUN-SHOOT', 226, '#cfd6e0', 1, '#000000aa');
+  }
+
+  function drawIntro() {
+    ctx.fillStyle = '#000000'; ctx.fillRect(0, 0, VW, VH);
+    var L = G.level;
+    textC('KANDA ' + L.id, 60, '#ffffff', 2, '#333333');
+    textC(L.name, 92, '#ffd042', 1);
+    textC(L.blurb, 108, '#8fc4f5', 1);
+    Sprites.hero(ctx, 104, 140, { big: G.player.big, bow: G.player.bow, state: 'stand',
+      frame: 0, dir: 1, star: false, t: G.t });
+    text('X  ' + Math.max(0, G.lives), 128, 152, '#ffffff', 1);
+  }
+
+  function drawPaused() {
+    drawScene();
+    dim(0.55);
+    textC('PAUSED', 100, '#ffffff', 2, '#000000');
+    textC('P TO RESUME   M TO MUTE', 130, '#ffd042', 1, '#000000');
+  }
+
+  function drawGameOver() {
+    ctx.fillStyle = '#000000'; ctx.fillRect(0, 0, VW, VH);
+    textC('GAME OVER', 80, '#ffffff', 2, '#552222');
+    textC('THE FOREST KEEPS ITS SECRETS', 112, '#8fc4f5', 1);
+    textC('SCORE ' + pad6(G.score), 136, '#ffd042', 1);
+    textC('TOP   ' + pad6(G.best), 148, '#ffd042', 1);
+    if (G.stateT > 90 && Math.floor(G.t / 26) % 2) textC('PRESS ENTER', 180, '#ffffff', 1);
+  }
+
+  function drawWin() {
+    Sprites.background(ctx, 'forest', G.t * 0.3, G.t);
+    dim(0.35);
+    ctx.fillStyle = 'rgba(20,10,30,0.6)'; ctx.fillRect(10, 20, VW - 20, 200);
+    textC('RAVANA HAS FALLEN', 36, '#ffd042', 1, '#000000');
+    textC('SITA IS FREE', 52, '#ffffff', 2, '#5a2a00');
+
+    Sprites.hero(ctx, 92, 120, { big: true, bow: true, state: 'stand', frame: 0, dir: 1,
+      star: false, t: G.t });
+    Sprites.sita(ctx, 116, 124, G.t);
+    for (var i = 0; i < 10; i++) {
+      var fx = (i * 26 + G.t * 0.6) % VW;
+      var fy = 90 + Math.sin((G.t + i * 40) / 30) * 6;
+      ctx.fillStyle = i % 2 ? '#ffd042' : '#ff8a2b';
+      ctx.fillRect(Math.floor(fx), Math.floor(fy), 2, 2);
+    }
+    textC('AYODHYA LIGHTS THE LAMPS', 160, '#8fc4f5', 1, '#000000');
+    textC('SCORE ' + pad6(G.score), 180, '#ffffff', 1, '#000000');
+    textC('TOP   ' + pad6(G.best), 192, '#ffd042', 1, '#000000');
+    if (G.stateT > 150 && Math.floor(G.t / 26) % 2) textC('PRESS ENTER', 208, '#ffffff', 1, '#000000');
+  }
+
+  function render() {
+    switch (G.state) {
+      case 'title': drawTitle(); break;
+      case 'intro': drawIntro(); break;
+      case 'paused': drawPaused(); break;
+      case 'gameover': drawGameOver(); break;
+      case 'win': drawWin(); break;
+      default:
+        drawScene();
+        if (G.state === 'clear') {
+          if (G.stateT > 110) textC('KANDA CLEAR', 70, '#ffffff', 2, '#000000');
+        }
+    }
+    if (Sound.isMuted()) text('MUTED', VW - 40, VH - 12, '#ffffff88', 1);
+  }
+
+  /* ============================ loop ============================ */
+
+  function resize() {
+    var sx = window.innerWidth / VW;
+    var sy = (window.innerHeight - 60) / VH;
+    var s = Math.max(1, Math.min(Math.floor(Math.min(sx, sy)), 5));
+    canvas.style.width = (VW * s) + 'px';
+    canvas.style.height = (VH * s) + 'px';
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  /* Exposed for debugging and level authoring from the console:
+   *   RamayanaBros.warp(2)  -> jump straight to Lanka
+   *   RamayanaBros.player.big = true                                  */
+  G.warp = function (i) {
+    G.levelIndex = Math.max(0, Math.min(i, Levels.list.length - 1));
+    loadLevel(G.levelIndex);
+    G.state = 'play'; G.stateT = 0;
+  };
+  window.RamayanaBros = G;
+
+  var last = 0, acc = 0, STEP = 1000 / 60;
+  function frame(ts) {
+    if (!last) last = ts;
+    acc += Math.min(ts - last, 200);
+    last = ts;
+    var guard = 0;
+    while (acc >= STEP && guard++ < 5) { update(); acc -= STEP; }
+    render();
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

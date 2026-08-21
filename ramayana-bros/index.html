@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>Ramayana Bros.</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="frame">
+  <canvas id="screen" width="256" height="240"></canvas>
+
+  <div id="touch" class="hidden">
+    <div class="pad">
+      <button class="tbtn" data-key="left">◀</button>
+      <button class="tbtn" data-key="down">▼</button>
+      <button class="tbtn" data-key="right">▶</button>
+    </div>
+    <div class="acts">
+      <button class="tbtn round" data-key="run">B</button>
+      <button class="tbtn round" data-key="jump">A</button>
+    </div>
+  </div>
+</div>
+
+<div id="help">
+  <p>
+    <b>←&nbsp;→</b> walk &nbsp;·&nbsp; <b>Z&nbsp;/&nbsp;Space</b> jump &nbsp;·&nbsp;
+    <b>X&nbsp;/&nbsp;Shift</b> run &amp; shoot &nbsp;·&nbsp; <b>↓</b> duck &nbsp;·&nbsp;
+    <b>P</b> pause &nbsp;·&nbsp; <b>M</b> mute
+  </p>
+</div>
+
+<script src="js/audio.js"></script>
+<script src="js/sprites.js"></script>
+<script src="js/levels.js"></script>
+<script src="js/game.js"></script>
+</body>
+</html>

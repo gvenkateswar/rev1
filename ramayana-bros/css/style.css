@@ -2,6 +2,12 @@
 
 * { box-sizing: border-box; }
 
+:root {
+  /* room this page's chrome needs; the game sizes itself to fit */
+  --chrome-reserve: 60px;
+  --chrome-gutter: 12px;
+}
+
 html, body {
   margin: 0;
   padding: 0;

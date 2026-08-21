@@ -1247,9 +1247,20 @@
   /* ============================ loop ============================ */
 
   function resize() {
-    var sx = window.innerWidth / VW;
-    var sy = (window.innerHeight - 60) / VH;
-    var s = Math.max(1, Math.min(Math.floor(Math.min(sx, sy)), 5));
+    // The host page declares how much room its own chrome needs through
+    // --chrome-reserve and --chrome-gutter, so the same game fits a bare
+    // page or a framed one without either scrolling.
+    var css = getComputedStyle(document.documentElement);
+    var reserve = parseInt(css.getPropertyValue('--chrome-reserve'), 10);
+    if (!(reserve >= 0)) reserve = 60;
+    var gutter = parseInt(css.getPropertyValue('--chrome-gutter'), 10);
+    if (!(gutter >= 0)) gutter = 8;
+    var sx = (window.innerWidth - gutter) / VW;
+    var sy = (window.innerHeight - reserve) / VH;
+    var s = Math.min(sx, sy);
+    // whole-pixel scaling wherever there is room for it; on a narrow phone
+    // a fractional scale that fills the width beats a tiny crisp one
+    s = s >= 2 ? Math.min(Math.floor(s), 5) : Math.max(1, Math.floor(s * 20) / 20);
     canvas.style.width = (VW * s) + 'px';
     canvas.style.height = (VH * s) + 'px';
   }

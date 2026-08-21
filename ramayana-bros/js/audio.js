@@ -106,6 +106,8 @@ var Sound = (function () {
     bossRoar:  function () { note({ freq: 110, to: 55, dur: 0.7, type: 'sawtooth', vol: 0.28 });
                              noise({ freq: 300, to: 80, dur: 0.7, vol: 0.25, filter: 'lowpass' }); },
     fire:      function () { noise({ freq: 1200, to: 400, dur: 0.18, vol: 0.16 }); },
+    pipe:      function () { note({ freq: 620, to: 130, dur: 0.34, type: 'square', vol: 0.22, slide: 'linear' });
+                             noise({ freq: 700, to: 160, dur: 0.34, vol: 0.14, filter: 'lowpass' }); },
     pause:     function () { note({ freq: 660, dur: 0.08, vol: 0.18, type: 'square' });
                              note({ freq: 440, dur: 0.1, vol: 0.18, type: 'square', delay: 0.08 }); },
     flag:      function () { var s = [392, 523, 659, 784, 1047, 1319];
@@ -144,6 +146,13 @@ var Sound = (function () {
       melody: [[0,1],[1,1],[0,1],[-1,1],[0,2],[3,2],[2,1],[1,1],[0,1],[-1,1],[0,4],
                [5,1],[4,1],[3,1],[2,1],[1,2],[0,2]],
       bassline: [[0,1],[0,1],[3,1],[0,1],[-2,1],[-2,1],[1,1],[-2,1]]
+    },
+    /* underground: sparse, low, and a little echoing */
+    cave: {
+      tempo: 118, base: 174.61, lead: 'triangle', bass: 'triangle',
+      melody: [[0,2],[null,2],[2,2],[null,2],[4,2],[3,2],[2,4],
+               [1,2],[null,2],[3,2],[2,2],[0,4],[null,4]],
+      bassline: [[0,4],[-2,4],[1,4],[0,4]]
     },
     boss: {
       tempo: 186, base: 174.61, lead: 'sawtooth', bass: 'square',

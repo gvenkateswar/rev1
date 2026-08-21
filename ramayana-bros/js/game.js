@@ -227,7 +227,7 @@
     levelIndex: 0, level: null,
     tiles: [], w: 0, theme: 'forest',
     player: null, enemies: [], items: [], shots: [], fx: [], bumps: [],
-    camX: 0, goal: null, sita: null, boss: null, bossDefeated: false,
+    camX: 0, goal: null, sita: null, boss: null, bossDefeated: false, surface: null,
     lives: 3, score: 0, coins: 0, time: 0, timeAcc: 0,
     shake: 0, hurry: false, best: 0, ending: 0
   };
@@ -242,7 +242,7 @@
 
   /* ============================ tiles ============================ */
 
-  var SOLIDS = '#SBUP?MWTp';
+  var SOLIDS = '#SBUP?MWTpD';
 
   function tileChar(cx, cy) {
     if (cx < 0) return '#';                       // an invisible wall at the start
@@ -260,15 +260,14 @@
 
   /* ============================ loading ============================ */
 
-  function loadLevel(index) {
-    var L = Levels.list[index];
-    G.level = L;
-    G.theme = L.theme;
-    G.w = L.grid[0].length;
-    G.tiles = L.grid.map(function (r) { return r.split(''); });
+  /* Turns a grid of rows into the live scene: tiles, enemies and markers.
+     Used for a whole level and for the stepwell rooms underneath it. */
+  function loadScene(rows, theme) {
+    G.theme = theme;
+    G.w = rows[0].length;
+    G.tiles = rows.map(function (r) { return r.split(''); });
     G.enemies = []; G.items = []; G.shots = []; G.fx = []; G.bumps = [];
-    G.camX = 0; G.goal = null; G.sita = null; G.boss = null; G.bossDefeated = false;
-    G.time = L.time; G.timeAcc = 0; G.shake = 0; G.hurry = false;
+    G.goal = null; G.sita = null; G.boss = null; G.camX = 0;
 
     for (var y = 0; y < ROWS; y++) {
       for (var x = 0; x < G.w; x++) {
@@ -278,8 +277,69 @@
         else if (ch === 'I') { G.sita = { x: x * TILE, y: (y + 1) * TILE - 22 }; setTile(x, y, ' '); }
       }
     }
+  }
+
+  function loadLevel(index) {
+    var L = Levels.list[index];
+    G.level = L;
+    G.surface = null;
+    G.bossDefeated = false;
+    G.time = L.time; G.timeAcc = 0; G.shake = 0; G.hurry = false;
+    loadScene(L.grid, L.theme);
     G.player = makePlayer(2 * TILE, (ROWS - 3) * TILE - 15, G.player);
     Sound.music.play(L.music);
+  }
+
+  /* ---------------- the stepwells ----------------
+   * Pressing down on a stepwell mouth drops Rama into a room below the
+   * stage. The surface is set aside whole -- tiles, enemies, spent
+   * blocks and all -- and put back when he climbs out further along. */
+
+  function roomAt(cx) {
+    var rooms = G.level && G.level.rooms;
+    if (!rooms || G.surface) return null;
+    for (var i = 0; i < rooms.length; i++) {
+      if (cx === rooms[i].entry || cx === rooms[i].entry + 1) return rooms[i];
+    }
+    return null;
+  }
+
+  /* Top of the ground at a column, found by walking up from the bottom of
+     the map through the solid run. Searching downward from the top would
+     land on a room's ceiling, or on any block floating over the road. */
+  function groundYAt(cx) {
+    var y = ROWS - 1;
+    while (y >= 0 && !isSolid(cx, y)) y--;
+    if (y < 0) return (ROWS - 2) * TILE;
+    while (y >= 0 && isSolid(cx, y)) y--;
+    return (y + 1) * TILE;
+  }
+
+  function enterRoom(p, room) {
+    G.surface = {
+      tiles: G.tiles, w: G.w, theme: G.theme, enemies: G.enemies, items: G.items,
+      shots: G.shots, fx: G.fx, bumps: G.bumps, goal: G.goal, sita: G.sita,
+      boss: G.boss, camX: G.camX, exitX: room.exitX
+    };
+    loadScene(room.grid, 'cave');
+    p.x = room.startX * TILE;
+    p.y = groundYAt(room.startX) - p.h;
+    p.vx = 0; p.vy = 0;
+    Sound.music.play('cave');
+  }
+
+  function leaveRoom(p) {
+    var s = G.surface;
+    G.tiles = s.tiles; G.w = s.w; G.theme = s.theme;
+    G.enemies = s.enemies; G.items = s.items; G.shots = s.shots;
+    G.fx = s.fx; G.bumps = s.bumps;
+    G.goal = s.goal; G.sita = s.sita; G.boss = s.boss;
+    G.surface = null;
+    p.x = s.exitX * TILE;
+    p.y = groundYAt(s.exitX) - p.h;
+    p.vx = 0; p.vy = 0;
+    G.camX = Math.max(0, Math.min(p.x + p.w / 2 - 110, G.w * TILE - VW));
+    Sound.music.play(G.level.music);
   }
 
   /* ============================ player ============================ */
@@ -341,6 +401,18 @@
 
     if (p.morph > 0) { p.morph--; playerBox(p); return; }
 
+    /* sliding down a stepwell mouth, or stepping back out of one */
+    if (p.piping) {
+      p.piping.t++;
+      if (p.piping.going === 'down' && p.piping.t <= 26) p.y += 0.75;
+      if (p.piping.t === 27) {
+        if (p.piping.going === 'down') enterRoom(p, p.piping.room);
+        else leaveRoom(p);
+      }
+      if (p.piping.t > 48) p.piping = null;
+      return;
+    }
+
     var left = keys.left && !p.autoWalk;
     var right = (keys.right || p.autoWalk > 0);
     var run = keys.run;
@@ -380,6 +452,21 @@
     else p.vy += GRAV_FALL;
     if (p.vy > MAX_FALL) p.vy = MAX_FALL;
 
+    // down on a stepwell mouth goes underground
+    if (keys.down && p.onGround && !p.autoWalk) {
+      var fcx = Math.floor((p.x + p.w / 2) / TILE);
+      var fcy = Math.floor((p.y + p.h) / TILE);
+      if (tileChar(fcx, fcy) === 'D') {
+        var room = roomAt(tileChar(fcx - 1, fcy) === 'D' ? fcx - 1 : fcx);
+        if (room) {
+          p.piping = { t: 0, going: 'down', room: room, clipY: fcy * TILE };
+          p.vx = 0; p.vy = 0;
+          Sound.fx.pipe();
+          return;
+        }
+      }
+    }
+
     // shoot
     if (pressed.run && p.bow && !p.autoWalk && countShots() < 2) {
       G.shots.push({
@@ -412,7 +499,7 @@
 
     collectTiles(p);
 
-    if (p.y > VH + 32) killPlayer(p);
+    if (p.y > VH + 32 && !p.piping) killPlayer(p);
   }
 
   function countShots() {
@@ -430,6 +517,12 @@
         var ch = tileChar(x, y);
         if (ch === 'o') { setTile(x, y, ' '); takeCoin(x * TILE, y * TILE); }
         else if (ch === '~') { killPlayer(p); return; }
+        else if (ch === 'E' && G.surface && !p.piping) {
+          p.piping = { t: 0, going: 'up' };
+          p.vx = 0; p.vy = 0;
+          Sound.fx.pipe();
+          return;
+        }
       }
     }
     if (G.goal && !p.autoWalk && p.x + p.w > G.goal.x + 6) startClear();
@@ -455,7 +548,9 @@
         G.fx.push({ kind: 'coin', x: cx * TILE, y: cy * TILE, vy: -3.4 * TEMPO, life: 46 });
         takeCoin(cx * TILE, cy * TILE - 8);
       } else {
-        var type = ch === 'M' ? (p.big ? 'bless' : 'herb') : (ch === 'W' ? 'bow' : 'bless');
+        // small Rama gets the herb, tall Rama gets the bow -- the star
+        // only ever comes out of a block placed as one
+        var type = ch === 'M' ? (p.big ? 'bow' : 'herb') : (ch === 'W' ? 'bow' : 'bless');
         spawnItem(type, cx * TILE, cy * TILE);
         Sound.fx.sprout();
       }
@@ -488,18 +583,25 @@
 
   /* ============================ collision ============================ */
 
+  /* Stops an entity against a wall. The speed it arrived with is kept on
+     hitVx: zeroing vx is what Rama wants, but anything that turns around
+     at a wall would otherwise negate zero and stand there for good. */
   function resolveX(e) {
     var y1 = Math.floor(e.y / TILE), y2 = Math.floor((e.y + e.h - 1) / TILE);
     var cx, y;
     if (e.vx > 0) {
       cx = Math.floor((e.x + e.w - 1) / TILE);
       for (y = y1; y <= y2; y++) {
-        if (isSolid(cx, y)) { e.x = cx * TILE - e.w; e.vx = 0; e.bump = 1; return; }
+        if (isSolid(cx, y)) {
+          e.x = cx * TILE - e.w; e.hitVx = e.vx; e.vx = 0; e.bump = 1; return;
+        }
       }
     } else if (e.vx < 0) {
       cx = Math.floor(e.x / TILE);
       for (y = y1; y <= y2; y++) {
-        if (isSolid(cx, y)) { e.x = (cx + 1) * TILE; e.vx = 0; e.bump = -1; return; }
+        if (isSolid(cx, y)) {
+          e.x = (cx + 1) * TILE; e.hitVx = e.vx; e.vx = 0; e.bump = -1; return;
+        }
       }
     }
   }
@@ -630,7 +732,7 @@
     resolveX(e);
     if (e.bump) {
       if (e.shellMoving) { e.shellDir = -e.shellDir; Sound.fx.bump(); }
-      else { e.vx = Math.abs(e.vx) * (e.bump > 0 ? -1 : 1); }
+      else { e.vx = Math.abs(e.hitVx || ENEMY_SPEED) * (e.bump > 0 ? -1 : 1); }
     }
     e.y += e.vy;
     resolveY(e, prevBottom, false);
@@ -792,7 +894,7 @@
    * slides. Nothing waits on top of a block where it can't be reached. */
   function spawnItem(type, x, y) {
     G.items.push({
-      type: type, x: x, y: y, w: 14, h: 14,
+      type: type, x: x, y: y, w: 14, h: 14, spawnY: y,
       vx: (type === 'herb' ? 0.9 : (type === 'bless' ? 1.3 : 0.7)) * TEMPO,
       vy: 0, rise: 16, born: 0
     });
@@ -806,9 +908,12 @@
     var prevBottom = it.y + it.h;
     it.bump = 0;
     it.x += it.vx; resolveX(it);
-    if (it.bump) it.vx = -it.vx;
+    if (it.bump) it.vx = -it.hitVx;
     it.y += it.vy; resolveY(it, prevBottom, false);
     if (it.onGround && it.type === 'bless') it.vy = -3.6 * TEMPO;
+    /* The bow rolls clear of the block it came out of, then waits to be
+       picked up rather than wandering off like the herb does. */
+    if (it.type === 'bow' && it.onGround && it.y > it.spawnY + 8) it.vx = 0;
     if (it.y > VH + 20) it.remove = true;
     var mid = Math.floor((it.x + it.w / 2) / TILE);
     var foot = Math.floor((it.y + it.h - 2) / TILE);
@@ -845,7 +950,7 @@
     s.x += s.vx; resolveX(s);
     if (s.bump) {
       if (s.kind === 'arrow') { s.remove = true; puff(s.x, s.y); }
-      else s.vx = -s.vx;
+      else s.vx = -s.hitVx;
     }
     s.y += s.vy; resolveY(s, prevBottom, false);
     if (s.onGround) s.vy = (s.kind === 'arrow' ? -2.1 : -2.6) * TEMPO;
@@ -948,7 +1053,7 @@
        Stop here rather than steering the camera with a stale player. */
     if (G.state !== 'play') return;
 
-    if (!p.dead && p.morph === 0) {
+    if (!p.dead && p.morph === 0 && !p.piping) {
       playerVsEnemies(p);
       playerVsItems(p);
     }
@@ -1069,7 +1174,9 @@
           }
         }
         var above = tileChar(x, y - 1);
-        Sprites.tile(ctx, px, py + bump, ch, G.theme, G.t, above !== ch && !isSolidChar(above));
+        var nb = (tileChar(x - 1, y) === ch ? 1 : 0) | (above === ch ? 2 : 0);
+        Sprites.tile(ctx, px, py + bump, ch, G.theme, G.t,
+                     above !== ch && !isSolidChar(above), nb);
       }
     }
     // loose coins
@@ -1084,6 +1191,7 @@
 
   function drawPlayer(p) {
     if (p.hidden) return;
+    if (p.piping && p.piping.t > 26) return;
     if (p.hurt > 0 && Math.floor(p.hurt / 3) % 2) return;
     var state = 'stand';
     if (p.dead) state = 'dead';
@@ -1098,10 +1206,18 @@
     var sz = Sprites.heroSize({ big: big, state: state });
     var px = Math.round(p.x - Math.round(G.camX) - (16 - p.w) / 2);
     var py = Math.round(p.y + p.h - sz.h);
+    var clipped = p.piping && p.piping.going === 'down';
+    if (clipped) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(0, 0, VW, p.piping.clipY);
+      ctx.clip();
+    }
     Sprites.hero(ctx, px, py, {
       big: big, bow: p.bow, state: state, frame: p.frame, dir: p.dir,
       star: p.star > 0, t: G.t
     });
+    if (clipped) ctx.restore();
     if (p.star > 0 && G.t % 3 === 0) {
       G.fx.push({ kind: 'burst', x: p.x + Math.random() * 12, y: p.y + Math.random() * sz.h,
                   vx: (Math.random() - 0.5) * TEMPO, vy: -0.5 * TEMPO, life: 14,
@@ -1205,7 +1321,7 @@
     ctx.save();
     if (G.shake > 0) ctx.translate((Math.random() - 0.5) * 3, (Math.random() - 0.5) * 3);
     drawTiles();
-    if (G.goal) Sprites.shrine(ctx, G.goal.x - Math.round(G.camX) - 8, G.goal.y, G.t, G.state === 'clear');
+    if (G.goal) Sprites.shrine(ctx, G.goal.x - Math.round(G.camX) - 16, G.goal.y, G.t, G.state === 'clear');
     if (G.sita) Sprites.sita(ctx, Math.round(G.sita.x - Math.round(G.camX)), Math.round(G.sita.y), G.t);
     drawItems();
     drawEnemies();
@@ -1302,6 +1418,12 @@
     if (G.stateT > 150 && Math.floor(G.t / 26) % 2) textC('PRESS ENTER', 208, '#ffffff', 1, '#000000');
   }
 
+  /* Black at the moment the scene is swapped, clear either side of it. */
+  function pipeFade(pt) {
+    return pt <= 26 ? Math.max(0, (pt - 14) / 12)
+                    : Math.max(0, 1 - (pt - 27) / 14);
+  }
+
   function render() {
     switch (G.state) {
       case 'title': drawTitle(); break;
@@ -1314,6 +1436,10 @@
         if (G.state === 'clear') {
           if (G.stateT > 110) textC('KANDA CLEAR', 70, '#ffffff', 2, '#000000');
         }
+    }
+    if (G.player && G.player.piping) {
+      var a = pipeFade(G.player.piping.t);
+      if (a > 0) { ctx.fillStyle = 'rgba(0,0,0,' + Math.min(1, a) + ')'; ctx.fillRect(0, 0, VW, VH); }
     }
     if (Sound.isMuted()) text('MUTED', VW - 40, VH - 12, '#ffffff88', 1);
   }

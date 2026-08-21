@@ -62,6 +62,10 @@ setting is not also a tighter time limit.
 | **Kodanda** | Rama's great bow — press run to shoot arrows |
 | **Hanuman's blessing** | brief invincibility; anything Rama touches is scattered |
 
+A lotus block gives the herb to small Rama and the bow to tall Rama, the
+way the mushroom block gives the flower in the original. The blessing only
+ever comes out of a block placed as one, so it never crowds out the bow.
+
 Against him:
 
 | | |
@@ -81,6 +85,17 @@ pays out 50 a tick at the shrine that ends each stage.
 | **1-1** | Dandaka Forest | gaps, pillars and a first look at the golden deer |
 | **1-2** | Kishkindha Heights | rope bridges over open water, and the bow |
 | **1-3** | Lanka | molten rock, the gate of the fortress, and Ravana |
+
+Each stage has a **stepwell** — a covered kerb somewhere along the road.
+Stand on it and press `↓` to drop into a lamplit room of stone arches,
+full of coins and with a power-up in the blocks. Walk into the archway at
+the far end and Rama climbs out well down the stage, past whatever he
+skipped. The surface is set aside whole while he is down there — spent
+blocks, smashed bricks, enemies where he left them — and put back exactly
+as it was.
+
+The stage ends at a **gopuram**, a stepped temple tower with a lamp in the
+sanctum that lights as Rama reaches it.
 
 ## Layout
 
@@ -124,6 +139,12 @@ invalidates a level.
 
 **Sprites** are plotted as rectangles on the 16px grid through a pen that
 mirrors horizontally, so each character is only ever drawn facing right.
+
+**Scenes** are just grids of rows, so a stepwell room loads through the
+same `loadScene()` as a whole stage. Going underground pushes the surface
+onto `G.surface` — its tiles, entities and markers by reference — and
+climbing out restores it, which is why the room can never lose progress
+made above it.
 
 While the page is open, `RamayanaBros` in the browser console is the live
 game state — `RamayanaBros.warp(2)` jumps straight to Lanka,

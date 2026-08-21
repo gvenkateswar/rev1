@@ -236,6 +236,8 @@ var Sound = (function () {
     bossRoar:  function () { note({ freq: 110, to: 55, dur: 0.7, type: 'sawtooth', vol: 0.28 });
                              noise({ freq: 300, to: 80, dur: 0.7, vol: 0.25, filter: 'lowpass' }); },
     fire:      function () { noise({ freq: 1200, to: 400, dur: 0.18, vol: 0.16 }); },
+    pipe:      function () { note({ freq: 620, to: 130, dur: 0.34, type: 'square', vol: 0.22, slide: 'linear' });
+                             noise({ freq: 700, to: 160, dur: 0.34, vol: 0.14, filter: 'lowpass' }); },
     pause:     function () { note({ freq: 660, dur: 0.08, vol: 0.18, type: 'square' });
                              note({ freq: 440, dur: 0.1, vol: 0.18, type: 'square', delay: 0.08 }); },
     flag:      function () { var s = [392, 523, 659, 784, 1047, 1319];
@@ -274,6 +276,13 @@ var Sound = (function () {
       melody: [[0,1],[1,1],[0,1],[-1,1],[0,2],[3,2],[2,1],[1,1],[0,1],[-1,1],[0,4],
                [5,1],[4,1],[3,1],[2,1],[1,2],[0,2]],
       bassline: [[0,1],[0,1],[3,1],[0,1],[-2,1],[-2,1],[1,1],[-2,1]]
+    },
+    /* underground: sparse, low, and a little echoing */
+    cave: {
+      tempo: 118, base: 174.61, lead: 'triangle', bass: 'triangle',
+      melody: [[0,2],[null,2],[2,2],[null,2],[4,2],[3,2],[2,4],
+               [1,2],[null,2],[3,2],[2,2],[0,4],[null,4]],
+      bassline: [[0,4],[-2,4],[1,4],[0,4]]
     },
     boss: {
       tempo: 186, base: 174.61, lead: 'sawtooth', bass: 'square',
@@ -764,10 +773,15 @@ var Sprites = (function () {
     mountain: { dirt: '#7d7b8c', dirtD: '#535163', top: '#b8b3c6', topD: '#7d7b8c',
               brick: '#8d8598', brickD: '#5d566b', stone: '#b0aab8', stoneD: '#6f6a7a' },
     lanka:  { dirt: '#4a2b3a', dirtD: '#2c1723', top: '#7a2f3c', topD: '#4a1a24',
-              brick: '#7b3140', brickD: '#4d1c27', stone: '#6a5a72', stoneD: '#3f3547' }
+              brick: '#7b3140', brickD: '#4d1c27', stone: '#6a5a72', stoneD: '#3f3547' },
+    /* the stepwells: cut sandstone seen by lamplight */
+    cave:   { dirt: '#4a4064', dirtD: '#2b2440', top: '#5d5280', topD: '#3a3158',
+              brick: '#4f4470', brickD: '#2e2748', stone: '#655a86', stoneD: '#3b3358' }
   };
 
-  function drawTile(ctx, x, y, ch, theme, t, openAbove) {
+  /* nb: bit 0 set when the matching tile sits to the left (this is the
+     right half), bit 1 set when one sits above (this is a lower row). */
+  function drawTile(ctx, x, y, ch, theme, t, openAbove, nb) {
     var T = THEME[theme] || THEME.forest;
     var f;
     switch (ch) {
@@ -845,6 +859,44 @@ var Sprites = (function () {
         ctx.fillStyle = '#5d3a18'; ctx.fillRect(x, y + 5, 16, 1);
         ctx.fillRect(x + 5, y + 2, 1, 3); ctx.fillRect(x + 11, y + 2, 1, 3);
         break;
+      case 'D': {
+        // mouth of a stepwell: a stone kerb with steps disappearing into it
+        var right = !!(nb & 1);
+        ctx.fillStyle = '#0b0a14'; ctx.fillRect(x, y, 16, 16);
+        ctx.fillStyle = '#cfc6b0'; ctx.fillRect(x, y, 16, 4);
+        ctx.fillStyle = C.gold;   ctx.fillRect(x, y + 1, 16, 1);
+        ctx.fillStyle = '#8d7f58'; ctx.fillRect(x, y + 4, 16, 1);
+        var ox = right ? 12 : 0;
+        ctx.fillStyle = '#b8a878'; ctx.fillRect(x + ox, y + 4, 4, 12);
+        ctx.fillStyle = '#efe8d5'; ctx.fillRect(x + (right ? 15 : 0), y + 4, 1, 12);
+        // a couple of steps down into the dark
+        ctx.fillStyle = '#5b5270';
+        ctx.fillRect(x + (right ? 8 : 4), y + 7, 4, 2);
+        ctx.fillStyle = '#443c58';
+        ctx.fillRect(x + (right ? 6 : 6), y + 11, 4, 2);
+        break;
+      }
+      case 'E': {
+        // lit archway leading back to the surface
+        var r = !!(nb & 1), low = !!(nb & 2);
+        ctx.fillStyle = '#2b2440'; ctx.fillRect(x, y, 16, 16);
+        var gx = r ? 0 : 4, gw = 12;
+        var glow = ctx.createLinearGradient(0, y, 0, y + 16);
+        if (low) { glow.addColorStop(0, '#ffb347'); glow.addColorStop(1, '#fff0c0'); }
+        else     { glow.addColorStop(0, '#6b4a2a'); glow.addColorStop(1, '#ffb347'); }
+        ctx.fillStyle = glow;
+        ctx.fillRect(x + gx, y + (low ? 0 : 4), gw, low ? 16 : 12);
+        if (!low) {                          // the curve of the arch head
+          ctx.fillStyle = '#2b2440';
+          ctx.fillRect(x + (r ? 12 : 0), y + 4, 4, 3);
+          ctx.fillRect(x + (r ? 13 : 0), y + 7, 3, 2);
+        }
+        ctx.fillStyle = '#cfc6b0';           // jamb
+        ctx.fillRect(x + (r ? 14 : 0), y, 2, 16);
+        if (!low) { ctx.fillStyle = '#b8a878'; ctx.fillRect(x, y, 16, 3);
+                    ctx.fillStyle = C.gold;   ctx.fillRect(x, y + 1, 16, 1); }
+        break;
+      }
       case '~':
         var deep = theme === 'lanka' ? '#8e1f12' : '#1e4f9c';
         var mid  = theme === 'lanka' ? '#c8321e' : '#2f6fd0';
@@ -875,27 +927,57 @@ var Sprites = (function () {
 
   /* ---------------- the goal shrine ---------------- */
 
-  function drawShrine(ctx, x, y, t, raised) {
-    // x,y = bottom-left of a 32x80 shrine
-    var top = y - 80;
-    ctx.fillStyle = '#e8dfc8'; ctx.fillRect(x + 4, top + 24, 24, 56);
-    ctx.fillStyle = '#c9bd9c'; ctx.fillRect(x + 4, top + 24, 24, 2);
-    ctx.fillStyle = '#b8a878'; ctx.fillRect(x, top + 72, 32, 8);
-    ctx.fillStyle = '#d9cfae'; ctx.fillRect(x + 8, top + 34, 16, 20);
-    ctx.fillStyle = '#5b3a6b'; ctx.fillRect(x + 10, top + 38, 12, 16);
-    // stepped tower
-    for (var i = 0; i < 4; i++) {
-      ctx.fillStyle = i % 2 ? '#f0e6cd' : '#e0d3b2';
-      ctx.fillRect(x + 6 + i * 2, top + 24 - i * 5 - 5, 20 - i * 4, 5);
+  /* The goal shrine: a 48x152 gopuram, anchored bottom-left. It is built
+     tall on purpose -- it is the last thing in the stage and has to read as
+     taller than the staircase that climbs up to it. */
+  function drawShrine(ctx, x, y, t, lit) {
+    var top = y - 152;
+    var band = ['#f0e6cd', '#e0d3b2'];
+
+    // plinth
+    ctx.fillStyle = '#b8a878'; ctx.fillRect(x, y - 10, 48, 10);
+    ctx.fillStyle = '#8d7f58'; ctx.fillRect(x, y - 2, 48, 2);
+    ctx.fillStyle = '#d9cfae'; ctx.fillRect(x + 2, y - 10, 44, 2);
+
+    // main body with its doorway
+    ctx.fillStyle = '#e8dfc8'; ctx.fillRect(x + 3, top + 84, 42, 58);
+    ctx.fillStyle = '#c9bd9c'; ctx.fillRect(x + 3, top + 84, 42, 3);
+    ctx.fillStyle = '#d3c7a4'; ctx.fillRect(x + 3, top + 84, 3, 58);
+    ctx.fillStyle = '#f2ead6'; ctx.fillRect(x + 42, top + 84, 3, 58);
+    // pilasters
+    ctx.fillStyle = '#cdbf9a';
+    ctx.fillRect(x + 9, top + 92, 3, 50);
+    ctx.fillRect(x + 36, top + 92, 3, 50);
+    // doorway
+    ctx.fillStyle = '#c9bd9c'; ctx.fillRect(x + 15, top + 100, 18, 42);
+    ctx.fillStyle = '#3a2246'; ctx.fillRect(x + 17, top + 104, 14, 38);
+    ctx.fillStyle = lit ? '#ffd042' : '#6b4a8a';
+    ctx.fillRect(x + 21, top + 112, 6, 12);            // lamp in the sanctum
+    if (lit) { ctx.fillStyle = '#fff2b0'; ctx.fillRect(x + 22, top + 114, 4, 6); }
+
+    // six receding tiers
+    for (var i = 0; i < 6; i++) {
+      var tw = 40 - i * 5, ty = top + 84 - (i + 1) * 12;
+      var tx = x + 24 - tw / 2;
+      ctx.fillStyle = band[i % 2];
+      ctx.fillRect(tx, ty, tw, 12);
+      ctx.fillStyle = '#c9bd9c';
+      ctx.fillRect(tx, ty + 10, tw, 2);
+      ctx.fillStyle = '#b3a47e';
+      for (var n = 0; n < 3; n++) ctx.fillRect(tx + 3 + n * (tw - 8) / 2, ty + 3, 3, 5);
     }
-    ctx.fillStyle = C.gold; ctx.fillRect(x + 14, top - 4, 4, 6);
-    ctx.fillStyle = C.goldL; ctx.fillRect(x + 15, top - 8, 2, 5);
-    // banner
-    var wave = Math.sin(t / 8) * 1.5;
-    ctx.fillStyle = C.red;
-    ctx.fillRect(x + 18, top + 30 + (raised ? 0 : 0) + Math.round(wave), 10, 8);
-    ctx.fillStyle = C.gold;
-    ctx.fillRect(x + 20, top + 32 + Math.round(wave), 6, 2);
+
+    // kalasha finial
+    ctx.fillStyle = '#e0d3b2'; ctx.fillRect(x + 18, top + 6, 12, 6);
+    ctx.fillStyle = C.gold;    ctx.fillRect(x + 20, top, 8, 7);
+    ctx.fillStyle = C.goldL;   ctx.fillRect(x + 23, top - 5, 2, 6);
+    ctx.fillStyle = C.gold;    ctx.fillRect(x + 22, top - 7, 4, 2);
+
+    // banner on a pole beside the tower
+    var wave = Math.round(Math.sin(t / 8) * 1.5);
+    ctx.fillStyle = '#8d7f58'; ctx.fillRect(x + 45, top + 30, 2, 60);
+    ctx.fillStyle = C.red;     ctx.fillRect(x + 47, top + 34 + wave, 12, 9);
+    ctx.fillStyle = C.gold;    ctx.fillRect(x + 49, top + 37 + wave, 8, 2);
   }
 
   /* ---------------- backdrops ---------------- */
@@ -903,6 +985,36 @@ var Sprites = (function () {
   function hash(n) { var s = Math.sin(n * 127.1) * 43758.5453; return s - Math.floor(s); }
 
   function background(ctx, theme, camX, t) {
+    if (theme === 'cave') {
+      // a baoli: tier on tier of stone arches, most of it lost in the dark
+      ctx.fillStyle = '#0b0a14';
+      ctx.fillRect(0, 0, 256, 240);
+      var off = (camX * 0.4) % 64;
+      for (var a = -1; a < 6; a++) {
+        var ax = a * 64 - off;
+        for (var row = 0; row < 3; row++) {
+          var ay = 40 + row * 46;
+          ctx.fillStyle = row === 0 ? '#1d1830' : (row === 1 ? '#181428' : '#131020');
+          ctx.fillRect(ax, ay, 56, 38);
+          ctx.fillStyle = '#0b0a14';
+          ctx.fillRect(ax + 8, ay + 12, 40, 26);
+          ctx.fillRect(ax + 12, ay + 6, 32, 8);
+          ctx.fillStyle = row === 0 ? '#2a2340' : '#1d1830';
+          ctx.fillRect(ax, ay, 56, 3);
+        }
+      }
+      // oil lamps set into the walls
+      for (var l = -1; l < 5; l++) {
+        var lx = l * 64 - off + 28;
+        var flick = ((t + l * 13) >> 3) % 3;
+        ctx.fillStyle = 'rgba(255,170,60,' + (0.05 + flick * 0.012) + ')';
+        ctx.fillRect(lx - 20, 74, 44, 44);
+        ctx.fillStyle = '#8a4a24'; ctx.fillRect(lx - 3, 96, 7, 3);
+        ctx.fillStyle = '#ffd042'; ctx.fillRect(lx - 1, 91 - (flick === 1 ? 1 : 0), 3, 5);
+        ctx.fillStyle = '#fff3c4'; ctx.fillRect(lx, 93, 1, 2);
+      }
+      return;
+    }
     if (theme === 'lanka') {
       var g = ctx.createLinearGradient(0, 0, 0, 240);
       g.addColorStop(0, '#160a1e'); g.addColorStop(0.6, '#3a1024'); g.addColorStop(1, '#6b1a1e');
@@ -1060,6 +1172,7 @@ var Sprites = (function () {
  *   =  rope bridge (stand on top only)
  *   ~  water / molten rock (deadly)
  *   G  Ravana's ward (solid until the demon king falls)
+ *   D  mouth of a stepwell (press down on it)   E  archway back up
  *   o  loose coin
  *   g  rakshasa   d  Maricha the golden deer   c  Kakasura the crow
  *   R  Ravana     F  goal shrine               I  Sita
@@ -1106,6 +1219,12 @@ var Levels = (function () {
     }
     return this;
   };
+  /* Mouth of a stepwell: a two-tile kerb you can drop through. */
+  Grid.prototype.well = function (x, top) {
+    this.rect(x, top, 2, 1, 'D');
+    this.rect(x, top + 1, 2, FLOOR - top - 1, 'p');
+    return this;
+  };
   Grid.prototype.coins = function (x, y, n) {
     for (var i = 0; i < n; i++) this.set(x + i, y, 'o');
     return this;
@@ -1115,6 +1234,21 @@ var Levels = (function () {
     for (var y = 0; y < H; y++) out.push(this.g[y].join(''));
     return out;
   };
+
+  /* A stepwell room: sealed but for the archway at the far end. Laid out
+     so everything in it can be reached from the floor -- blocks on row 8,
+     coins on rows 10 and 11 to walk through, and a row on 6 that opens up
+     once you are standing on the blocks. */
+  function stepwell(fill) {
+    var g = new Grid(24);
+    g.rect(0, 0, 24, 2, 'S');          // roof
+    g.rect(0, 12, 24, 3, '#');         // floor
+    g.rect(0, 2, 1, 10, 'S');          // walls
+    g.rect(23, 2, 1, 10, 'S');
+    fill(g);
+    g.rect(20, 10, 2, 2, 'E');         // the way back up
+    return g.rows();
+  }
 
   /* ================= 1-1  Dandaka Forest ================= */
   function kanda1() {
@@ -1130,6 +1264,7 @@ var Levels = (function () {
     g.put(16, 9, 'B?BMB');
     g.coins(17, 6, 3);
     g.set(24, 12, 'g');
+    g.well(28, 11);                 // down to the stepwell
     g.pillar(34, 11);
     g.set(40, 12, 'd');
     g.pillar(42, 10);
@@ -1142,7 +1277,7 @@ var Levels = (function () {
     g.set(66, 12, 'g');
     g.coins(68, 9, 2);
 
-    g.put(74, 9, 'B?B');
+    g.put(74, 9, 'BWB');            // the Kodanda, on the main road
     g.set(78, 12, 'g');
     g.put(84, 9, 'B??B');
     g.put(84, 6, 'BBBB');
@@ -1183,7 +1318,16 @@ var Levels = (function () {
     return {
       id: '1-1', name: 'DANDAKA FOREST', theme: 'forest', music: 'forest',
       time: 320, grid: g.rows(),
-      blurb: 'Rama walks south through the great forest.'
+      blurb: 'Rama walks south through the great forest.',
+      rooms: [{
+        entry: 28, exitX: 78, startX: 2,
+        grid: stepwell(function (r) {
+          r.coins(3, 11, 16);
+          r.coins(3, 10, 16);
+          r.put(10, 8, 'BWB');       // the bow, kept in the dark
+          r.coins(9, 6, 5);
+        })
+      }]
     };
   }
 
@@ -1199,6 +1343,7 @@ var Levels = (function () {
     g.put(8, 9, 'BMB');
     g.set(12, 12, 'g');
     g.coins(14, 10, 3);
+    g.well(16, 11);                      // down to the stepwell
     g.stair(19, 3, 1);
 
     g.rect(26, 11, 14, 1, '=');          // rope bridge
@@ -1266,7 +1411,17 @@ var Levels = (function () {
     return {
       id: '1-2', name: 'KISHKINDHA HEIGHTS', theme: 'mountain', music: 'mountain',
       time: 340, grid: g.rows(),
-      blurb: 'Across the monkey kingdom, down to the southern sea.'
+      blurb: 'Across the monkey kingdom, down to the southern sea.',
+      rooms: [{
+        entry: 16, exitX: 60, startX: 2,
+        grid: stepwell(function (r) {
+          r.coins(3, 11, 16);
+          r.coins(3, 10, 16);
+          r.put(8, 8, 'BMB');
+          r.put(14, 8, 'B?B');
+          r.coins(8, 6, 8);
+        })
+      }]
     };
   }
 
@@ -1290,6 +1445,7 @@ var Levels = (function () {
     g.rect(35, 10, 3, 1, '=');
     g.coins(35, 9, 3);
 
+    g.well(39, 11);                      // down to the stepwell
     g.put(42, 9, 'BWB');                 // bow, for anyone who missed it
     g.set(46, 12, 'g');
     g.set(48, 12, 'g');
@@ -1351,7 +1507,17 @@ var Levels = (function () {
     return {
       id: '1-3', name: 'LANKA', theme: 'lanka', music: 'lanka',
       time: 400, grid: g.rows(),
-      blurb: 'The island fortress. Ravana waits on his throne.'
+      blurb: 'The island fortress. Ravana waits on his throne.',
+      rooms: [{
+        entry: 39, exitX: 84, startX: 2,
+        grid: stepwell(function (r) {
+          r.coins(3, 11, 16);
+          r.coins(3, 10, 16);
+          r.put(7, 8, 'BTB');        // a blessing before the run to the court
+          r.put(14, 8, 'BWB');
+          r.coins(9, 6, 6);
+        })
+      }]
     };
   }
 
@@ -1588,7 +1754,7 @@ var Levels = (function () {
     levelIndex: 0, level: null,
     tiles: [], w: 0, theme: 'forest',
     player: null, enemies: [], items: [], shots: [], fx: [], bumps: [],
-    camX: 0, goal: null, sita: null, boss: null, bossDefeated: false,
+    camX: 0, goal: null, sita: null, boss: null, bossDefeated: false, surface: null,
     lives: 3, score: 0, coins: 0, time: 0, timeAcc: 0,
     shake: 0, hurry: false, best: 0, ending: 0
   };
@@ -1603,7 +1769,7 @@ var Levels = (function () {
 
   /* ============================ tiles ============================ */
 
-  var SOLIDS = '#SBUP?MWTp';
+  var SOLIDS = '#SBUP?MWTpD';
 
   function tileChar(cx, cy) {
     if (cx < 0) return '#';                       // an invisible wall at the start
@@ -1621,15 +1787,14 @@ var Levels = (function () {
 
   /* ============================ loading ============================ */
 
-  function loadLevel(index) {
-    var L = Levels.list[index];
-    G.level = L;
-    G.theme = L.theme;
-    G.w = L.grid[0].length;
-    G.tiles = L.grid.map(function (r) { return r.split(''); });
+  /* Turns a grid of rows into the live scene: tiles, enemies and markers.
+     Used for a whole level and for the stepwell rooms underneath it. */
+  function loadScene(rows, theme) {
+    G.theme = theme;
+    G.w = rows[0].length;
+    G.tiles = rows.map(function (r) { return r.split(''); });
     G.enemies = []; G.items = []; G.shots = []; G.fx = []; G.bumps = [];
-    G.camX = 0; G.goal = null; G.sita = null; G.boss = null; G.bossDefeated = false;
-    G.time = L.time; G.timeAcc = 0; G.shake = 0; G.hurry = false;
+    G.goal = null; G.sita = null; G.boss = null; G.camX = 0;
 
     for (var y = 0; y < ROWS; y++) {
       for (var x = 0; x < G.w; x++) {
@@ -1639,8 +1804,69 @@ var Levels = (function () {
         else if (ch === 'I') { G.sita = { x: x * TILE, y: (y + 1) * TILE - 22 }; setTile(x, y, ' '); }
       }
     }
+  }
+
+  function loadLevel(index) {
+    var L = Levels.list[index];
+    G.level = L;
+    G.surface = null;
+    G.bossDefeated = false;
+    G.time = L.time; G.timeAcc = 0; G.shake = 0; G.hurry = false;
+    loadScene(L.grid, L.theme);
     G.player = makePlayer(2 * TILE, (ROWS - 3) * TILE - 15, G.player);
     Sound.music.play(L.music);
+  }
+
+  /* ---------------- the stepwells ----------------
+   * Pressing down on a stepwell mouth drops Rama into a room below the
+   * stage. The surface is set aside whole -- tiles, enemies, spent
+   * blocks and all -- and put back when he climbs out further along. */
+
+  function roomAt(cx) {
+    var rooms = G.level && G.level.rooms;
+    if (!rooms || G.surface) return null;
+    for (var i = 0; i < rooms.length; i++) {
+      if (cx === rooms[i].entry || cx === rooms[i].entry + 1) return rooms[i];
+    }
+    return null;
+  }
+
+  /* Top of the ground at a column, found by walking up from the bottom of
+     the map through the solid run. Searching downward from the top would
+     land on a room's ceiling, or on any block floating over the road. */
+  function groundYAt(cx) {
+    var y = ROWS - 1;
+    while (y >= 0 && !isSolid(cx, y)) y--;
+    if (y < 0) return (ROWS - 2) * TILE;
+    while (y >= 0 && isSolid(cx, y)) y--;
+    return (y + 1) * TILE;
+  }
+
+  function enterRoom(p, room) {
+    G.surface = {
+      tiles: G.tiles, w: G.w, theme: G.theme, enemies: G.enemies, items: G.items,
+      shots: G.shots, fx: G.fx, bumps: G.bumps, goal: G.goal, sita: G.sita,
+      boss: G.boss, camX: G.camX, exitX: room.exitX
+    };
+    loadScene(room.grid, 'cave');
+    p.x = room.startX * TILE;
+    p.y = groundYAt(room.startX) - p.h;
+    p.vx = 0; p.vy = 0;
+    Sound.music.play('cave');
+  }
+
+  function leaveRoom(p) {
+    var s = G.surface;
+    G.tiles = s.tiles; G.w = s.w; G.theme = s.theme;
+    G.enemies = s.enemies; G.items = s.items; G.shots = s.shots;
+    G.fx = s.fx; G.bumps = s.bumps;
+    G.goal = s.goal; G.sita = s.sita; G.boss = s.boss;
+    G.surface = null;
+    p.x = s.exitX * TILE;
+    p.y = groundYAt(s.exitX) - p.h;
+    p.vx = 0; p.vy = 0;
+    G.camX = Math.max(0, Math.min(p.x + p.w / 2 - 110, G.w * TILE - VW));
+    Sound.music.play(G.level.music);
   }
 
   /* ============================ player ============================ */
@@ -1702,6 +1928,18 @@ var Levels = (function () {
 
     if (p.morph > 0) { p.morph--; playerBox(p); return; }
 
+    /* sliding down a stepwell mouth, or stepping back out of one */
+    if (p.piping) {
+      p.piping.t++;
+      if (p.piping.going === 'down' && p.piping.t <= 26) p.y += 0.75;
+      if (p.piping.t === 27) {
+        if (p.piping.going === 'down') enterRoom(p, p.piping.room);
+        else leaveRoom(p);
+      }
+      if (p.piping.t > 48) p.piping = null;
+      return;
+    }
+
     var left = keys.left && !p.autoWalk;
     var right = (keys.right || p.autoWalk > 0);
     var run = keys.run;
@@ -1741,6 +1979,21 @@ var Levels = (function () {
     else p.vy += GRAV_FALL;
     if (p.vy > MAX_FALL) p.vy = MAX_FALL;
 
+    // down on a stepwell mouth goes underground
+    if (keys.down && p.onGround && !p.autoWalk) {
+      var fcx = Math.floor((p.x + p.w / 2) / TILE);
+      var fcy = Math.floor((p.y + p.h) / TILE);
+      if (tileChar(fcx, fcy) === 'D') {
+        var room = roomAt(tileChar(fcx - 1, fcy) === 'D' ? fcx - 1 : fcx);
+        if (room) {
+          p.piping = { t: 0, going: 'down', room: room, clipY: fcy * TILE };
+          p.vx = 0; p.vy = 0;
+          Sound.fx.pipe();
+          return;
+        }
+      }
+    }
+
     // shoot
     if (pressed.run && p.bow && !p.autoWalk && countShots() < 2) {
       G.shots.push({
@@ -1773,7 +2026,7 @@ var Levels = (function () {
 
     collectTiles(p);
 
-    if (p.y > VH + 32) killPlayer(p);
+    if (p.y > VH + 32 && !p.piping) killPlayer(p);
   }
 
   function countShots() {
@@ -1791,6 +2044,12 @@ var Levels = (function () {
         var ch = tileChar(x, y);
         if (ch === 'o') { setTile(x, y, ' '); takeCoin(x * TILE, y * TILE); }
         else if (ch === '~') { killPlayer(p); return; }
+        else if (ch === 'E' && G.surface && !p.piping) {
+          p.piping = { t: 0, going: 'up' };
+          p.vx = 0; p.vy = 0;
+          Sound.fx.pipe();
+          return;
+        }
       }
     }
     if (G.goal && !p.autoWalk && p.x + p.w > G.goal.x + 6) startClear();
@@ -1816,7 +2075,9 @@ var Levels = (function () {
         G.fx.push({ kind: 'coin', x: cx * TILE, y: cy * TILE, vy: -3.4 * TEMPO, life: 46 });
         takeCoin(cx * TILE, cy * TILE - 8);
       } else {
-        var type = ch === 'M' ? (p.big ? 'bless' : 'herb') : (ch === 'W' ? 'bow' : 'bless');
+        // small Rama gets the herb, tall Rama gets the bow -- the star
+        // only ever comes out of a block placed as one
+        var type = ch === 'M' ? (p.big ? 'bow' : 'herb') : (ch === 'W' ? 'bow' : 'bless');
         spawnItem(type, cx * TILE, cy * TILE);
         Sound.fx.sprout();
       }
@@ -1849,18 +2110,25 @@ var Levels = (function () {
 
   /* ============================ collision ============================ */
 
+  /* Stops an entity against a wall. The speed it arrived with is kept on
+     hitVx: zeroing vx is what Rama wants, but anything that turns around
+     at a wall would otherwise negate zero and stand there for good. */
   function resolveX(e) {
     var y1 = Math.floor(e.y / TILE), y2 = Math.floor((e.y + e.h - 1) / TILE);
     var cx, y;
     if (e.vx > 0) {
       cx = Math.floor((e.x + e.w - 1) / TILE);
       for (y = y1; y <= y2; y++) {
-        if (isSolid(cx, y)) { e.x = cx * TILE - e.w; e.vx = 0; e.bump = 1; return; }
+        if (isSolid(cx, y)) {
+          e.x = cx * TILE - e.w; e.hitVx = e.vx; e.vx = 0; e.bump = 1; return;
+        }
       }
     } else if (e.vx < 0) {
       cx = Math.floor(e.x / TILE);
       for (y = y1; y <= y2; y++) {
-        if (isSolid(cx, y)) { e.x = (cx + 1) * TILE; e.vx = 0; e.bump = -1; return; }
+        if (isSolid(cx, y)) {
+          e.x = (cx + 1) * TILE; e.hitVx = e.vx; e.vx = 0; e.bump = -1; return;
+        }
       }
     }
   }
@@ -1991,7 +2259,7 @@ var Levels = (function () {
     resolveX(e);
     if (e.bump) {
       if (e.shellMoving) { e.shellDir = -e.shellDir; Sound.fx.bump(); }
-      else { e.vx = Math.abs(e.vx) * (e.bump > 0 ? -1 : 1); }
+      else { e.vx = Math.abs(e.hitVx || ENEMY_SPEED) * (e.bump > 0 ? -1 : 1); }
     }
     e.y += e.vy;
     resolveY(e, prevBottom, false);
@@ -2153,7 +2421,7 @@ var Levels = (function () {
    * slides. Nothing waits on top of a block where it can't be reached. */
   function spawnItem(type, x, y) {
     G.items.push({
-      type: type, x: x, y: y, w: 14, h: 14,
+      type: type, x: x, y: y, w: 14, h: 14, spawnY: y,
       vx: (type === 'herb' ? 0.9 : (type === 'bless' ? 1.3 : 0.7)) * TEMPO,
       vy: 0, rise: 16, born: 0
     });
@@ -2167,9 +2435,12 @@ var Levels = (function () {
     var prevBottom = it.y + it.h;
     it.bump = 0;
     it.x += it.vx; resolveX(it);
-    if (it.bump) it.vx = -it.vx;
+    if (it.bump) it.vx = -it.hitVx;
     it.y += it.vy; resolveY(it, prevBottom, false);
     if (it.onGround && it.type === 'bless') it.vy = -3.6 * TEMPO;
+    /* The bow rolls clear of the block it came out of, then waits to be
+       picked up rather than wandering off like the herb does. */
+    if (it.type === 'bow' && it.onGround && it.y > it.spawnY + 8) it.vx = 0;
     if (it.y > VH + 20) it.remove = true;
     var mid = Math.floor((it.x + it.w / 2) / TILE);
     var foot = Math.floor((it.y + it.h - 2) / TILE);
@@ -2206,7 +2477,7 @@ var Levels = (function () {
     s.x += s.vx; resolveX(s);
     if (s.bump) {
       if (s.kind === 'arrow') { s.remove = true; puff(s.x, s.y); }
-      else s.vx = -s.vx;
+      else s.vx = -s.hitVx;
     }
     s.y += s.vy; resolveY(s, prevBottom, false);
     if (s.onGround) s.vy = (s.kind === 'arrow' ? -2.1 : -2.6) * TEMPO;
@@ -2309,7 +2580,7 @@ var Levels = (function () {
        Stop here rather than steering the camera with a stale player. */
     if (G.state !== 'play') return;
 
-    if (!p.dead && p.morph === 0) {
+    if (!p.dead && p.morph === 0 && !p.piping) {
       playerVsEnemies(p);
       playerVsItems(p);
     }
@@ -2430,7 +2701,9 @@ var Levels = (function () {
           }
         }
         var above = tileChar(x, y - 1);
-        Sprites.tile(ctx, px, py + bump, ch, G.theme, G.t, above !== ch && !isSolidChar(above));
+        var nb = (tileChar(x - 1, y) === ch ? 1 : 0) | (above === ch ? 2 : 0);
+        Sprites.tile(ctx, px, py + bump, ch, G.theme, G.t,
+                     above !== ch && !isSolidChar(above), nb);
       }
     }
     // loose coins
@@ -2445,6 +2718,7 @@ var Levels = (function () {
 
   function drawPlayer(p) {
     if (p.hidden) return;
+    if (p.piping && p.piping.t > 26) return;
     if (p.hurt > 0 && Math.floor(p.hurt / 3) % 2) return;
     var state = 'stand';
     if (p.dead) state = 'dead';
@@ -2459,10 +2733,18 @@ var Levels = (function () {
     var sz = Sprites.heroSize({ big: big, state: state });
     var px = Math.round(p.x - Math.round(G.camX) - (16 - p.w) / 2);
     var py = Math.round(p.y + p.h - sz.h);
+    var clipped = p.piping && p.piping.going === 'down';
+    if (clipped) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(0, 0, VW, p.piping.clipY);
+      ctx.clip();
+    }
     Sprites.hero(ctx, px, py, {
       big: big, bow: p.bow, state: state, frame: p.frame, dir: p.dir,
       star: p.star > 0, t: G.t
     });
+    if (clipped) ctx.restore();
     if (p.star > 0 && G.t % 3 === 0) {
       G.fx.push({ kind: 'burst', x: p.x + Math.random() * 12, y: p.y + Math.random() * sz.h,
                   vx: (Math.random() - 0.5) * TEMPO, vy: -0.5 * TEMPO, life: 14,
@@ -2566,7 +2848,7 @@ var Levels = (function () {
     ctx.save();
     if (G.shake > 0) ctx.translate((Math.random() - 0.5) * 3, (Math.random() - 0.5) * 3);
     drawTiles();
-    if (G.goal) Sprites.shrine(ctx, G.goal.x - Math.round(G.camX) - 8, G.goal.y, G.t, G.state === 'clear');
+    if (G.goal) Sprites.shrine(ctx, G.goal.x - Math.round(G.camX) - 16, G.goal.y, G.t, G.state === 'clear');
     if (G.sita) Sprites.sita(ctx, Math.round(G.sita.x - Math.round(G.camX)), Math.round(G.sita.y), G.t);
     drawItems();
     drawEnemies();
@@ -2663,6 +2945,12 @@ var Levels = (function () {
     if (G.stateT > 150 && Math.floor(G.t / 26) % 2) textC('PRESS ENTER', 208, '#ffffff', 1, '#000000');
   }
 
+  /* Black at the moment the scene is swapped, clear either side of it. */
+  function pipeFade(pt) {
+    return pt <= 26 ? Math.max(0, (pt - 14) / 12)
+                    : Math.max(0, 1 - (pt - 27) / 14);
+  }
+
   function render() {
     switch (G.state) {
       case 'title': drawTitle(); break;
@@ -2675,6 +2963,10 @@ var Levels = (function () {
         if (G.state === 'clear') {
           if (G.stateT > 110) textC('KANDA CLEAR', 70, '#ffffff', 2, '#000000');
         }
+    }
+    if (G.player && G.player.piping) {
+      var a = pipeFade(G.player.piping.t);
+      if (a > 0) { ctx.fillStyle = 'rgba(0,0,0,' + Math.min(1, a) + ')'; ctx.fillRect(0, 0, VW, VH); }
     }
     if (Sound.isMuted()) text('MUTED', VW - 40, VH - 12, '#ffffff88', 1);
   }

@@ -21,6 +21,7 @@
  *   =  rope bridge (stand on top only)
  *   ~  water / molten rock (deadly)
  *   G  Ravana's ward (solid until the demon king falls)
+ *   D  mouth of a stepwell (press down on it)   E  archway back up
  *   o  loose coin
  *   g  rakshasa   d  Maricha the golden deer   c  Kakasura the crow
  *   R  Ravana     F  goal shrine               I  Sita
@@ -67,6 +68,12 @@ var Levels = (function () {
     }
     return this;
   };
+  /* Mouth of a stepwell: a two-tile kerb you can drop through. */
+  Grid.prototype.well = function (x, top) {
+    this.rect(x, top, 2, 1, 'D');
+    this.rect(x, top + 1, 2, FLOOR - top - 1, 'p');
+    return this;
+  };
   Grid.prototype.coins = function (x, y, n) {
     for (var i = 0; i < n; i++) this.set(x + i, y, 'o');
     return this;
@@ -76,6 +83,21 @@ var Levels = (function () {
     for (var y = 0; y < H; y++) out.push(this.g[y].join(''));
     return out;
   };
+
+  /* A stepwell room: sealed but for the archway at the far end. Laid out
+     so everything in it can be reached from the floor -- blocks on row 8,
+     coins on rows 10 and 11 to walk through, and a row on 6 that opens up
+     once you are standing on the blocks. */
+  function stepwell(fill) {
+    var g = new Grid(24);
+    g.rect(0, 0, 24, 2, 'S');          // roof
+    g.rect(0, 12, 24, 3, '#');         // floor
+    g.rect(0, 2, 1, 10, 'S');          // walls
+    g.rect(23, 2, 1, 10, 'S');
+    fill(g);
+    g.rect(20, 10, 2, 2, 'E');         // the way back up
+    return g.rows();
+  }
 
   /* ================= 1-1  Dandaka Forest ================= */
   function kanda1() {
@@ -91,6 +113,7 @@ var Levels = (function () {
     g.put(16, 9, 'B?BMB');
     g.coins(17, 6, 3);
     g.set(24, 12, 'g');
+    g.well(28, 11);                 // down to the stepwell
     g.pillar(34, 11);
     g.set(40, 12, 'd');
     g.pillar(42, 10);
@@ -103,7 +126,7 @@ var Levels = (function () {
     g.set(66, 12, 'g');
     g.coins(68, 9, 2);
 
-    g.put(74, 9, 'B?B');
+    g.put(74, 9, 'BWB');            // the Kodanda, on the main road
     g.set(78, 12, 'g');
     g.put(84, 9, 'B??B');
     g.put(84, 6, 'BBBB');
@@ -144,7 +167,16 @@ var Levels = (function () {
     return {
       id: '1-1', name: 'DANDAKA FOREST', theme: 'forest', music: 'forest',
       time: 320, grid: g.rows(),
-      blurb: 'Rama walks south through the great forest.'
+      blurb: 'Rama walks south through the great forest.',
+      rooms: [{
+        entry: 28, exitX: 78, startX: 2,
+        grid: stepwell(function (r) {
+          r.coins(3, 11, 16);
+          r.coins(3, 10, 16);
+          r.put(10, 8, 'BWB');       // the bow, kept in the dark
+          r.coins(9, 6, 5);
+        })
+      }]
     };
   }
 
@@ -160,6 +192,7 @@ var Levels = (function () {
     g.put(8, 9, 'BMB');
     g.set(12, 12, 'g');
     g.coins(14, 10, 3);
+    g.well(16, 11);                      // down to the stepwell
     g.stair(19, 3, 1);
 
     g.rect(26, 11, 14, 1, '=');          // rope bridge
@@ -227,7 +260,17 @@ var Levels = (function () {
     return {
       id: '1-2', name: 'KISHKINDHA HEIGHTS', theme: 'mountain', music: 'mountain',
       time: 340, grid: g.rows(),
-      blurb: 'Across the monkey kingdom, down to the southern sea.'
+      blurb: 'Across the monkey kingdom, down to the southern sea.',
+      rooms: [{
+        entry: 16, exitX: 60, startX: 2,
+        grid: stepwell(function (r) {
+          r.coins(3, 11, 16);
+          r.coins(3, 10, 16);
+          r.put(8, 8, 'BMB');
+          r.put(14, 8, 'B?B');
+          r.coins(8, 6, 8);
+        })
+      }]
     };
   }
 
@@ -251,6 +294,7 @@ var Levels = (function () {
     g.rect(35, 10, 3, 1, '=');
     g.coins(35, 9, 3);
 
+    g.well(39, 11);                      // down to the stepwell
     g.put(42, 9, 'BWB');                 // bow, for anyone who missed it
     g.set(46, 12, 'g');
     g.set(48, 12, 'g');
@@ -312,7 +356,17 @@ var Levels = (function () {
     return {
       id: '1-3', name: 'LANKA', theme: 'lanka', music: 'lanka',
       time: 400, grid: g.rows(),
-      blurb: 'The island fortress. Ravana waits on his throne.'
+      blurb: 'The island fortress. Ravana waits on his throne.',
+      rooms: [{
+        entry: 39, exitX: 84, startX: 2,
+        grid: stepwell(function (r) {
+          r.coins(3, 11, 16);
+          r.coins(3, 10, 16);
+          r.put(7, 8, 'BTB');        // a blessing before the run to the court
+          r.put(14, 8, 'BWB');
+          r.coins(9, 6, 6);
+        })
+      }]
     };
   }
 

@@ -422,10 +422,15 @@ var Sprites = (function () {
     mountain: { dirt: '#7d7b8c', dirtD: '#535163', top: '#b8b3c6', topD: '#7d7b8c',
               brick: '#8d8598', brickD: '#5d566b', stone: '#b0aab8', stoneD: '#6f6a7a' },
     lanka:  { dirt: '#4a2b3a', dirtD: '#2c1723', top: '#7a2f3c', topD: '#4a1a24',
-              brick: '#7b3140', brickD: '#4d1c27', stone: '#6a5a72', stoneD: '#3f3547' }
+              brick: '#7b3140', brickD: '#4d1c27', stone: '#6a5a72', stoneD: '#3f3547' },
+    /* the stepwells: cut sandstone seen by lamplight */
+    cave:   { dirt: '#4a4064', dirtD: '#2b2440', top: '#5d5280', topD: '#3a3158',
+              brick: '#4f4470', brickD: '#2e2748', stone: '#655a86', stoneD: '#3b3358' }
   };
 
-  function drawTile(ctx, x, y, ch, theme, t, openAbove) {
+  /* nb: bit 0 set when the matching tile sits to the left (this is the
+     right half), bit 1 set when one sits above (this is a lower row). */
+  function drawTile(ctx, x, y, ch, theme, t, openAbove, nb) {
     var T = THEME[theme] || THEME.forest;
     var f;
     switch (ch) {
@@ -503,6 +508,44 @@ var Sprites = (function () {
         ctx.fillStyle = '#5d3a18'; ctx.fillRect(x, y + 5, 16, 1);
         ctx.fillRect(x + 5, y + 2, 1, 3); ctx.fillRect(x + 11, y + 2, 1, 3);
         break;
+      case 'D': {
+        // mouth of a stepwell: a stone kerb with steps disappearing into it
+        var right = !!(nb & 1);
+        ctx.fillStyle = '#0b0a14'; ctx.fillRect(x, y, 16, 16);
+        ctx.fillStyle = '#cfc6b0'; ctx.fillRect(x, y, 16, 4);
+        ctx.fillStyle = C.gold;   ctx.fillRect(x, y + 1, 16, 1);
+        ctx.fillStyle = '#8d7f58'; ctx.fillRect(x, y + 4, 16, 1);
+        var ox = right ? 12 : 0;
+        ctx.fillStyle = '#b8a878'; ctx.fillRect(x + ox, y + 4, 4, 12);
+        ctx.fillStyle = '#efe8d5'; ctx.fillRect(x + (right ? 15 : 0), y + 4, 1, 12);
+        // a couple of steps down into the dark
+        ctx.fillStyle = '#5b5270';
+        ctx.fillRect(x + (right ? 8 : 4), y + 7, 4, 2);
+        ctx.fillStyle = '#443c58';
+        ctx.fillRect(x + (right ? 6 : 6), y + 11, 4, 2);
+        break;
+      }
+      case 'E': {
+        // lit archway leading back to the surface
+        var r = !!(nb & 1), low = !!(nb & 2);
+        ctx.fillStyle = '#2b2440'; ctx.fillRect(x, y, 16, 16);
+        var gx = r ? 0 : 4, gw = 12;
+        var glow = ctx.createLinearGradient(0, y, 0, y + 16);
+        if (low) { glow.addColorStop(0, '#ffb347'); glow.addColorStop(1, '#fff0c0'); }
+        else     { glow.addColorStop(0, '#6b4a2a'); glow.addColorStop(1, '#ffb347'); }
+        ctx.fillStyle = glow;
+        ctx.fillRect(x + gx, y + (low ? 0 : 4), gw, low ? 16 : 12);
+        if (!low) {                          // the curve of the arch head
+          ctx.fillStyle = '#2b2440';
+          ctx.fillRect(x + (r ? 12 : 0), y + 4, 4, 3);
+          ctx.fillRect(x + (r ? 13 : 0), y + 7, 3, 2);
+        }
+        ctx.fillStyle = '#cfc6b0';           // jamb
+        ctx.fillRect(x + (r ? 14 : 0), y, 2, 16);
+        if (!low) { ctx.fillStyle = '#b8a878'; ctx.fillRect(x, y, 16, 3);
+                    ctx.fillStyle = C.gold;   ctx.fillRect(x, y + 1, 16, 1); }
+        break;
+      }
       case '~':
         var deep = theme === 'lanka' ? '#8e1f12' : '#1e4f9c';
         var mid  = theme === 'lanka' ? '#c8321e' : '#2f6fd0';
@@ -533,27 +576,57 @@ var Sprites = (function () {
 
   /* ---------------- the goal shrine ---------------- */
 
-  function drawShrine(ctx, x, y, t, raised) {
-    // x,y = bottom-left of a 32x80 shrine
-    var top = y - 80;
-    ctx.fillStyle = '#e8dfc8'; ctx.fillRect(x + 4, top + 24, 24, 56);
-    ctx.fillStyle = '#c9bd9c'; ctx.fillRect(x + 4, top + 24, 24, 2);
-    ctx.fillStyle = '#b8a878'; ctx.fillRect(x, top + 72, 32, 8);
-    ctx.fillStyle = '#d9cfae'; ctx.fillRect(x + 8, top + 34, 16, 20);
-    ctx.fillStyle = '#5b3a6b'; ctx.fillRect(x + 10, top + 38, 12, 16);
-    // stepped tower
-    for (var i = 0; i < 4; i++) {
-      ctx.fillStyle = i % 2 ? '#f0e6cd' : '#e0d3b2';
-      ctx.fillRect(x + 6 + i * 2, top + 24 - i * 5 - 5, 20 - i * 4, 5);
+  /* The goal shrine: a 48x152 gopuram, anchored bottom-left. It is built
+     tall on purpose -- it is the last thing in the stage and has to read as
+     taller than the staircase that climbs up to it. */
+  function drawShrine(ctx, x, y, t, lit) {
+    var top = y - 152;
+    var band = ['#f0e6cd', '#e0d3b2'];
+
+    // plinth
+    ctx.fillStyle = '#b8a878'; ctx.fillRect(x, y - 10, 48, 10);
+    ctx.fillStyle = '#8d7f58'; ctx.fillRect(x, y - 2, 48, 2);
+    ctx.fillStyle = '#d9cfae'; ctx.fillRect(x + 2, y - 10, 44, 2);
+
+    // main body with its doorway
+    ctx.fillStyle = '#e8dfc8'; ctx.fillRect(x + 3, top + 84, 42, 58);
+    ctx.fillStyle = '#c9bd9c'; ctx.fillRect(x + 3, top + 84, 42, 3);
+    ctx.fillStyle = '#d3c7a4'; ctx.fillRect(x + 3, top + 84, 3, 58);
+    ctx.fillStyle = '#f2ead6'; ctx.fillRect(x + 42, top + 84, 3, 58);
+    // pilasters
+    ctx.fillStyle = '#cdbf9a';
+    ctx.fillRect(x + 9, top + 92, 3, 50);
+    ctx.fillRect(x + 36, top + 92, 3, 50);
+    // doorway
+    ctx.fillStyle = '#c9bd9c'; ctx.fillRect(x + 15, top + 100, 18, 42);
+    ctx.fillStyle = '#3a2246'; ctx.fillRect(x + 17, top + 104, 14, 38);
+    ctx.fillStyle = lit ? '#ffd042' : '#6b4a8a';
+    ctx.fillRect(x + 21, top + 112, 6, 12);            // lamp in the sanctum
+    if (lit) { ctx.fillStyle = '#fff2b0'; ctx.fillRect(x + 22, top + 114, 4, 6); }
+
+    // six receding tiers
+    for (var i = 0; i < 6; i++) {
+      var tw = 40 - i * 5, ty = top + 84 - (i + 1) * 12;
+      var tx = x + 24 - tw / 2;
+      ctx.fillStyle = band[i % 2];
+      ctx.fillRect(tx, ty, tw, 12);
+      ctx.fillStyle = '#c9bd9c';
+      ctx.fillRect(tx, ty + 10, tw, 2);
+      ctx.fillStyle = '#b3a47e';
+      for (var n = 0; n < 3; n++) ctx.fillRect(tx + 3 + n * (tw - 8) / 2, ty + 3, 3, 5);
     }
-    ctx.fillStyle = C.gold; ctx.fillRect(x + 14, top - 4, 4, 6);
-    ctx.fillStyle = C.goldL; ctx.fillRect(x + 15, top - 8, 2, 5);
-    // banner
-    var wave = Math.sin(t / 8) * 1.5;
-    ctx.fillStyle = C.red;
-    ctx.fillRect(x + 18, top + 30 + (raised ? 0 : 0) + Math.round(wave), 10, 8);
-    ctx.fillStyle = C.gold;
-    ctx.fillRect(x + 20, top + 32 + Math.round(wave), 6, 2);
+
+    // kalasha finial
+    ctx.fillStyle = '#e0d3b2'; ctx.fillRect(x + 18, top + 6, 12, 6);
+    ctx.fillStyle = C.gold;    ctx.fillRect(x + 20, top, 8, 7);
+    ctx.fillStyle = C.goldL;   ctx.fillRect(x + 23, top - 5, 2, 6);
+    ctx.fillStyle = C.gold;    ctx.fillRect(x + 22, top - 7, 4, 2);
+
+    // banner on a pole beside the tower
+    var wave = Math.round(Math.sin(t / 8) * 1.5);
+    ctx.fillStyle = '#8d7f58'; ctx.fillRect(x + 45, top + 30, 2, 60);
+    ctx.fillStyle = C.red;     ctx.fillRect(x + 47, top + 34 + wave, 12, 9);
+    ctx.fillStyle = C.gold;    ctx.fillRect(x + 49, top + 37 + wave, 8, 2);
   }
 
   /* ---------------- backdrops ---------------- */
@@ -561,6 +634,36 @@ var Sprites = (function () {
   function hash(n) { var s = Math.sin(n * 127.1) * 43758.5453; return s - Math.floor(s); }
 
   function background(ctx, theme, camX, t) {
+    if (theme === 'cave') {
+      // a baoli: tier on tier of stone arches, most of it lost in the dark
+      ctx.fillStyle = '#0b0a14';
+      ctx.fillRect(0, 0, 256, 240);
+      var off = (camX * 0.4) % 64;
+      for (var a = -1; a < 6; a++) {
+        var ax = a * 64 - off;
+        for (var row = 0; row < 3; row++) {
+          var ay = 40 + row * 46;
+          ctx.fillStyle = row === 0 ? '#1d1830' : (row === 1 ? '#181428' : '#131020');
+          ctx.fillRect(ax, ay, 56, 38);
+          ctx.fillStyle = '#0b0a14';
+          ctx.fillRect(ax + 8, ay + 12, 40, 26);
+          ctx.fillRect(ax + 12, ay + 6, 32, 8);
+          ctx.fillStyle = row === 0 ? '#2a2340' : '#1d1830';
+          ctx.fillRect(ax, ay, 56, 3);
+        }
+      }
+      // oil lamps set into the walls
+      for (var l = -1; l < 5; l++) {
+        var lx = l * 64 - off + 28;
+        var flick = ((t + l * 13) >> 3) % 3;
+        ctx.fillStyle = 'rgba(255,170,60,' + (0.05 + flick * 0.012) + ')';
+        ctx.fillRect(lx - 20, 74, 44, 44);
+        ctx.fillStyle = '#8a4a24'; ctx.fillRect(lx - 3, 96, 7, 3);
+        ctx.fillStyle = '#ffd042'; ctx.fillRect(lx - 1, 91 - (flick === 1 ? 1 : 0), 3, 5);
+        ctx.fillStyle = '#fff3c4'; ctx.fillRect(lx, 93, 1, 2);
+      }
+      return;
+    }
     if (theme === 'lanka') {
       var g = ctx.createLinearGradient(0, 0, 0, 240);
       g.addColorStop(0, '#160a1e'); g.addColorStop(0.6, '#3a1024'); g.addColorStop(1, '#6b1a1e');

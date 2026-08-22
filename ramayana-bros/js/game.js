@@ -477,6 +477,7 @@
     }
 
     var prevBottom = p.y + p.h;
+    p.prevBottom = prevBottom;      // for the stomp test, below
     p.x += p.vx;
     resolveX(p);
     p.y += p.vy;
@@ -804,7 +805,12 @@
         continue;
       }
 
-      var stomping = p.vy > 0 && (p.y + p.h) - e.y < 12;
+      /* A stomp is "coming down onto it", which for a tall enemy like the
+         golden deer means Rama's feet were clear of its head a frame ago.
+         Depth alone misjudges that: land on a 20px deer and the overlap
+         can exceed the threshold on the very first frame of contact. */
+      var stomping = p.vy > 0 &&
+        (p.prevBottom <= e.y + 5 || (p.y + p.h) - e.y < 12);
 
       if (e.type === 'ravana') {
         if (stomping) { damageBoss(e, p.dir); p.vy = -4.6 * TEMPO; }
@@ -1175,8 +1181,9 @@
         }
         var above = tileChar(x, y - 1);
         var nb = (tileChar(x - 1, y) === ch ? 1 : 0) | (above === ch ? 2 : 0);
+        // a stable per-tile variant, so a run of wall is not one stamp repeated
         Sprites.tile(ctx, px, py + bump, ch, G.theme, G.t,
-                     above !== ch && !isSolidChar(above), nb);
+                     above !== ch && !isSolidChar(above), nb, (x * 7 + y * 13) & 3);
       }
     }
     // loose coins

@@ -115,7 +115,7 @@ var Levels = (function () {
     g.set(24, 12, 'g');
     g.well(28, 11);                 // down to the stepwell
     g.pillar(34, 11);
-    g.set(40, 12, 'd');
+    g.coins(37, 10, 4);             // the pocket between the pillars
     g.pillar(42, 10);
     g.coins(46, 10, 3);
     g.set(50, 12, 'g');
@@ -212,8 +212,8 @@ var Levels = (function () {
 
     g.rect(66, 11, 4, 1, '=');
     g.coins(66, 10, 4);
-    g.rect(72, 9, 4, 1, '=');
-    g.coins(72, 8, 4);
+    g.rect(72, 10, 4, 1, '=');
+    g.coins(72, 9, 4);
 
     g.put(80, 9, 'BWB');                 // the Kodanda bow
     g.set(84, 12, 'g');
@@ -228,14 +228,14 @@ var Levels = (function () {
     g.rect(110, 11, 5, 1, '=');
     g.coins(110, 10, 4);
     g.set(115, 7, 'c');
-    g.rect(117, 9, 5, 1, '=');
-    g.coins(117, 8, 4);
+    g.rect(117, 10, 5, 1, '=');
+    g.coins(117, 9, 4);
 
     g.put(126, 9, 'B?BTB');
     g.set(131, 12, 'g');
     g.pillar(134, 10);
     g.coins(137, 10, 4);
-    g.set(140, 12, 'd');
+    g.coins(137, 11, 4);
     g.pillar(142, 11);
     g.put(145, 9, 'BB?BB');
     g.set(147, 5, '?');
@@ -297,7 +297,6 @@ var Levels = (function () {
     g.well(39, 11);                      // down to the stepwell
     g.put(42, 9, 'BWB');                 // bow, for anyone who missed it
     g.set(46, 12, 'g');
-    g.set(48, 12, 'g');
     g.set(50, 12, 'd');
     g.pillar(52, 10);
     g.coins(55, 10, 3);
@@ -308,8 +307,8 @@ var Levels = (function () {
     g.rect(66, 11, 4, 1, '=');
     g.coins(66, 10, 4);
     g.set(70, 7, 'c');
-    g.rect(72, 9, 4, 1, '=');
-    g.coins(72, 8, 4);
+    g.rect(72, 10, 4, 1, '=');
+    g.coins(72, 9, 4);
 
     g.put(80, 9, 'B?BTB');               // blessing before the hard run
     g.set(86, 12, 'g');

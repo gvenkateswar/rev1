@@ -139,6 +139,18 @@ invalidates a level.
 
 **Sprites** are plotted as rectangles on the 16px grid through a pen that
 mirrors horizontally, so each character is only ever drawn facing right.
+What makes them read as 16-bit rather than 8-bit is the colour work: every
+material is a five-step ramp from shadow to highlight instead of one flat
+tone, and each character carries a one-pixel keyline dilated from its own
+silhouette. Backdrops are four or five parallax layers with gradients,
+bloom and haze washing the far ones toward the sky colour.
+
+Sprites and tiles are drawn once into offscreen canvases and cached by
+every parameter that changes their appearance — pose, direction, frame,
+palette swap — so the outline pass and the shading cost nothing after the
+first frame that needs them. Anything time-varying is bucketed to a small
+range of phases before it reaches the key, so the cache stays bounded.
+Measured at a steady 60fps on all four themes.
 
 **Scenes** are just grids of rows, so a stepwell room loads through the
 same `loadScene()` as a whole stage. Going underground pushes the surface

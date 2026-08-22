@@ -127,6 +127,15 @@ the geometry rules the layouts obey — a held jump clears about 54px, so
 pillars are never more than three tiles tall and gaps never more than
 three tiles wide.
 
+**The camera** tracks Rama both ways, so walking back scrolls back — the
+original only ever scrolled forward, which was a hardware limitation
+rather than a design. It also leads: he rides left of centre heading east
+and right of centre heading west, so the ground he is walking into is on
+screen. Only that lead eases when he turns; the follow itself is exact, so
+the view neither lags behind him nor drifts once he stops, and the lead is
+chosen by which way he is actually moving rather than which way he faces —
+tapping a direction on the spot leaves the framing alone.
+
 **Physics** runs on a fixed 60-tick timestep that is independent of the
 display: the same 60 ticks a second on a 60Hz panel and on a 240Hz one.
 There are three gravities, as the original had: light while the jump

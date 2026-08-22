@@ -227,7 +227,8 @@
     levelIndex: 0, level: null,
     tiles: [], w: 0, theme: 'forest',
     player: null, enemies: [], items: [], shots: [], fx: [], bumps: [],
-    camX: 0, goal: null, sita: null, boss: null, bossDefeated: false, surface: null,
+    camX: 0, camAim: 110, goal: null, sita: null, boss: null,
+    bossDefeated: false, surface: null,
     lives: 3, score: 0, coins: 0, time: 0, timeAcc: 0,
     shake: 0, hurry: false, best: 0, ending: 0
   };
@@ -267,7 +268,8 @@
     G.w = rows[0].length;
     G.tiles = rows.map(function (r) { return r.split(''); });
     G.enemies = []; G.items = []; G.shots = []; G.fx = []; G.bumps = [];
-    G.goal = null; G.sita = null; G.boss = null; G.camX = 0;
+    G.goal = null; G.sita = null; G.boss = null;
+    G.camX = 0; G.camAim = LEAD_AHEAD;
 
     for (var y = 0; y < ROWS; y++) {
       for (var x = 0; x < G.w; x++) {
@@ -325,6 +327,8 @@
     p.x = room.startX * TILE;
     p.y = groundYAt(room.startX) - p.h;
     p.vx = 0; p.vy = 0;
+    p.dir = 1;
+    snapCamera(p);
     Sound.music.play('cave');
   }
 
@@ -338,7 +342,8 @@
     p.x = s.exitX * TILE;
     p.y = groundYAt(s.exitX) - p.h;
     p.vx = 0; p.vy = 0;
-    G.camX = Math.max(0, Math.min(p.x + p.w / 2 - 110, G.w * TILE - VW));
+    p.dir = 1;
+    snapCamera(p);
     Sound.music.play(G.level.music);
   }
 
@@ -636,6 +641,32 @@
         if (wantsHead) e.headHit = { x: best, y: cy };
       }
     }
+  }
+
+  /* ============================ camera ============================
+   * The camera tracks Rama both ways, so walking back scrolls back. It
+   * also leads: he rides left of centre heading east and right of centre
+   * heading west, which puts the ground he is walking into on screen.
+   * Only that lead eases when he turns -- the follow itself is exact, so
+   * the view never lags behind or drifts once he stops.               */
+
+  var LEAD_AHEAD = 110, LEAD_BEHIND = 146, LEAD_EASE = 0.035;
+
+  function updateCamera(p) {
+    /* The lead follows where Rama is actually going, not where he is
+       facing: standing still holds the framing, so tapping a direction
+       on the spot never sets the view drifting. */
+    var want = G.camAim;
+    if (p.vx > 0.15) want = LEAD_AHEAD;
+    else if (p.vx < -0.15) want = LEAD_BEHIND;
+    G.camAim += (want - G.camAim) * LEAD_EASE;
+    G.camX = Math.max(0, Math.min(p.x + p.w / 2 - G.camAim, G.w * TILE - VW));
+  }
+
+  /* Frames Rama immediately, for a fresh scene or a climb out of a well. */
+  function snapCamera(p) {
+    G.camAim = p.dir < 0 ? LEAD_BEHIND : LEAD_AHEAD;
+    G.camX = Math.max(0, Math.min(p.x + p.w / 2 - G.camAim, G.w * TILE - VW));
   }
 
   function overlaps(a, b) {
@@ -1076,10 +1107,7 @@
     if (G.boss && !G.bossDefeated && !G.boss.dying && p.star === 0 &&
         p.x > G.boss.x - 200) Sound.music.play('boss');
 
-    // camera: follows, and like the original never scrolls back
-    var target = p.x + p.w / 2 - 110;
-    if (target > G.camX) G.camX = target;
-    G.camX = Math.max(0, Math.min(G.camX, G.w * TILE - VW));
+    updateCamera(p);
 
     if (G.shake > 0) G.shake--;
 
@@ -1101,9 +1129,7 @@
     if (G.stateT < 120) {
       p.autoWalk = 4;
       updatePlayer(p);
-      var target = p.x + p.w / 2 - 110;
-      if (target > G.camX) G.camX = target;
-      G.camX = Math.max(0, Math.min(G.camX, G.w * TILE - VW));
+      updateCamera(p);
       if (G.goal && p.x > G.goal.x + 12) p.hidden = true;
     } else if (G.time > 0 && G.stateT % 2 === 0) {
       var step = Math.min(G.time, 5);

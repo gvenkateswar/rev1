@@ -1,11 +1,14 @@
 """Pipeline orchestration: file in, labelled transcript out.
 
-    extract audio -> Whisper -> diarize -> align speakers -> fuse emotion
+    extract audio -> language timeline -> Whisper -> diarize
+                  -> identify speakers -> align -> fuse emotion
 
-The interesting glue is :func:`assign_speakers`, which uses Whisper's
+Two stages carry the interesting logic. :func:`assign_speakers` uses Whisper's
 word-level timestamps to *split* a transcript segment when the speaker changes
 mid-sentence, so a back-and-forth that Whisper merged into one segment still
-comes out as separate speaker turns.
+comes out as separate speaker turns. The identification stage then replaces
+anonymous "Speaker N" labels with real names recognised from the voiceprint
+store, so the same person keeps their name across recordings.
 """
 from __future__ import annotations
 
@@ -17,7 +20,9 @@ from typing import Callable
 
 from . import audio as _audio
 from .diarize import Turn, diarize
-from .transcribe import RawSegment, Word, transcribe
+from .language import LanguageSpan, detect_language_timeline, language_for
+from .language import summarize as _summarize_languages
+from .transcribe import RawSegment, Word, load_model, transcribe
 
 ProgressCb = Callable[[str, float], None]
 
@@ -28,6 +33,9 @@ class TranscriptSegment:
     end: float
     speaker: str
     text: str
+    language: str = "en"
+    confidence: float = 1.0     # mean word probability, 0..1
+    known_speaker: bool = False  # True when matched to an enrolled speaker
     emotion: str = "neutral"
     emotion_score: float = 0.0
     emotion_scores: dict[str, float] = field(default_factory=dict)
@@ -41,7 +49,10 @@ class TranscriptSegment:
             "start": round(self.start, 3),
             "end": round(self.end, 3),
             "speaker": self.speaker,
+            "known_speaker": self.known_speaker,
             "text": self.text,
+            "language": self.language,
+            "confidence": round(self.confidence, 4),
             "emotion": self.emotion,
             "emotion_score": round(self.emotion_score, 4),
             "emotion_scores": {k: round(v, 4) for k, v in self.emotion_scores.items()},
@@ -53,16 +64,30 @@ class TranscriptSegment:
 @dataclass
 class TranscriptResult:
     segments: list[TranscriptSegment]
-    language: str
+    language: str                       # dominant language of the recording
     speakers: list[str]
     source: str
     timings: dict[str, float] = field(default_factory=dict)  # stage -> seconds
+    languages: dict[str, float] = field(default_factory=dict)  # lang -> seconds
+    identified: dict[str, str] = field(default_factory=dict)   # label -> name
+    unmatched: dict[str, str] = field(default_factory=dict)    # label -> reason
+    # Final speaker label -> identify.ClusterVoiceprint, so a caller can enroll
+    # a speaker straight after a run without re-diarizing the audio (which the
+    # pipeline deletes on the way out). Not serialized: it is biometric data.
+    voiceprints: dict = field(default_factory=dict, repr=False)
+
+    @property
+    def is_multilingual(self) -> bool:
+        return len(self.languages) > 1
 
     def to_dict(self) -> dict:
         return {
             "source": self.source,
             "language": self.language,
+            "languages": {k: round(v, 2) for k, v in self.languages.items()},
             "speakers": self.speakers,
+            "identified": self.identified,
+            "unmatched": self.unmatched,
             "timings": {k: round(v, 3) for k, v in self.timings.items()},
             "segments": [s.to_dict() for s in self.segments],
         }
@@ -86,16 +111,26 @@ def transcribe_file(
     *,
     whisper_model: str = "base",
     language: str | None = None,
+    multilingual: bool = True,
     diarization_backend: str = "cluster",
     num_speakers: int | None = None,
     hf_token: str | None = None,
+    identify_speakers: bool = True,
+    speaker_db: str | None = None,
+    match_threshold: float | None = None,
+    match_margin: float | None = None,
     detect_emotion: bool = True,
     audio_weight: float = 0.5,
     use_audio_emotion: bool = True,
     use_text_emotion: bool = True,
     progress: ProgressCb | None = None,
 ) -> TranscriptResult:
-    """Run the full pipeline on *src_path* and return a TranscriptResult."""
+    """Run the full pipeline on *src_path* and return a TranscriptResult.
+
+    *multilingual* allows the language to change mid-recording. *language*
+    pins one language and disables that. *identify_speakers* matches diarized
+    voices against the persistent speaker store to recover real names.
+    """
     progress = progress or _noop
     hf_token = hf_token or os.environ.get("HF_TOKEN")
     timings: dict[str, float] = {}
@@ -104,13 +139,27 @@ def transcribe_file(
     with _timed(timings, "extract"):
         wav_path = _audio.extract_audio(src_path)
     try:
+        # Load once and share: the language probe and the decode use the same
+        # model, and loading it twice would double the slowest startup cost.
+        model = load_model(whisper_model)
+
+        spans: list[LanguageSpan] = []
+        if language is None and multilingual:
+            progress("Detecting languages", 0.10)
+            with _timed(timings, "language"):
+                spans = detect_language_timeline(wav_path, model)
+
         progress("Transcribing", 0.15)
         with _timed(timings, "transcribe"):
             raw_segments, lang = transcribe(
-                wav_path, model_name=whisper_model, language=language
+                wav_path,
+                model_name=whisper_model,
+                language=language,
+                multilingual=multilingual,
+                model=model,
             )
 
-        progress("Identifying speakers", 0.55)
+        progress("Separating speakers", 0.55)
         with _timed(timings, "diarize"):
             turns = diarize(
                 wav_path,
@@ -119,28 +168,114 @@ def transcribe_file(
                 hf_token=hf_token,
             )
 
+        identified: dict[str, str] = {}
+        unmatched: dict[str, str] = {}
+        voiceprints: dict = {}
+        if identify_speakers and turns:
+            progress("Recognising speakers", 0.65)
+            with _timed(timings, "identify"):
+                identified, unmatched, voiceprints = _identify_speakers(
+                    wav_path, turns, speaker_db, match_threshold, match_margin,
+                )
+
         segments = assign_speakers(raw_segments, turns)
+        _attach_languages(segments, raw_segments, spans, lang)
+        for seg in segments:
+            seg.known_speaker = seg.speaker in identified.values()
 
         if detect_emotion and segments:
-            progress("Analyzing emotion", 0.75)
+            progress("Analyzing emotion", 0.80)
             with _timed(timings, "emotion"):
                 _attach_emotions(
                     wav_path, segments, audio_weight,
                     use_audio_emotion, use_text_emotion, progress,
                 )
 
+        languages = _summarize_languages(spans) if spans else {lang: 0.0}
+        # Report the language spoken for the longest, not merely the one Whisper
+        # happened to detect first -- on a file that opens with a short greeting
+        # in another language those differ, and the summary should say what the
+        # recording is mostly in.
+        dominant = next(iter(languages), lang)
         speakers = _ordered_speakers(segments)
         timings["total"] = sum(v for k, v in timings.items() if k != "total")
         progress("Done", 1.0)
         return TranscriptResult(
-            segments=segments, language=lang, speakers=speakers,
-            source=src_path, timings=timings,
+            segments=segments, language=dominant, speakers=speakers,
+            source=src_path, timings=timings, languages=languages,
+            identified=identified, unmatched=unmatched, voiceprints=voiceprints,
         )
     finally:
         try:
             os.unlink(wav_path)
         except OSError:
             pass
+
+
+def _identify_speakers(
+    wav_path: str,
+    turns: list[Turn],
+    speaker_db: str | None,
+    threshold: float | None,
+    margin: float | None,
+) -> tuple[dict[str, str], dict[str, str], dict]:
+    """Rename turns to known speakers.
+
+    Returns (matched, unmatched-reasons, voiceprints-by-final-label).
+    """
+    from .identify import (
+        DEFAULT_MARGIN, DEFAULT_THRESHOLD, apply_matches,
+        extract_voiceprints, match_speakers,
+    )
+    from .speakerdb import SpeakerStore
+
+    prints = extract_voiceprints(wav_path, turns)
+    if not prints:
+        return {}, {}, {}
+
+    with SpeakerStore(speaker_db) as store:
+        known = store.all_speakers()
+
+    matches = match_speakers(
+        prints, known,
+        threshold=DEFAULT_THRESHOLD if threshold is None else threshold,
+        margin=DEFAULT_MARGIN if margin is None else margin,
+    )
+    _, mapping = apply_matches(matches, turns)
+    reasons = {m.label: m.reason for m in matches if not m.matched}
+    # Key by the label the transcript actually shows, so callers can enroll by
+    # what they read rather than by the pre-rename diarization label.
+    by_final = {mapping.get(p.label, p.label): p for p in prints}
+    return mapping, reasons, by_final
+
+
+def _attach_languages(
+    segments: list[TranscriptSegment],
+    raw_segments: list[RawSegment],
+    spans: list[LanguageSpan],
+    default: str,
+) -> None:
+    """Label each segment with its language and Whisper's confidence.
+
+    Speaker splitting means one raw segment can become several transcript
+    segments, so confidence is carried by time overlap rather than by index.
+    """
+    for seg in segments:
+        seg.language = language_for(seg.start, seg.end, spans, default=default)
+        source = _overlapping_raw(seg, raw_segments)
+        if source is not None:
+            seg.confidence = source.confidence
+
+
+def _overlapping_raw(
+    seg: TranscriptSegment, raw_segments: list[RawSegment]
+) -> RawSegment | None:
+    best, best_overlap = None, 0.0
+    for raw in raw_segments:
+        overlap = min(seg.end, raw.end) - max(seg.start, raw.start)
+        if overlap > best_overlap:
+            best, best_overlap = raw, overlap
+    return best
 
 
 # --------------------------------------------------------------------------- #
@@ -285,7 +420,10 @@ def _attach_emotions(
         for seg in segments
     ]
     # One batched pass over both models instead of per-segment inference.
-    results = analyzer.analyze_batch(items)
+    # Languages gate the English-only text model per segment.
+    results = analyzer.analyze_batch(
+        items, languages=[seg.language for seg in segments]
+    )
     for seg, res in zip(segments, results):
         seg.emotion = res.label
         seg.emotion_score = res.score

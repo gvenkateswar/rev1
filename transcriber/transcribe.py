@@ -11,6 +11,7 @@ process, this makes every run after the first skip model loading entirely.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 # (name, device, compute_type) -> WhisperModel
@@ -22,6 +23,7 @@ class Word:
     start: float
     end: float
     text: str
+    probability: float = 1.0
 
 
 @dataclass
@@ -30,6 +32,20 @@ class RawSegment:
     end: float
     text: str
     words: list[Word] = field(default_factory=list)
+    avg_logprob: float = 0.0
+    no_speech_prob: float = 0.0
+
+    @property
+    def confidence(self) -> float:
+        """Segment confidence in 0..1, from the mean word probability.
+
+        Word probabilities are the honest signal when we have them. Falling
+        back on avg_logprob (a per-token log probability, typically -1..0)
+        keeps a usable number when word timestamps are off.
+        """
+        if self.words:
+            return sum(w.probability for w in self.words) / len(self.words)
+        return min(1.0, max(0.0, math.exp(self.avg_logprob)))
 
 
 def _auto_device(
@@ -79,11 +95,19 @@ def transcribe(
     word_timestamps: bool = True,
     vad_filter: bool = True,
     beam_size: int = 5,
+    multilingual: bool = True,
     model=None,
 ) -> tuple[list[RawSegment], str]:
     """Transcribe *wav_path*. Returns (segments, detected_language).
 
     *vad_filter* drops silence before decoding (big speedup on real audio).
+
+    *multilingual* re-detects the language on every 30s decode window and swaps
+    the tokenizer, so a speaker switching language mid-recording is transcribed
+    in the language they actually spoke instead of being force-decoded (and
+    often mistranslated) into the first language detected. It is ignored when
+    *language* pins a single language, and by English-only models.
+
     Pass a preloaded *model* to skip the cache lookup entirely.
     """
     model = model or load_model(model_name)
@@ -94,12 +118,19 @@ def transcribe(
         word_timestamps=word_timestamps,
         vad_filter=vad_filter,
         beam_size=beam_size,
+        # Pinning a language is an explicit instruction to stay in it.
+        multilingual=multilingual and language is None,
     )
 
     segments: list[RawSegment] = []
     for seg in seg_iter:  # generator — consuming it runs the decode
         words = [
-            Word(start=float(w.start), end=float(w.end), text=w.word)
+            Word(
+                start=float(w.start),
+                end=float(w.end),
+                text=w.word,
+                probability=float(getattr(w, "probability", 1.0)),
+            )
             for w in (seg.words or [])
             if w.start is not None and w.end is not None
         ]
@@ -109,6 +140,8 @@ def transcribe(
                 end=float(seg.end),
                 text=seg.text.strip(),
                 words=words,
+                avg_logprob=float(getattr(seg, "avg_logprob", 0.0)),
+                no_speech_prob=float(getattr(seg, "no_speech_prob", 0.0)),
             )
         )
     return segments, info.language

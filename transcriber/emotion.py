@@ -12,6 +12,7 @@ breakdown so the UI can show *why* (e.g. "tone: angry / words: joy -> excited").
 """
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -46,7 +47,10 @@ _EMOJI = {
 # (ehcalabres/wav2vec2...) uses a custom head the generic pipeline mis-loads,
 # which collapsed every prediction toward "neutral".
 AUDIO_MODEL = "superb/hubert-large-superb-er"
+# English-only. Fed non-English text it does not fail -- it returns confident
+# nonsense -- so callers must gate it on the segment's detected language.
 TEXT_MODEL = "j-hartmann/emotion-english-distilroberta-base"
+TEXT_MODEL_LANGUAGE = "en"
 
 # wav2vec2 needs a few frames; pad shorter slices so batching never crashes.
 _MIN_AUDIO_SAMPLES = 16_000 // 2  # 0.5 s at 16 kHz
@@ -129,20 +133,29 @@ class EmotionAnalyzer:
             return -1
 
     # -- scoring ----------------------------------------------------------- #
-    def analyze(self, samples: np.ndarray, sr: int, text: str) -> EmotionResult:
+    def analyze(
+        self, samples: np.ndarray, sr: int, text: str, language: str | None = None
+    ) -> EmotionResult:
         """Score a single segment (thin wrapper over the batched path)."""
-        return self.analyze_batch([(samples, sr, text)])[0]
+        return self.analyze_batch(
+            [(samples, sr, text)], languages=[language] if language else None
+        )[0]
 
     def analyze_batch(
         self,
         items: list[tuple[np.ndarray, int, str]],
         batch_size: int = 8,
+        languages: list[str] | None = None,
     ) -> list[EmotionResult]:
         """Score many (samples, sr, text) segments at once.
 
         Runs each model over the whole list in mini-batches (one GPU/CPU
         dispatch per batch instead of per segment), then fuses per item. This
         is the hot path the pipeline uses.
+
+        *languages* is the per-item detected language. Items in a language the
+        text model does not speak are scored on tone alone, because that model
+        returns a confident wrong answer on foreign text rather than declining.
         """
         n = len(items)
         if n == 0:
@@ -163,11 +176,28 @@ class EmotionAnalyzer:
                 for i, preds in enumerate(raw):
                     audio_scores[i] = _remap(preds, channel="audio")
                     audio_raw[i] = _raw_top(preds)
-            except Exception:  # pragma: no cover - degrade to text-only
-                pass
+            except Exception as exc:  # degrade to text-only, but say so
+                # Not silent: with a non-English segment the text channel is
+                # already off, so swallowing this would leave every segment
+                # "neutral" with nothing to explain why.
+                note = f"audio emotion unavailable: {type(exc).__name__}: {exc}"
+                warnings.warn(note, RuntimeWarning, stacklevel=2)
+                for i in range(n):
+                    audio_raw[i] = note
 
         if self.use_text:
-            idx = [i for i, (_, _, t) in enumerate(items) if (t or "").strip()]
+            idx = []
+            for i, (_, _, t) in enumerate(items):
+                if not (t or "").strip():
+                    continue
+                lang = (languages[i] if languages and i < len(languages) else None)
+                if lang and lang != TEXT_MODEL_LANGUAGE:
+                    text_raw[i] = (
+                        f"skipped: {TEXT_MODEL_LANGUAGE}-only model, "
+                        f"segment is {lang}"
+                    )
+                    continue
+                idx.append(i)
             if idx:
                 raw = self._ensure_text()(
                     [items[i][2].strip() for i in idx],

@@ -179,6 +179,17 @@ quotes the original exception, and says that reinstalling will not help.
 The original exception is always chained (`raise ... from exc`). The GUI shows
 only `str(exc)`, so it also prints the traceback to the terminal.
 
+## Build identity
+
+Both UIs show `version (commit)`, with `modified` appended when the working
+tree differs from that commit. A partly-applied pull leaves a new module
+beside an old one and surfaces as an ImportError with no obvious cause; the
+marker makes that visible before it is mistaken for a code bug.
+
+The lookup shells out to git, so it is cached -- the Streamlit script that
+renders it re-runs on every interaction. A `git status` that cannot be read
+counts as modified: not knowing is not the same as knowing it is clean.
+
 ## Progress reporting
 
 Diarization dominates the runtime: on CPU, pyannote runs slower than real time,

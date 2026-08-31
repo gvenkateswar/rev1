@@ -320,6 +320,29 @@ predicted and which channel is driving the result:
 
 ## Troubleshooting
 
+### Which version am I running?
+
+The GUI prints it under the title; the CLI has `--version`:
+
+```
+$ python -m transcriber --version
+transcriber 0.3.0 (a8db1cd, modified)
+```
+
+`modified` means the working tree differs from that commit — a local edit, or
+a pull that did not finish. That is worth checking first when a symptom makes
+no sense against the code you think you have, because a half-updated checkout
+can leave a new module beside an old one:
+
+```
+ImportError: cannot import name 'renderings' from 'transcriber.output'
+```
+
+That one is not a code bug; it is one file updated and another not. `git status`
+says which, and `git pull` fixes it once whatever blocked it is resolved.
+
+Outside a git checkout the commit is simply omitted.
+
 ### "zsh: command not found: python" — then it segfaults
 
 These are the same problem: **the venv is not activated.**

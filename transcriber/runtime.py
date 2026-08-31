@@ -21,6 +21,7 @@ import os
 import platform
 import subprocess
 import sys
+from pathlib import Path
 
 # Intel's own docs warn this "may cause crashes or silently produce incorrect
 # results". That warning is aimed at mixing *different* OpenMP runtimes (GNU
@@ -166,3 +167,68 @@ def announce_environment(stream=None) -> list[str]:
         stream.flush()
         _ANNOUNCED = True
     return notes
+
+
+# The running code and the code you think you edited are not always the same
+# file -- a half-finished pull leaves a new module beside an old one, and the
+# symptom is an ImportError with no obvious cause. Showing the commit (and
+# whether the tree is dirty) in the UI makes that visible before it bites.
+_UNSET = object()
+_REVISION = _UNSET      # cached: (short commit, dirty) or None
+
+
+def git_revision(repo: Path | None = None) -> tuple[str, bool] | None:
+    """(short commit, tree-is-modified), or None outside a git checkout.
+
+    Cached: this shells out twice, and the Streamlit script that shows it
+    re-runs on every interaction.
+    """
+    global _REVISION
+    if _REVISION is not _UNSET:
+        return _REVISION
+    _REVISION = _read_git_revision(repo or Path(__file__).resolve().parent)
+    return _REVISION
+
+
+def _read_git_revision(repo: Path) -> tuple[str, bool] | None:
+    commit = _git(repo, "rev-parse", "--short", "HEAD")
+    if commit is None:
+        return None
+    # An empty porcelain listing means clean. A *failed* status call is not
+    # evidence of cleanliness, so treat it as unknown-and-therefore-dirty
+    # rather than quietly claiming the tree matches the commit.
+    status = _git(repo, "status", "--porcelain")
+    return commit, status is None or bool(status)
+
+
+def _git(repo: Path, *args: str) -> str | None:
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(repo), *args],
+            capture_output=True, text=True, timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None                 # no git, or it hung
+    if proc.returncode != 0:
+        return None                 # not a checkout, or no commits yet
+    return proc.stdout.strip()
+
+
+def build_id() -> str:
+    """Version and commit of the code that is actually running.
+
+    e.g. "0.3.0 (a8db1cd)", or "0.3.0 (a8db1cd, modified)" when the working
+    tree differs from that commit, or bare "0.3.0" outside a checkout.
+    """
+    # Imported here, not at module scope: the package imports this module
+    # first, so a top-level import would be circular.
+    from . import __version__
+
+    return format_build(__version__, git_revision())
+
+
+def format_build(version: str, revision: tuple[str, bool] | None) -> str:
+    if revision is None:
+        return version
+    commit, modified = revision
+    return f"{version} ({commit}{', modified' if modified else ''})"

@@ -23,7 +23,7 @@ import streamlit as st
 # Either path runs transcriber/__init__.py, which sets the OpenMP flag before
 # torch or ctranslate2 can load. Keep that import ahead of anything heavier.
 try:
-    from .runtime import announce_environment
+    from .runtime import announce_environment, build_id
     from .core import transcribe_file
     from .emotion import _EMOJI
     from .identify import DEFAULT_MIN_ENROLL_SECONDS
@@ -31,7 +31,7 @@ try:
     from .speakerdb import SpeakerStore, default_db_path
 except ImportError:
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from transcriber.runtime import announce_environment
+    from transcriber.runtime import announce_environment, build_id
     from transcriber.core import transcribe_file
     from transcriber.emotion import _EMOJI
     from transcriber.identify import DEFAULT_MIN_ENROLL_SECONDS
@@ -64,6 +64,9 @@ def main() -> None:
         "Transcribe audio/video, tell speakers apart, and read each segment's "
         "emotion — fused from voice tone *and* what was said."
     )
+    # Which code is actually running. "modified" means the working tree differs from
+    # the commit, which is worth knowing before reporting a bug against it.
+    st.caption(f"v{build_id()}")
 
     # Also to stderr: when the environment is bad enough to crash the process,
     # the browser never renders the result and the terminal is the only place

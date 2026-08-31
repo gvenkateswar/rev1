@@ -319,3 +319,73 @@ def test_rosetta_is_described_as_a_crash_not_a_slowdown(monkeypatch):
     [note] = runtime.environment_warnings()
     assert "CRASH" in note
     assert "arm64" in note
+
+
+# --------------------------------------------------------------------------- #
+# build_id(): which code is actually running
+# --------------------------------------------------------------------------- #
+def test_a_clean_checkout_shows_version_and_commit():
+    assert runtime.format_build("0.3.0", ("a8db1cd", False)) == "0.3.0 (a8db1cd)"
+
+
+def test_a_modified_tree_says_so():
+    """The half-pulled checkout that breaks imports looks exactly like this."""
+    assert runtime.format_build("0.3.0", ("a8db1cd", True)) == \
+        "0.3.0 (a8db1cd, modified)"
+
+
+def test_outside_a_checkout_the_version_stands_alone():
+    assert runtime.format_build("0.3.0", None) == "0.3.0"
+
+
+def test_the_revision_is_read_from_the_repo(monkeypatch, tmp_path):
+    monkeypatch.setattr(runtime, "_REVISION", runtime._UNSET)
+    monkeypatch.setattr(runtime, "_git", lambda repo, *args:
+                        "deadbee" if args[0] == "rev-parse" else "")
+    assert runtime.git_revision(tmp_path) == ("deadbee", False)
+
+
+def test_a_dirty_tree_is_detected_from_porcelain_output(monkeypatch, tmp_path):
+    monkeypatch.setattr(runtime, "_REVISION", runtime._UNSET)
+    monkeypatch.setattr(runtime, "_git", lambda repo, *args:
+                        "deadbee" if args[0] == "rev-parse" else " M output.py")
+    assert runtime.git_revision(tmp_path) == ("deadbee", True)
+
+
+def test_an_unreadable_status_is_reported_as_modified(monkeypatch, tmp_path):
+    """Not knowing is not the same as knowing it is clean."""
+    monkeypatch.setattr(runtime, "_REVISION", runtime._UNSET)
+    monkeypatch.setattr(runtime, "_git", lambda repo, *args:
+                        "deadbee" if args[0] == "rev-parse" else None)
+    assert runtime.git_revision(tmp_path) == ("deadbee", True)
+
+
+def test_no_git_at_all_is_not_an_error(monkeypatch, tmp_path):
+    monkeypatch.setattr(runtime, "_REVISION", runtime._UNSET)
+    monkeypatch.setattr(runtime, "_git", lambda repo, *args: None)
+    assert runtime.git_revision(tmp_path) is None
+
+
+def test_a_missing_git_binary_is_not_an_error(tmp_path, monkeypatch):
+    def no_git(*a, **k):
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr(runtime.subprocess, "run", no_git)
+    assert runtime._git(tmp_path, "rev-parse") is None
+
+
+def test_the_revision_is_looked_up_only_once(monkeypatch, tmp_path):
+    """It shells out twice, and the Streamlit script showing it re-runs a lot."""
+    monkeypatch.setattr(runtime, "_REVISION", runtime._UNSET)
+    calls = []
+    monkeypatch.setattr(runtime, "_read_git_revision",
+                        lambda repo: calls.append(repo) or ("abc1234", False))
+    runtime.git_revision(tmp_path)
+    runtime.git_revision(tmp_path)
+    assert len(calls) == 1
+
+
+def test_build_id_names_this_package_version():
+    import transcriber
+
+    assert runtime.build_id().startswith(transcriber.__version__)

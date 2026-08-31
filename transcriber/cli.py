@@ -14,7 +14,7 @@ import time
 
 from .core import transcribe_file
 from .output import render, to_summary
-from .runtime import announce_environment
+from .runtime import announce_environment, build_id
 
 
 def _progress(stage: str, frac: float) -> None:
@@ -32,6 +32,8 @@ def build_parser() -> argparse.ArgumentParser:
                     "fused audio+text emotion detection.",
     )
     p.add_argument("input", help="Path to an audio or video file.")
+    p.add_argument("--version", action="version", version=f"transcriber {build_id()}",
+                   help="Show the version and the commit it was built from.")
     p.add_argument("-o", "--output", help="Write result here (default: stdout).")
     p.add_argument("-f", "--format", default="txt",
                    choices=["txt", "json", "srt", "vtt"],

@@ -53,6 +53,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-multilingual", action="store_true",
                    help="Decode the whole file in one auto-detected language "
                         "instead of allowing the language to change mid-file.")
+    p.add_argument("--langid", default="whisper",
+                   choices=["whisper", "speechbrain"],
+                   help="Which detector decides the language. 'whisper' is "
+                        "its own built-in one. 'speechbrain' is VoxLingua107, "
+                        "trained only for language ID and independent of "
+                        "Whisper's decoder, so it can disagree with a wrong "
+                        "transcript instead of agreeing with it. Needs "
+                        "`pip install speechbrain` and downloads a model on "
+                        "first use.")
     p.add_argument("--language-alias", action="append", metavar="FROM=TO",
                    default=None,
                    help="Treat one detected language as another, e.g. "
@@ -120,6 +129,7 @@ def main(argv: list[str] | None = None) -> int:
             language=args.language,
             multilingual=not args.no_multilingual,
             language_aliases=parse_aliases(args.language_alias),
+            language_detector=args.langid,
             transliterate=not args.no_transliterate,
             translate=not args.no_translate,
             # Naming a speaker needs their voiceprint, which only the

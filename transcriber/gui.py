@@ -103,6 +103,18 @@ def main() -> None:
                  "conversation transcribes correctly throughout. Ignored when "
                  "a language is pinned above.",
         )
+        langid = st.radio(
+            "Language detector", ["whisper", "speechbrain"],
+            captions=["Whisper's built-in one",
+                      "VoxLingua107 — independent second opinion"],
+            help="Whisper's detector reads the same encoder that decides the "
+                 "words, so when it picks the wrong language it tends to be "
+                 "wrong in a way that agrees with the wrong transcript. "
+                 "VoxLingua107 is trained only to identify the spoken "
+                 "language and knows nothing about Whisper, so it can "
+                 "disagree. Needs `pip install speechbrain`; downloads a "
+                 "model the first time.",
+        )
         aliases_raw = st.text_input(
             "Treat one language as another", value="",
             placeholder="ur=hi",
@@ -201,8 +213,8 @@ def main() -> None:
             st.error(str(exc))
             return
         _run(src, model, language, multilingual, transliterate, translate,
-             aliases, backend, hf_token, num_speakers, identify, threshold,
-             detect_emotion, source, audio_weight)
+             aliases, langid, backend, hf_token, num_speakers, identify,
+             threshold, detect_emotion, source, audio_weight)
 
     # Rendered outside the button so it survives the rerun that naming causes.
     if st.session_state.get("result") is not None:
@@ -254,7 +266,7 @@ def _resolve_source(uploaded, local_path: str) -> str | None:
 
 
 def _run(src, model, language, multilingual, transliterate, translate,
-         aliases, backend, hf_token, num_speakers,
+         aliases, langid, backend, hf_token, num_speakers,
          identify, threshold, detect_emotion, source, audio_weight) -> None:
     # Drop the previous run's result before starting. Streamlit renders the
     # results block below this one, so leaving it would show a finished
@@ -279,6 +291,7 @@ def _run(src, model, language, multilingual, transliterate, translate,
             transliterate=transliterate,
             translate=translate,
             language_aliases=aliases,
+            language_detector=langid,
             identify_speakers=identify,
             match_threshold=threshold,
             diarization_backend=backend,

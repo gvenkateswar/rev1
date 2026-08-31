@@ -25,8 +25,9 @@ from .credentials import resolve_hf_token
 from .diarize import Turn, diarize
 from .language import (
     LanguageSpan, apply_aliases, describe_spans, detect_language_timeline,
-    detect_one_language, language_for,
+    language_for,
 )
+from .langid import make_detector
 from .language import summarize as _summarize_languages
 from .transcribe import (
     RawSegment, Word, decode_chunk, load_model, transcribe,
@@ -179,6 +180,7 @@ def transcribe_file(
     transliterate: bool = True,
     translate: bool = True,
     language_aliases: dict[str, str] | None = None,
+    language_detector: str = "whisper",
     detect_emotion: bool = True,
     audio_weight: float = 0.5,
     use_audio_emotion: bool = True,
@@ -220,18 +222,21 @@ def transcribe_file(
         # Load once and share: the language probe and the decode use the same
         # model, and loading it twice would double the slowest startup cost.
         model = load_model(whisper_model)
+        detector = make_detector(language_detector, model)
 
         spans: list[LanguageSpan] = []
         if language is None and multilingual:
             progress("Detecting languages", 0.10)
             with _timed(timings, "language"):
-                spans = detect_language_timeline(wav_path, model)
+                spans = detect_language_timeline(
+                    wav_path, model, detector=detector)
             for span in spans:
                 span.language = apply_aliases(span.language, language_aliases)
             # The spans decide both what each stretch is labelled and how the
             # decode is chunked, so when the transcript looks wrong this is
             # the first thing worth seeing. It is one short line.
-            _log("languages: " + (describe_spans(spans) or "none detected"))
+            _log(f"languages ({detector.name}): "
+                 + (describe_spans(spans) or "none detected"))
 
         progress("Transcribing", 0.15)
         with _timed(timings, "transcribe"):
@@ -285,7 +290,8 @@ def transcribe_file(
             progress("Filling gaps", 0.72)
             with _timed(timings, "gaps"):
                 segments = _fill_untranscribed_gaps(
-                    wav_path, segments, turns, model, lang, language_aliases)
+                    wav_path, segments, turns, model, detector, lang,
+                    language_aliases)
 
         # Diarization has now cut the recording where the speaker changes,
         # which is also where the language usually changes. Those boundaries
@@ -295,7 +301,7 @@ def transcribe_file(
             progress("Checking languages", 0.74)
             with _timed(timings, "relanguage"):
                 _recheck_segment_languages(
-                    wav_path, segments, model, language_aliases)
+                    wav_path, segments, model, detector, language_aliases)
 
         if translate:
             to_translate = [s for s in segments if s.language != ENGLISH]
@@ -407,6 +413,7 @@ def _fill_untranscribed_gaps(
     segments: list[TranscriptSegment],
     turns: list[Turn],
     model,
+    detector,
     default_language: str,
     aliases: dict[str, str],
 ) -> list[TranscriptSegment]:
@@ -429,7 +436,7 @@ def _fill_untranscribed_gaps(
     found: list[TranscriptSegment] = []
     for start, end in gaps:
         chunk = _audio.slice_waveform(samples, sr, start, end)
-        detected = detect_one_language(model, chunk)
+        detected = detector.detect(chunk)
         language = apply_aliases(
             detected[0] if detected else default_language, aliases)
         text = decode_chunk(chunk, model=model, language=language).strip()
@@ -493,6 +500,7 @@ def _recheck_segment_languages(
     wav_path: str,
     segments: list[TranscriptSegment],
     model,
+    detector,
     aliases: dict[str, str] | None = None,
 ) -> int:
     """Re-detect each segment's language on its own audio; re-decode the
@@ -514,7 +522,7 @@ def _recheck_segment_languages(
     changed = 0
     for seg in segments:
         chunk = _audio.slice_waveform(samples, sr, seg.start, seg.end)
-        detected = detect_one_language(model, chunk)
+        detected = detector.detect(chunk)
         if detected:
             detected = (apply_aliases(detected[0], aliases or {}), detected[1])
             # Kept even when it is too weak to act on. Re-decoding a line needs

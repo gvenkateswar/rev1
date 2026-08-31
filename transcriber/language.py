@@ -16,6 +16,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from . import audio as _audio
+from .langid import WhisperLanguageDetector
 
 # Whisper's own detection window. Using the same size means each probe sees
 # exactly what a decode window would see.
@@ -73,12 +74,14 @@ def detect_language_timeline(
     hop: float = HOP_SECONDS,
     min_span: float = MIN_SPAN_SECONDS,
     max_windows: int = 240,
+    detector=None,
 ) -> list[LanguageSpan]:
     """Probe *wav_path* on a sliding window and return language spans.
 
     *model* is a loaded ``faster_whisper.WhisperModel``. *max_windows* caps the
     work on very long files (240 windows at a 15s hop covers an hour).
     """
+    detector = detector or WhisperLanguageDetector(model)
     samples, sr = _audio.load_waveform(wav_path)
     duration = len(samples) / float(sr)
     if duration <= 0:
@@ -92,7 +95,7 @@ def detect_language_timeline(
         # Whisper pads short input, but under ~1s there is nothing to go on.
         if len(chunk) < sr:
             continue
-        detected = _detect_one(model, chunk)
+        detected = detector.detect(chunk)
         if detected is None:
             continue
         lang, prob = detected
@@ -117,21 +120,13 @@ def _window_starts(
 
 
 def detect_one_language(model, chunk: np.ndarray) -> tuple[str, float] | None:
-    """Public name for a single-chunk detection, used to re-check segments."""
-    return _detect_one(model, chunk)
+    """Detect one chunk with Whisper's own detector.
 
-
-def _detect_one(model, chunk: np.ndarray) -> tuple[str, float] | None:
-    """Detect the language of one chunk, or None if the model cannot."""
-    try:
-        lang, prob, _all = model.detect_language(
-            audio=chunk.astype(np.float32), language_detection_segments=1
-        )
-    except (RuntimeError, ValueError):
-        # A chunk of pure silence or noise can fail feature extraction. One bad
-        # window should not abort detection for the whole recording.
-        return None
-    return str(lang), float(prob)
+    Kept for callers that have a Whisper model and no detector to hand; the
+    pipeline passes an explicit detector instead, so that a run uses one
+    opinion throughout rather than mixing the two.
+    """
+    return WhisperLanguageDetector(model).detect(chunk)
 
 
 def _probes_to_spans(

@@ -240,6 +240,40 @@ rule-driven romanizer: no model, no network, one API for every script.
 > What you get looks like a clean transcript and is not one. Drop to `base`
 > only for English-only audio.
 
+### A second opinion on the language
+
+```sh
+pip install speechbrain
+python -m transcriber call.m4a --langid speechbrain
+```
+
+Whisper's language detector reads the **same encoder** that decides which
+words to emit. When it picks the wrong language, it tends to be wrong in a way
+that agrees with the wrong transcript — the detector says English, the decoder
+obligingly translates, and both look confident. That is the failure behind
+every mixed-language problem in this README.
+
+`--langid speechbrain` swaps in
+[VoxLingua107](https://huggingface.co/speechbrain/lang-id-voxlingua107-ecapa),
+trained for one job — identifying the spoken language — and knowing nothing
+about Whisper. A second opinion is only worth having if it can disagree.
+
+It drives all three decisions: the language timeline, the per-segment
+re-check, and gap filling. The terminal log names which detector produced the
+timeline, so an A/B is one line to compare:
+
+```
+transcriber: languages (whisper): en 0-16s (0.91), hi 16-24s (0.88)
+transcriber: languages (speechbrain): hi 0-8s (0.94), fr 8-16s (0.86), hi 16-24s (0.92)
+```
+
+Downloads a model (a few hundred MB) on first use, then caches it. Slower per
+probe than Whisper's detector, which is doing the work anyway.
+
+**This is not a guaranteed improvement.** It is a different opinion from a
+model that is better suited to the question, worth A/B-ing on your own audio.
+It does not touch intra-sentence switching either.
+
 ### Hindi or Urdu, Devanagari or Nastaliq
 
 Whisper detects a **script and register** as much as a language: the same
@@ -319,6 +353,7 @@ Output (txt):
 | `--model` | Whisper size: tiny/base/small/medium/large-v3, or `distil-large-v3` | `small` |
 | `--language` | Pin one language (ISO code) for the whole file | auto-detect |
 | `--no-multilingual` | Detect the language once instead of building a timeline | off |
+| `--langid` | `whisper` or `speechbrain` — which detector decides the language | `whisper` |
 | `--language-alias` | `ur=hi` — treat one detected language as another (repeatable) | — |
 | `--no-transliterate` | Skip the Latin transliteration of non-Latin scripts | off |
 | `--no-translate` | Skip the English translation (saves a second Whisper pass) | off |
@@ -881,6 +916,7 @@ transcriber/
   audio.py        # ffmpeg extraction + waveform slicing
   transcribe.py   # Whisper: per-span decode, translate pass, confidence
   language.py     # language timeline for code-switching
+  langid.py       # the two interchangeable language detectors
   translit.py     # Latin transliteration of non-Latin scripts (uroman)
   diarize.py      # both diarization backends -> unified Turns
   identify.py     # voiceprint extraction + matching against known speakers

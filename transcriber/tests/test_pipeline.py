@@ -20,13 +20,25 @@ from transcriber.transcribe import RawSegment, Word
 from .conftest import make_voice
 
 
+class FakeDetector:
+    """Stands in for a language detector. Tests set `result` to steer it."""
+
+    name = "fake"
+
+    def __init__(self, result=None):
+        self.result = result
+
+    def detect(self, chunk):
+        return self.result
+
+
 @pytest.fixture
 def stub_pipeline(monkeypatch, tmp_path):
     """Replace every stage that needs a model, ffmpeg, or real audio."""
     wav = tmp_path / "audio.wav"
     wav.write_bytes(b"fake")
 
-    state = {"unlinked": []}
+    state = {"unlinked": [], "detector": FakeDetector()}
     monkeypatch.setattr(core._audio, "extract_audio", lambda src: str(wav))
     monkeypatch.setattr(core._audio, "audio_duration", lambda path: 60.0)
     monkeypatch.setattr(core, "load_model", lambda name: object())
@@ -55,7 +67,8 @@ def stub_pipeline(monkeypatch, tmp_path):
     # default here; the tests that exercise it turn it on.
     monkeypatch.setattr(core._audio, "load_waveform",
                         lambda path: (np.zeros(16_000, dtype=np.float32), 16_000))
-    monkeypatch.setattr(core, "detect_one_language", lambda model, chunk: None)
+    monkeypatch.setattr(core, "make_detector",
+                        lambda name, model: state["detector"])
     monkeypatch.setattr(core, "diarize", lambda *a, **k: [
         Turn(0, 4, "Speaker 1"), Turn(40, 44, "Speaker 2")])
     monkeypatch.setattr(core, "detect_language_timeline", lambda *a, **k: [
@@ -256,8 +269,7 @@ def test_a_confidently_english_line_inside_a_hindi_span_is_re_decoded(
     """
     monkeypatch.setattr(core, "detect_language_timeline", lambda *a, **k: [
         LanguageSpan(0, 60, "hi", 0.9)])
-    monkeypatch.setattr(core, "detect_one_language",
-                        lambda model, chunk: ("en", 0.96))
+    stub_pipeline["detector"].result = ("en", 0.96)
     monkeypatch.setattr(core, "decode_chunk",
                         lambda chunk, **kw: "How do you earn, Urfi?")
 
@@ -273,8 +285,7 @@ def test_an_empty_re_decode_keeps_the_original_line(stub_pipeline, monkeypatch):
     """A blank re-decode is not a better answer than a wrong one."""
     monkeypatch.setattr(core, "detect_language_timeline", lambda *a, **k: [
         LanguageSpan(0, 60, "hi", 0.9)])
-    monkeypatch.setattr(core, "detect_one_language",
-                        lambda model, chunk: ("en", 0.96))
+    stub_pipeline["detector"].result = ("en", 0.96)
     monkeypatch.setattr(core, "decode_chunk", lambda chunk, **kw: "   ")
 
     result = core.transcribe_file("m.mp4", identify_speakers=False,
@@ -286,8 +297,8 @@ def test_an_empty_re_decode_keeps_the_original_line(stub_pipeline, monkeypatch):
 def test_a_pinned_language_is_never_second_guessed(stub_pipeline, monkeypatch):
     """--language is an instruction, not a hint."""
     probed = []
-    monkeypatch.setattr(core, "detect_one_language",
-                        lambda model, chunk: probed.append(1) or ("en", 0.99))
+    monkeypatch.setattr(stub_pipeline["detector"], "detect",
+                        lambda chunk: probed.append(1) or ("en", 0.99))
     core.transcribe_file("m.mp4", language="hi", identify_speakers=False,
                          detect_emotion=False)
     assert probed == []
@@ -312,8 +323,7 @@ def test_an_english_opening_the_hindi_decode_skipped_is_recovered(
         RawSegment(2, 10, "\u0906\u092a")])
     monkeypatch.setattr(core, "diarize", lambda *a, **k: [
         Turn(0, 10, "Speaker 1")])
-    monkeypatch.setattr(core, "detect_one_language",
-                        lambda model, chunk: ("en", 0.95))
+    stub_pipeline["detector"].result = ("en", 0.95)
     monkeypatch.setattr(core, "decode_chunk",
                         lambda chunk, **kw: "How do you earn, Urfi?")
 
@@ -338,8 +348,7 @@ def test_a_recovered_gap_keeps_the_language_of_its_own_audio(
         RawSegment(5, 10, "text")])
     monkeypatch.setattr(core, "diarize", lambda *a, **k: [Turn(0, 10, "S1")])
     seen = []
-    monkeypatch.setattr(core, "detect_one_language",
-                        lambda model, chunk: ("ta", 0.91))
+    stub_pipeline["detector"].result = ("ta", 0.91)
     monkeypatch.setattr(core, "decode_chunk",
                         lambda chunk, **kw: seen.append(kw["language"]) or "vanakkam")
 
@@ -352,8 +361,7 @@ def test_a_gap_that_decodes_to_nothing_adds_no_line(stub_pipeline, monkeypatch):
     monkeypatch.setattr(core, "transcribe_spans", lambda *a, **k: [
         RawSegment(5, 10, "text")])
     monkeypatch.setattr(core, "diarize", lambda *a, **k: [Turn(0, 10, "S1")])
-    monkeypatch.setattr(core, "detect_one_language",
-                        lambda model, chunk: ("en", 0.95))
+    stub_pipeline["detector"].result = ("en", 0.95)
     monkeypatch.setattr(core, "decode_chunk", lambda chunk, **kw: "  ")
 
     result = core.transcribe_file("m.mp4", identify_speakers=False,

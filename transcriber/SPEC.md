@@ -161,6 +161,30 @@ re-decode: acting on a detection needs strong evidence, declining to accuse
 the model needs much less, and a warning on a correct line is itself a wrong
 answer.
 
+### Two language detectors
+
+`langid.py` puts both behind one interface -- `detect(chunk) -> (code, prob)
+| None` -- so the pipeline neither knows nor cares which is running, and one
+detector drives all three language decisions in a run rather than the passes
+disagreeing with each other.
+
+Whisper's detector shares an encoder with its decoder, so a wrong language
+tends to be wrong in a way that agrees with the wrong transcript: it reports
+English, the decoder translates, and both are confident. VoxLingua107
+(`--langid speechbrain`) is trained only for spoken language ID and is
+independent of Whisper, which is the entire value -- a second opinion that
+cannot be worth having unless it can disagree.
+
+Its labels arrive as "hi: Hindi" and are reduced to the bare code, because
+every threshold, alias and span in this pipeline is written against Whisper's
+vocabulary and the two must be comparable. Its `classify_batch` returns *log*
+posteriors, exponentiated here for the same reason.
+
+Returning None means no opinion -- unreadable audio, a chunk under half a
+second -- and callers fall back rather than treating it as a detection. It is
+optional and off by default: it is a different opinion, not a proven
+improvement, and belongs behind a flag until measured on real audio.
+
 ### Language aliases
 
 Whisper detects a script and register as much as a language -- the same

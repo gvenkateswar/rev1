@@ -62,8 +62,12 @@ def main() -> None:
         "emotion — fused from voice tone *and* what was said."
     )
 
+    # Also to stderr: when the environment is bad enough to crash the process
+    # (a mismatched interpreter segfaults before or during model loading), the
+    # browser never renders, and the terminal is the only place left to look.
     for note in environment_warnings():
         st.warning(note)
+        sys.stderr.write(f"Note: {note}\n")
 
     with st.sidebar:
         st.header("Settings")

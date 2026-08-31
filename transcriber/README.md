@@ -297,6 +297,48 @@ export KMP_DUPLICATE_LIB_OK=TRUE
 Set `TRANSCRIBER_NO_OMP_FIX=1` to disable the workaround (useful only when
 diagnosing a different problem).
 
+### Segfault, or "Intel MKL WARNING", after switching to a venv
+
+```
+Intel MKL WARNING: Support of Intel(R) Streaming SIMD Extensions 4.2 ...
+zsh: segmentation fault  streamlit run transcriber/gui.py
+```
+
+**There is no Intel MKL build for arm64.** If you see that line on an M-series
+Mac, the process is running x86 code -- meaning the `streamlit` on your PATH is
+not the one in your virtualenv, even though the prompt shows `(.venv)`.
+
+The usual cause is your shell's command cache. `zsh` remembers where it found
+`streamlit` the first time you ran it; activating a venv afterwards changes
+`PATH` but does not clear that memory, so the old interpreter keeps running with
+the old (x86) site-packages.
+
+Check which one is actually running:
+
+```sh
+which streamlit          # should be <repo>/.venv/bin/streamlit
+python -c "import sys, platform; print(sys.executable, platform.machine())"
+```
+
+Fix it by clearing the cache, or just open a new terminal:
+
+```sh
+hash -r                  # zsh/bash: forget cached command paths
+```
+
+Then prefer the module form, which always uses the interpreter you mean and
+cannot be shadowed by a stale PATH entry:
+
+```sh
+python -m streamlit run transcriber/gui.py
+```
+
+> Note: with `KMP_DUPLICATE_LIB_OK` set (which this package does automatically),
+> a mismatched-architecture environment segfaults instead of printing the
+> `OMP: Error #15` abort -- the crash is quieter, not absent. Set
+> `TRANSCRIBER_NO_OMP_FIX=1` to get the explicit OpenMP error back while
+> diagnosing.
+
 ### macOS on Apple Silicon: use a native arm64 Python
 
 If `python3 -c "import platform; print(platform.machine())"` prints `x86_64` on

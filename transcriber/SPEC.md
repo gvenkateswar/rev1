@@ -89,8 +89,21 @@ decode quality wins. What remains is a stated limit rather than a fix: a short
 turn at a boundary can be missed, and an intra-sentence switch always is,
 because Whisper picks one language per decode window.
 
-Spans still cannot resolve everything, so after diarization each segment's
-language is re-checked on its own audio (`_recheck_segment_languages`).
+Spans still cannot resolve everything, so two passes run after diarization.
+
+`_fill_untranscribed_gaps` decodes stretches where a diarization turn says
+somebody spoke and no segment came back. This is the important half: a span
+pinned to the wrong language does not return wrong text for the other
+language, it returns nothing, so the words are absent rather than incorrect
+and re-checking existing segments cannot reach them. The language comes from
+the gap's own audio, since the span's language is what already failed to
+produce anything there. **Only diarized speech is decoded** -- Whisper handed
+silence invents plausible text, and a fabricated line is worse than a missing
+one, so the turns are required as evidence that somebody spoke. Gaps under 1s
+are pauses, not missing sentences.
+
+Then `_recheck_segment_languages` re-checks each segment's
+language on its own audio.
 Speaker boundaries are finer than any probe and usually coincide with language
 changes. A segment is re-decoded when its own audio names a different language
 with at least 0.70 confidence and it is at least 2s long; below either, the

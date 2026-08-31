@@ -268,6 +268,17 @@ def transcribe_file(
         segments = assign_speakers(raw_segments, turns)
         _attach_languages(segments, raw_segments, spans, lang)
 
+        # Stretches the decode produced nothing for. A span pinned to one
+        # language yields no text at all where another was spoken, so the
+        # words do not come back wrong -- they come back missing, and a
+        # re-check of the segments cannot see them because there is no
+        # segment there to check.
+        if turns:
+            progress("Filling gaps", 0.72)
+            with _timed(timings, "gaps"):
+                segments = _fill_untranscribed_gaps(
+                    wav_path, segments, turns, model, lang)
+
         # Diarization has now cut the recording where the speaker changes,
         # which is also where the language usually changes. Those boundaries
         # are far finer than the 30s probes the timeline was built from, so
@@ -376,6 +387,87 @@ def _attach_languages(
         source = _overlapping_raw(seg, raw_segments)
         if source is not None:
             seg.confidence = source.confidence
+
+
+# A gap shorter than this is a pause between words, not a missing sentence.
+GAP_MIN_SECONDS = 1.0
+
+
+def _fill_untranscribed_gaps(
+    wav_path: str,
+    segments: list[TranscriptSegment],
+    turns: list[Turn],
+    model,
+    default_language: str,
+) -> list[TranscriptSegment]:
+    """Decode speech that produced no segment, and return the merged list.
+
+    Only gaps that diarization says contain a speaker are decoded. That
+    matters: Whisper handed a stretch of silence invents text, confidently and
+    plausibly, and a fabricated line is worse than a missing one. The
+    diarization turns are the evidence that someone was talking.
+
+    The language is detected on the gap's own audio rather than inherited,
+    because a gap that the span's language produced nothing for is precisely
+    where that language is likely to be wrong.
+    """
+    gaps = _uncovered_speech(segments, turns, GAP_MIN_SECONDS)
+    if not gaps:
+        return segments
+
+    samples, sr = _audio.load_waveform(wav_path)
+    found: list[TranscriptSegment] = []
+    for start, end in gaps:
+        chunk = _audio.slice_waveform(samples, sr, start, end)
+        detected = detect_one_language(model, chunk)
+        language = detected[0] if detected else default_language
+        text = decode_chunk(chunk, model=model, language=language).strip()
+        if not text:
+            continue
+        found.append(TranscriptSegment(
+            start=start, end=end,
+            speaker=_dominant_speaker(start, end, turns),
+            text=text, language=language,
+        ))
+
+    if not found:
+        return segments
+    _log(f"gaps: recovered {len(found)} untranscribed stretch(es)")
+    return sorted(segments + found, key=lambda s: s.start)
+
+
+def _uncovered_speech(
+    segments: list[TranscriptSegment], turns: list[Turn], min_seconds: float
+) -> list[tuple[float, float]]:
+    """Stretches where somebody spoke and no segment came back."""
+    covered = _merge_intervals([(s.start, s.end) for s in segments])
+    gaps: list[tuple[float, float]] = []
+    for start, end in _merge_intervals([(t.start, t.end) for t in turns]):
+        cursor = start
+        for lo, hi in covered:
+            if hi <= cursor:
+                continue
+            if lo >= end:
+                break
+            if lo > cursor:
+                gaps.append((cursor, min(lo, end)))
+            cursor = max(cursor, hi)
+            if cursor >= end:
+                break
+        if cursor < end:
+            gaps.append((cursor, end))
+    return [(a, b) for a, b in gaps if b - a >= min_seconds]
+
+
+def _merge_intervals(spans: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    """Sorted, non-overlapping. Touching intervals merge; empty ones vanish."""
+    out: list[tuple[float, float]] = []
+    for start, end in sorted(s for s in spans if s[1] > s[0]):
+        if out and start <= out[-1][1]:
+            out[-1] = (out[-1][0], max(out[-1][1], end))
+        else:
+            out.append((start, end))
+    return out
 
 
 # Below this, a slice is too short for the detector to say anything useful.

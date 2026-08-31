@@ -200,3 +200,79 @@ def test_the_result_counts_the_flagged_lines():
     result = core.TranscriptResult(
         segments=[good, bad], language="hi", speakers=["S1"], source="m.wav")
     assert result.untranscribed_segments == 1
+
+
+# --------------------------------------------------------------------------- #
+# Speech that produced no segment at all
+# --------------------------------------------------------------------------- #
+def turn(start, end, speaker="Speaker 1"):
+    return Turn(start, end, speaker)
+
+
+def test_a_leading_stretch_with_no_segment_is_a_gap():
+    """The reported case: two seconds of English before the first line."""
+    segments = [seg(2, 10)]
+    turns = [turn(0, 10)]
+    assert core._uncovered_speech(segments, turns, 1.0) == [(0, 2)]
+
+
+def test_a_gap_between_two_segments_is_found():
+    segments = [seg(0, 4), seg(9, 15)]
+    assert core._uncovered_speech(segments, [turn(0, 15)], 1.0) == [(4, 9)]
+
+
+def test_a_trailing_stretch_is_found():
+    assert core._uncovered_speech([seg(0, 8)], [turn(0, 12)], 1.0) == [(8, 12)]
+
+
+def test_silence_is_never_a_gap():
+    """Nobody spoke there, so there is nothing missing.
+
+    Whisper handed silence invents text, so this filter is what keeps a
+    fabricated line out of the transcript.
+    """
+    segments = [seg(0, 4), seg(20, 24)]
+    turns = [turn(0, 4), turn(20, 24)]        # 4-20s is silence
+    assert core._uncovered_speech(segments, turns, 1.0) == []
+
+
+def test_a_pause_between_words_is_not_a_gap():
+    segments = [seg(0, 4), seg(4.3, 9)]
+    assert core._uncovered_speech(segments, [turn(0, 9)], 1.0) == []
+
+
+def test_fully_covered_speech_has_no_gaps():
+    assert core._uncovered_speech([seg(0, 10)], [turn(0, 10)], 1.0) == []
+
+
+def test_no_diarization_means_no_gap_filling():
+    """Without turns there is no evidence of speech, so nothing is invented."""
+    assert core._uncovered_speech([seg(2, 10)], [], 1.0) == []
+
+
+def test_overlapping_segments_do_not_manufacture_gaps():
+    segments = [seg(0, 6), seg(4, 10)]
+    assert core._uncovered_speech(segments, [turn(0, 10)], 1.0) == []
+
+
+def test_gaps_are_found_across_several_speaker_turns():
+    segments = [seg(0, 3), seg(10, 13)]
+    turns = [turn(0, 5, "A"), turn(8, 15, "B")]
+    assert core._uncovered_speech(segments, turns, 1.0) == [(3, 5), (8, 10), (13, 15)]
+
+
+# --- _merge_intervals ------------------------------------------------------ #
+def test_merging_joins_overlaps_and_sorts():
+    assert core._merge_intervals([(5, 9), (0, 6)]) == [(0, 9)]
+
+
+def test_merging_joins_touching_intervals():
+    assert core._merge_intervals([(0, 4), (4, 8)]) == [(0, 8)]
+
+
+def test_merging_drops_empty_intervals():
+    assert core._merge_intervals([(3, 3), (0, 2)]) == [(0, 2)]
+
+
+def test_merging_keeps_separate_intervals_apart():
+    assert core._merge_intervals([(0, 2), (5, 7)]) == [(0, 2), (5, 7)]

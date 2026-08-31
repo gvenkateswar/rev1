@@ -291,3 +291,86 @@ def test_a_pinned_language_is_never_second_guessed(stub_pipeline, monkeypatch):
     core.transcribe_file("m.mp4", language="hi", identify_speakers=False,
                          detect_emotion=False)
     assert probed == []
+
+
+# --------------------------------------------------------------------------- #
+# Speech the decode skipped entirely
+# --------------------------------------------------------------------------- #
+def test_an_english_opening_the_hindi_decode_skipped_is_recovered(
+        stub_pipeline, monkeypatch):
+    """The reported case, exactly.
+
+    Two seconds of English before a Hindi answer. The file is one Hindi span,
+    so the decode returned nothing at all for those two seconds -- the first
+    segment starts after them. Re-checking segments cannot find it: there is
+    no segment there to re-check.
+    """
+    monkeypatch.setattr(core, "detect_language_timeline", lambda *a, **k: [
+        LanguageSpan(0, 60, "hi", 0.95)])
+    # The decode produced nothing before 2s; diarization says speech from 0s.
+    monkeypatch.setattr(core, "transcribe_spans", lambda *a, **k: [
+        RawSegment(2, 10, "\u0906\u092a")])
+    monkeypatch.setattr(core, "diarize", lambda *a, **k: [
+        Turn(0, 10, "Speaker 1")])
+    monkeypatch.setattr(core, "detect_one_language",
+                        lambda model, chunk: ("en", 0.95))
+    monkeypatch.setattr(core, "decode_chunk",
+                        lambda chunk, **kw: "How do you earn, Urfi?")
+
+    result = core.transcribe_file("m.mp4", identify_speakers=False,
+                                  detect_emotion=False, translate=False)
+    first = result.segments[0]
+    assert (first.start, first.end) == (0, 2)
+    assert first.text == "How do you earn, Urfi?"
+    assert first.language == "en"
+    assert first.speaker == "Speaker 1"
+    # Inserted in time order, not appended.
+    assert [s.start for s in result.segments] == [0, 2]
+
+
+def test_a_recovered_gap_keeps_the_language_of_its_own_audio(
+        stub_pipeline, monkeypatch):
+    """Inheriting the span's language would decode it the way that already
+    failed to produce anything for it."""
+    monkeypatch.setattr(core, "detect_language_timeline", lambda *a, **k: [
+        LanguageSpan(0, 60, "hi", 0.95)])
+    monkeypatch.setattr(core, "transcribe_spans", lambda *a, **k: [
+        RawSegment(5, 10, "text")])
+    monkeypatch.setattr(core, "diarize", lambda *a, **k: [Turn(0, 10, "S1")])
+    seen = []
+    monkeypatch.setattr(core, "detect_one_language",
+                        lambda model, chunk: ("ta", 0.91))
+    monkeypatch.setattr(core, "decode_chunk",
+                        lambda chunk, **kw: seen.append(kw["language"]) or "vanakkam")
+
+    core.transcribe_file("m.mp4", identify_speakers=False,
+                         detect_emotion=False, translate=False)
+    assert "ta" in seen
+
+
+def test_a_gap_that_decodes_to_nothing_adds_no_line(stub_pipeline, monkeypatch):
+    monkeypatch.setattr(core, "transcribe_spans", lambda *a, **k: [
+        RawSegment(5, 10, "text")])
+    monkeypatch.setattr(core, "diarize", lambda *a, **k: [Turn(0, 10, "S1")])
+    monkeypatch.setattr(core, "detect_one_language",
+                        lambda model, chunk: ("en", 0.95))
+    monkeypatch.setattr(core, "decode_chunk", lambda chunk, **kw: "  ")
+
+    result = core.transcribe_file("m.mp4", identify_speakers=False,
+                                  detect_emotion=False, translate=False)
+    assert [s.start for s in result.segments] == [5]
+
+
+def test_silence_is_never_filled_in(stub_pipeline, monkeypatch):
+    """Whisper handed silence invents plausible text. A fabricated line is
+    worse than a missing one, so only diarized speech is ever decoded."""
+    monkeypatch.setattr(core, "diarize", lambda *a, **k: [
+        Turn(0, 4, "Speaker 1"), Turn(40, 44, "Speaker 2")])
+    called = []
+    monkeypatch.setattr(core, "decode_chunk",
+                        lambda chunk, **kw: called.append(1) or "hallucination")
+
+    result = core.transcribe_file("m.mp4", identify_speakers=False,
+                                  detect_emotion=False, translate=False)
+    assert called == []
+    assert "hallucination" not in [s.text for s in result.segments]

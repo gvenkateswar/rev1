@@ -205,7 +205,15 @@ keeps Hindi in Devanagari. Two things otherwise push Whisper into English:
    and the model follows it. Spans are decoded independently, so nothing
    prompts the next span in the wrong language.
 
-After diarization, every segment's language is **re-checked on its own
+After diarization, two recovery passes run. First, stretches where diarization
+heard a speaker but the decode returned nothing are **decoded from scratch**,
+with the language taken from that stretch's own audio — a span pinned to the
+wrong language yields no text rather than wrong text, so those words go
+missing entirely and no amount of re-checking existing segments can find them.
+Only diarized speech is decoded, because Whisper invents text when handed
+silence.
+
+Then every segment's language is **re-checked on its own
 audio**. Diarization has cut the recording where the speaker changes, which is
 usually where the language changes too, and those boundaries are far finer
 than any probe. A segment whose own audio confidently says a different
@@ -627,17 +635,26 @@ Two things this cannot currently do, both Whisper limits rather than settings:
 out spelled in the other script. Whisper picks one language per decode window
 and has no notion of switching mid-sentence.
 
-**A short turn at a boundary.** A six-second question before a long answer in
-another language sits inside one 30-second detection probe and is outvoted by
-what surrounds it. Shortening the probes to see it was tried and made
-transcription worse: spans are the units the decode runs on, so more spans
-means shorter slices decoded without context. Decode quality is worth more
-than a sharper boundary. The per-segment re-check recovers such a turn when
-diarization happens to split it out; when the turn shares a segment with the
-other language, it does not.
+**A short turn at a boundary** is *mostly* handled now. It sits inside one
+30-second detection probe and is outvoted by what surrounds it, so the span
+pins the wrong language. Two passes catch the fallout:
 
-Where the second one matters, `--language` on a single-language file, or
-splitting the recording, both work.
+- If it became its own segment with the wrong language, the **per-segment
+  re-check** decodes it again in the language its own audio names.
+- If the wrong language produced *no text at all* — the common case, and why a
+  line can simply be absent — the **gap pass** finds stretches where
+  diarization heard a speaker and no segment came back, and decodes those
+  from scratch.
+
+Only diarized speech is ever decoded this way. Whisper handed a stretch of
+silence invents text, confidently and plausibly, and a fabricated line is
+worse than a missing one; the diarization turns are the evidence that somebody
+actually spoke. With `--no-identify` this still runs, but with diarization off
+entirely there is no such evidence and nothing is filled in.
+
+What is left is a turn that *shares a segment* with the other language, and
+the intra-sentence case above. For those, `--language` on a single-language
+file, or splitting the recording, both work.
 
 ### Non-English speech comes out written in English
 

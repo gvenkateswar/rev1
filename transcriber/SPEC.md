@@ -32,6 +32,24 @@ A voiceprint is a biometric identifier. Treat the store accordingly:
 - Enrolling a third party's voice is the operator's legal call, not the tool's.
   README states this; the tool does not enforce consent.
 
+## Credentials
+
+The pyannote backend needs a Hugging Face token. It is resolved by
+`credentials.py`, in order: an explicit argument, `HF_TOKEN` /
+`HUGGING_FACE_HUB_TOKEN`, `~/.transcriber/hf_token`, then
+`~/.cache/huggingface/token` (what `huggingface-cli login` writes). The last
+exists so the documented Hugging Face setup works with no extra step; the
+third sits beside the speaker store so one directory holds everything private
+to this tool.
+
+`resolve_hf_token` returns the token and, separately, where it came from. Only
+the source is ever shown or logged. Nothing in the repo stores a token, the
+file patterns are gitignored, and a token file readable by other users is
+flagged rather than silently accepted.
+
+Passing a token on the command line is supported but discouraged in the help
+text: shells record command lines.
+
 ## Design
 
 ### Pipeline

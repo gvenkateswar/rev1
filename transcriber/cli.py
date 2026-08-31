@@ -14,6 +14,7 @@ import time
 
 from .core import transcribe_file
 from .output import render, to_summary
+from .credentials import permission_warning, token_file
 from .runtime import announce_environment, build_id
 
 
@@ -64,8 +65,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--speakers", type=int, default=None,
                    help="Number of speakers if known (default: auto-detect).")
     p.add_argument("--hf-token", default=None,
-                   help="Hugging Face token for the pyannote backend "
-                        "(or set HF_TOKEN).")
+                   help="Hugging Face token for the pyannote backend. Prefer "
+                        f"leaving this unset and storing it in "
+                        f"{token_file()} or $HF_TOKEN -- your shell records "
+                        "command lines, so a token passed here ends up in "
+                        "your history.")
     p.add_argument("--no-identify", action="store_true",
                    help="Skip matching voices against the saved speaker store.")
     p.add_argument("--speaker-db", default=None,
@@ -99,6 +103,9 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     announce_environment()
+    note = permission_warning(token_file())
+    if note:
+        sys.stderr.write(f"Note: {note}\n")
     try:
         result = transcribe_file(
             args.input,

@@ -289,7 +289,7 @@ Output (txt):
 | `--no-translate` | Skip the English translation (saves a second Whisper pass) | off |
 | `--diarization` | `cluster` (offline) or `pyannote` (best, needs token) | `cluster` |
 | `--speakers N` | Number of speakers if known | auto-detect |
-| `--hf-token` | HF token for pyannote (or set `HF_TOKEN`) | — |
+| `--hf-token` | HF token for pyannote — prefer the token file, see above | — |
 | `--name-speaker` | `"Speaker 1=Priya"` — name and remember a voice (repeatable) | — |
 | `--no-identify` | Skip matching against remembered speakers | off |
 | `--speaker-db` | Path to the speaker store | `~/.transcriber/speakers.db` |
@@ -300,6 +300,48 @@ Output (txt):
 | `--no-emotion` | Skip emotion detection (faster) | off |
 | `-f, --format` | `txt` / `json` / `srt` / `vtt` | `txt` |
 | `-o, --output` | Write to a file instead of stdout | stdout |
+
+## The Hugging Face token (pyannote only)
+
+Store it once; it is never asked for again.
+
+```bash
+mkdir -p ~/.transcriber
+printf '%s' 'hf_...' > ~/.transcriber/hf_token
+chmod 600 ~/.transcriber/hf_token
+```
+
+Or use Hugging Face's own tooling, which this reads too:
+
+```bash
+huggingface-cli login
+```
+
+Edit that file whenever the token changes. Looked for in this order — first
+hit wins:
+
+| # | Where | Notes |
+|---|---|---|
+| 1 | `--hf-token` / the GUI field | For a one-off. See the warning below. |
+| 2 | `$HF_TOKEN` or `$HUGGING_FACE_HUB_TOKEN` | Good for CI |
+| 3 | `~/.transcriber/hf_token` | Beside the speaker store; honours `TRANSCRIBER_HOME` |
+| 4 | `~/.cache/huggingface/token` | Written by `huggingface-cli login`; honours `HF_HOME` |
+
+Only the first line is read, and it is stripped, so a trailing newline from an
+editor is fine.
+
+Once a token is found, the GUI stops showing the field and just says which
+file it came from. The terminal log names the source too — never the token.
+
+> **Don't pass a token on the command line.** Your shell writes every command
+> to its history file, so `--hf-token hf_...` leaves it on disk in plain text
+> for anything that reads `~/.zsh_history`. Same for pasting one into a chat
+> or a screenshot: treat any token that has been through either as burned, and
+> revoke it at [hf.co/settings/tokens](https://hf.co/settings/tokens).
+
+The app warns if the token file is readable by other users on the machine.
+Nothing in this repo stores a token, and `hf_token`, `*.token` and `.env` are
+gitignored so a stray copy cannot be committed.
 
 ## How speaker diarization works
 
@@ -777,6 +819,7 @@ transcriber/
   emotion.py      # audio + text emotion, fused, language-aware
   core.py         # pipeline + speaker/word alignment
   output.py       # txt / json / srt / vtt renderers
+  credentials.py  # where the Hugging Face token is looked for
   runtime.py      # OpenMP guard + optional-dependency imports
   cli.py          # `python -m transcriber`
   gui.py          # `streamlit run transcriber/gui.py`

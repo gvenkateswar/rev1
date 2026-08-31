@@ -26,3 +26,9 @@ venv/
 .idea/
 .DS_Store
 .pytest_cache/
+
+# Credentials. The token file lives in ~/.transcriber, not here, but a stray
+# copy in the working tree must never be committable.
+hf_token
+*.token
+.env

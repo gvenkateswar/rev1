@@ -19,6 +19,7 @@ import inspect
 
 import numpy as np
 
+from .credentials import setup_help
 from .runtime import require
 
 
@@ -74,10 +75,8 @@ def _diarize_pyannote(
 
     if not hf_token:
         raise RuntimeError(
-            "The pyannote backend needs a Hugging Face access token.\n"
-            "Get one at https://hf.co/settings/tokens, accept the license at\n"
-            "https://hf.co/pyannote/speaker-diarization-3.1, then pass it via\n"
-            "--hf-token / the HF_TOKEN env var / the GUI sidebar."
+            "The pyannote backend needs a Hugging Face access token.\n\n"
+            + setup_help()
         )
 
     pipeline = Pipeline.from_pretrained(

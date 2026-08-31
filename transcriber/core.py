@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from . import audio as _audio
+from .credentials import resolve_hf_token
 from .diarize import Turn, diarize
 from .language import (
     LanguageSpan, describe_spans, detect_language_timeline,
@@ -192,7 +193,11 @@ def transcribe_file(
     non-English stretches, so an English recording pays for neither.
     """
     progress = progress or _noop
-    hf_token = hf_token or os.environ.get("HF_TOKEN")
+    hf_token, token_source = resolve_hf_token(hf_token)
+    if token_source and diarization_backend == "pyannote":
+        # The source, never the token: which file was used is the thing that
+        # is unclear when a stale one keeps getting picked up.
+        _log(f"hugging face token: {token_source}")
     timings: dict[str, float] = {}
 
     progress("Extracting audio", 0.05)

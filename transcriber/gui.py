@@ -23,6 +23,9 @@ import streamlit as st
 # Either path runs transcriber/__init__.py, which sets the OpenMP flag before
 # torch or ctranslate2 can load. Keep that import ahead of anything heavier.
 try:
+    from .credentials import (
+        permission_warning, resolve_hf_token, setup_help, token_file,
+    )
     from .runtime import announce_environment, build_id
     from .core import transcribe_file
     from .emotion import _EMOJI
@@ -31,6 +34,9 @@ try:
     from .speakerdb import SpeakerStore, default_db_path
 except ImportError:
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from transcriber.credentials import (
+        permission_warning, resolve_hf_token, setup_help, token_file,
+    )
     from transcriber.runtime import announce_environment, build_id
     from transcriber.core import transcribe_file
     from transcriber.emotion import _EMOJI
@@ -119,11 +125,23 @@ def main() -> None:
         )
         hf_token = ""
         if backend == "pyannote":
-            hf_token = st.text_input(
-                "Hugging Face token", type="password",
-                value=os.environ.get("HF_TOKEN", ""),
-                help="Accept the license at hf.co/pyannote/speaker-diarization-3.1",
-            )
+            stored, source = resolve_hf_token()
+            if stored:
+                # Found one, so do not ask. Showing the field pre-filled would
+                # put the token on screen for no reason, and inviting a paste
+                # every run is the thing the file exists to stop.
+                st.caption(f"✓ Hugging Face token found in {source}")
+                note = permission_warning(token_file())
+                if note:
+                    st.warning(note)
+            else:
+                hf_token = st.text_input(
+                    "Hugging Face token", type="password",
+                    help="Used once. To stop being asked, store it — see the "
+                         "expander below.",
+                )
+                with st.expander("Store the token instead"):
+                    st.code(setup_help(), language="text")
         known = st.checkbox("I know the number of speakers")
         num_speakers = st.number_input("Speakers", 1, 12, 2) if known else None
 

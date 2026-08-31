@@ -337,3 +337,37 @@ def test_a_malformed_alias_is_rejected_loudly(bad):
     """Silently ignoring it would leave the user wondering why nothing changed."""
     with pytest.raises(ValueError, match="FROM=TO"):
         language.parse_aliases([bad])
+
+
+def test_an_english_line_whose_audio_is_not_english_is_flagged():
+    """A translation presented as a transcript, labelled the other way round.
+
+    Nothing else looks at English-labelled lines: they get no translation
+    rendering, so there is nothing to compare and they pass in silence.
+    """
+    s = core.TranscriptSegment(0, 16, "S1", "I want to know if I speak English",
+                               language="en", detected_language="hi",
+                               detected_confidence=0.93)
+    core._reconcile_english_lines([s])
+    assert s.native_is_english is True
+
+
+def test_a_genuinely_english_line_is_left_alone():
+    s = core.TranscriptSegment(0, 6, "S1", "let me think", language="en",
+                               detected_language="en", detected_confidence=0.98)
+    core._reconcile_english_lines([s])
+    assert s.native_is_english is False
+
+
+def test_an_unsure_disagreement_does_not_accuse_an_english_line():
+    """Below the bar for re-decoding is below the bar for warning."""
+    s = core.TranscriptSegment(0, 6, "S1", "hello there", language="en",
+                               detected_language="hi", detected_confidence=0.55)
+    core._reconcile_english_lines([s])
+    assert s.native_is_english is False
+
+
+def test_an_unchecked_english_line_is_not_accused():
+    s = core.TranscriptSegment(0, 6, "S1", "hello there", language="en")
+    core._reconcile_english_lines([s])
+    assert s.native_is_english is False

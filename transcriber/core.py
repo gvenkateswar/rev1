@@ -52,6 +52,7 @@ class TranscriptSegment:
     english: str | None = None  # English translation, None if already English
     native_is_english: bool = False   # the "native" text came back as English
     detected_language: str | None = None  # what this segment's own audio says
+    detected_confidence: float = 0.0      # ...and how sure the detector was
     confidence: float = 1.0     # mean word probability, 0..1
     known_speaker: bool = False  # True when matched to an enrolled speaker
     emotion: str = "neutral"
@@ -73,6 +74,7 @@ class TranscriptSegment:
             "english": self.english,
             "native_is_english": self.native_is_english,
             "detected_language": self.detected_language,
+            "detected_confidence": round(self.detected_confidence, 4),
             "language": self.language,
             "confidence": round(self.confidence, 4),
             "emotion": self.emotion,
@@ -519,7 +521,7 @@ def _recheck_segment_languages(
             # strong evidence; deciding *not* to accuse the model of skipping
             # the transcript needs much less, and this is what that check
             # reads.
-            seg.detected_language = detected[0]
+            seg.detected_language, seg.detected_confidence = detected
         if not _should_relanguage(seg, detected):
             continue
         language, _confidence = detected
@@ -582,14 +584,33 @@ def _reconcile_english_lines(segments: list[TranscriptSegment]) -> None:
     translation dropped rather than printed twice.
     """
     for seg in segments:
-        if seg.language == ENGLISH or not seg.english:
+        if seg.language == ENGLISH:
+            # The same failure mirrored, and nothing else looks at these: a
+            # line decoded as English gets no translation rendering, so there
+            # is nothing to compare it against and it passes in silence. Its
+            # own audio is the only evidence available.
+            seg.native_is_english = _confidently_not_english(seg)
             continue
-        if not _nearly_the_same(seg.text, seg.english):
+        if not seg.english or not _nearly_the_same(seg.text, seg.english):
             continue
         if seg.detected_language == ENGLISH:
             seg.language, seg.english = ENGLISH, None
         else:
             seg.native_is_english = True
+
+
+def _confidently_not_english(seg: TranscriptSegment) -> bool:
+    """Whether this line's own audio disagrees with being decoded as English.
+
+    Held to the same bar as re-decoding. A weaker bar would mostly fire on
+    short lines, which is where detection is least reliable and a warning
+    least deserved.
+    """
+    return (
+        seg.detected_language is not None
+        and seg.detected_language != ENGLISH
+        and seg.detected_confidence >= RELANGUAGE_MIN_CONFIDENCE
+    )
 
 
 def _nearly_the_same(native: str, english: str) -> bool:

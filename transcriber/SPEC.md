@@ -144,6 +144,12 @@ letters and digits, minimum 12 characters) is a candidate. Comparing meaning
 rather than script keeps that correct for Latin-script languages, where a real
 transcript still reads nothing like its translation.
 
+The mirror case is checked too. A segment labelled English gets no
+translation rendering, so there is nothing to compare it against and a
+translation presented as a transcript passes in silence; its own detected
+language is the only evidence available, and is held to the same bar as
+re-decoding.
+
 But two renderings agreeing has a second, opposite cause: **the speaker used
 English** inside a recording labelled otherwise. `_reconcile_english_lines`
 uses the segment's own detected language to choose. English audio means the

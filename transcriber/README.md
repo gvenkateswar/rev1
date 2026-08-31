@@ -19,8 +19,10 @@ extract audio (ffmpeg) → detect language timeline → transcribe each span
 
 - **Speakers are remembered.** Name someone once and every future transcript
   tags them automatically — no re-labelling each meeting.
-- **Code-switching works.** A bilingual conversation is transcribed in whichever
-  language is actually being spoken, with per-segment language labels.
+- **Code-switching, up to a point.** A conversation that changes language
+  between turns is transcribed in whichever language is being spoken, with
+  per-segment labels. A change *inside* a sentence is beyond Whisper — see
+  [known limits](#known-limits-on-mixed-speech) before relying on it.
 - **Non-English stays non-English.** Speech is kept in its own script, and each
   line also gets a Latin transliteration and an English translation — three
   renderings of the same words, not one lossy compromise.
@@ -653,7 +655,32 @@ search over 2..8 speakers), or run on a CUDA GPU.
 
 ### Known limits on mixed speech
 
-Two things this cannot currently do, both Whisper limits rather than settings:
+Whisper chooses **one language per decode window**. Everything below follows
+from that, and none of it is a settings problem.
+
+### Dense mixing defeats it entirely
+
+Speech that changes language every few seconds does not degrade gracefully —
+it comes back as an English *translation* presented as a transcript. Given
+this, spoken in Hindi, English and French across sixteen seconds:
+
+> मैं तो यह जानना चाहता हूँ के if i speak in english / क्या आप को समझ में आएगी
+> या फिर / c'est possible qu'on peux parler en francais aussi
+
+`medium` returns one line: *"I want to know that if I speak in English, will
+you understand it or is it possible to speak in French as well?"* Accurate as
+a translation, and not a transcript of anything.
+
+**Pin the dominant language.** `--language hi` gives a native-script
+transcript throughout, with the English and French words written phonetically
+in Devanagari. That is usually closer to what you want than an English
+paraphrase, and it is the only reliable option for densely mixed speech.
+
+Where such a line is detectable — its own audio confidently disagrees with
+being decoded as English — it is flagged like any other, though on speech this
+mixed the detector often agrees with the wrong answer.
+
+Two narrower limits:
 
 **A language switch inside one sentence.** "आप इस्ताग्राम पे... but, पैसे कहां
 से आते हैं?" is decoded as one language throughout — the English words come

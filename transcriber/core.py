@@ -24,7 +24,7 @@ from . import audio as _audio
 from .credentials import resolve_hf_token
 from .diarize import Turn, diarize
 from .language import (
-    LanguageSpan, describe_spans, detect_language_timeline,
+    LanguageSpan, apply_aliases, describe_spans, detect_language_timeline,
     detect_one_language, language_for,
 )
 from .language import summarize as _summarize_languages
@@ -51,6 +51,7 @@ class TranscriptSegment:
     latin: str | None = None    # Latin transliteration, None if already Latin
     english: str | None = None  # English translation, None if already English
     native_is_english: bool = False   # the "native" text came back as English
+    detected_language: str | None = None  # what this segment's own audio says
     confidence: float = 1.0     # mean word probability, 0..1
     known_speaker: bool = False  # True when matched to an enrolled speaker
     emotion: str = "neutral"
@@ -71,6 +72,7 @@ class TranscriptSegment:
             "latin": self.latin,
             "english": self.english,
             "native_is_english": self.native_is_english,
+            "detected_language": self.detected_language,
             "language": self.language,
             "confidence": round(self.confidence, 4),
             "emotion": self.emotion,
@@ -174,6 +176,7 @@ def transcribe_file(
     match_margin: float | None = None,
     transliterate: bool = True,
     translate: bool = True,
+    language_aliases: dict[str, str] | None = None,
     detect_emotion: bool = True,
     audio_weight: float = 0.5,
     use_audio_emotion: bool = True,
@@ -193,6 +196,7 @@ def transcribe_file(
     non-English stretches, so an English recording pays for neither.
     """
     progress = progress or _noop
+    language_aliases = language_aliases or {}
     hf_token, token_source = resolve_hf_token(hf_token)
     if token_source and diarization_backend == "pyannote":
         # The source, never the token: which file was used is the thing that
@@ -220,6 +224,8 @@ def transcribe_file(
             progress("Detecting languages", 0.10)
             with _timed(timings, "language"):
                 spans = detect_language_timeline(wav_path, model)
+            for span in spans:
+                span.language = apply_aliases(span.language, language_aliases)
             # The spans decide both what each stretch is labelled and how the
             # decode is chunked, so when the transcript looks wrong this is
             # the first thing worth seeing. It is one short line.
@@ -277,7 +283,7 @@ def transcribe_file(
             progress("Filling gaps", 0.72)
             with _timed(timings, "gaps"):
                 segments = _fill_untranscribed_gaps(
-                    wav_path, segments, turns, model, lang)
+                    wav_path, segments, turns, model, lang, language_aliases)
 
         # Diarization has now cut the recording where the speaker changes,
         # which is also where the language usually changes. Those boundaries
@@ -286,7 +292,8 @@ def transcribe_file(
         if spans and multilingual and language is None:
             progress("Checking languages", 0.74)
             with _timed(timings, "relanguage"):
-                _recheck_segment_languages(wav_path, segments, model)
+                _recheck_segment_languages(
+                    wav_path, segments, model, language_aliases)
 
         if translate:
             to_translate = [s for s in segments if s.language != ENGLISH]
@@ -299,7 +306,7 @@ def transcribe_file(
                     ):
                         seg.english = text or None
 
-        _flag_missing_native_text(segments)
+        _reconcile_english_lines(segments)
         if transliterate:
             _attach_transliterations(segments)
         for seg in segments:
@@ -399,6 +406,7 @@ def _fill_untranscribed_gaps(
     turns: list[Turn],
     model,
     default_language: str,
+    aliases: dict[str, str],
 ) -> list[TranscriptSegment]:
     """Decode speech that produced no segment, and return the merged list.
 
@@ -420,7 +428,8 @@ def _fill_untranscribed_gaps(
     for start, end in gaps:
         chunk = _audio.slice_waveform(samples, sr, start, end)
         detected = detect_one_language(model, chunk)
-        language = detected[0] if detected else default_language
+        language = apply_aliases(
+            detected[0] if detected else default_language, aliases)
         text = decode_chunk(chunk, model=model, language=language).strip()
         if not text:
             continue
@@ -479,7 +488,10 @@ RELANGUAGE_MIN_CONFIDENCE = 0.70
 
 
 def _recheck_segment_languages(
-    wav_path: str, segments: list[TranscriptSegment], model
+    wav_path: str,
+    segments: list[TranscriptSegment],
+    model,
+    aliases: dict[str, str] | None = None,
 ) -> int:
     """Re-detect each segment's language on its own audio; re-decode the
     ones that were wrong. Returns how many changed.
@@ -501,6 +513,13 @@ def _recheck_segment_languages(
     for seg in segments:
         chunk = _audio.slice_waveform(samples, sr, seg.start, seg.end)
         detected = detect_one_language(model, chunk)
+        if detected:
+            detected = (apply_aliases(detected[0], aliases or {}), detected[1])
+            # Kept even when it is too weak to act on. Re-decoding a line needs
+            # strong evidence; deciding *not* to accuse the model of skipping
+            # the transcript needs much less, and this is what that check
+            # reads.
+            seg.detected_language = detected[0]
         if not _should_relanguage(seg, detected):
             continue
         language, _confidence = detected
@@ -541,19 +560,36 @@ _SAME_TEXT_RATIO = 0.80
 _MIN_COMPARABLE_CHARS = 12
 
 
-def _flag_missing_native_text(segments: list[TranscriptSegment]) -> None:
-    """Mark segments whose native-script text is really just the English.
+def _reconcile_english_lines(segments: list[TranscriptSegment]) -> None:
+    """Sort out lines whose transcript and translation say the same thing.
 
-    A small Whisper checkpoint hands back an English translation even with the
-    language pinned: transcribe and translate share one decoder, and the tiny
-    and base models conflate the two tasks. What comes out looks like a clean
-    transcript, which is worse than an obviously broken one -- nothing on the
-    page says the speaker's own words are missing.
+    That happens for two opposite reasons, and telling them apart matters:
+
+    * The speaker used English, inside a recording labelled something else.
+      The transcript is right and the label is wrong; the two renderings
+      agreeing is exactly what correct English output looks like.
+    * A small Whisper checkpoint returned an English translation instead of
+      transcribing. Transcribe and translate share one decoder, and the tiny
+      and base models conflate the tasks, so what comes out reads like a clean
+      transcript while the speaker's own words are missing.
+
+    The segment's own audio decides. Only when it does *not* say English is
+    the model accused of skipping the transcript -- an accusation should need
+    more evidence than staying quiet does, and a warning on a correct line is
+    itself a wrong answer.
+
+    When the audio does say English, the label is corrected and the duplicate
+    translation dropped rather than printed twice.
     """
     for seg in segments:
         if seg.language == ENGLISH or not seg.english:
             continue
-        seg.native_is_english = _nearly_the_same(seg.text, seg.english)
+        if not _nearly_the_same(seg.text, seg.english):
+            continue
+        if seg.detected_language == ENGLISH:
+            seg.language, seg.english = ENGLISH, None
+        else:
+            seg.native_is_english = True
 
 
 def _nearly_the_same(native: str, english: str) -> bool:

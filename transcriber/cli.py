@@ -15,6 +15,7 @@ import time
 from .core import transcribe_file
 from .output import render, to_summary
 from .credentials import permission_warning, token_file
+from .language import parse_aliases
 from .runtime import announce_environment, build_id
 
 
@@ -52,6 +53,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-multilingual", action="store_true",
                    help="Decode the whole file in one auto-detected language "
                         "instead of allowing the language to change mid-file.")
+    p.add_argument("--language-alias", action="append", metavar="FROM=TO",
+                   default=None,
+                   help="Treat one detected language as another, e.g. "
+                        "--language-alias ur=hi to get Hindustani in "
+                        "Devanagari rather than whichever script the "
+                        "detector leaned towards. Repeatable.")
     p.add_argument("--no-transliterate", action="store_true",
                    help="Skip the Latin transliteration of non-Latin scripts.")
     p.add_argument("--no-translate", action="store_true",
@@ -112,6 +119,7 @@ def main(argv: list[str] | None = None) -> int:
             whisper_model=args.model,
             language=args.language,
             multilingual=not args.no_multilingual,
+            language_aliases=parse_aliases(args.language_alias),
             transliterate=not args.no_transliterate,
             translate=not args.no_translate,
             # Naming a speaker needs their voiceprint, which only the

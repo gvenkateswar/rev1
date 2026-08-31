@@ -28,6 +28,7 @@ try:
     )
     from .runtime import announce_environment, build_id
     from .core import transcribe_file
+    from .language import parse_aliases
     from .emotion import _EMOJI
     from .identify import DEFAULT_MIN_ENROLL_SECONDS
     from .output import LOW_CONFIDENCE, render, renderings
@@ -39,6 +40,7 @@ except ImportError:
     )
     from transcriber.runtime import announce_environment, build_id
     from transcriber.core import transcribe_file
+    from transcriber.language import parse_aliases
     from transcriber.emotion import _EMOJI
     from transcriber.identify import DEFAULT_MIN_ENROLL_SECONDS
     from transcriber.output import LOW_CONFIDENCE, render, renderings
@@ -100,6 +102,15 @@ def main() -> None:
             help="Re-detects the language every 30s, so a bilingual "
                  "conversation transcribes correctly throughout. Ignored when "
                  "a language is pinned above.",
+        )
+        aliases_raw = st.text_input(
+            "Treat one language as another", value="",
+            placeholder="ur=hi",
+            help="Whisper detects a script and register as much as a "
+                 "language: the same Hindustani sentence comes back as 'ur' "
+                 "in Arabic script or 'hi' in Devanagari depending on which "
+                 "way it leans. 'ur=hi' pins it to Devanagari. Comma-separate "
+                 "several.",
         )
         transliterate = st.checkbox(
             "Transliterate non-Latin scripts", value=True,
@@ -183,8 +194,14 @@ def main() -> None:
         if src is None:
             st.error("Please upload a file or enter a valid local path.")
             return
+        try:
+            aliases = parse_aliases(
+                [p for p in aliases_raw.split(",") if p.strip()])
+        except ValueError as exc:
+            st.error(str(exc))
+            return
         _run(src, model, language, multilingual, transliterate, translate,
-             backend, hf_token, num_speakers, identify, threshold,
+             aliases, backend, hf_token, num_speakers, identify, threshold,
              detect_emotion, source, audio_weight)
 
     # Rendered outside the button so it survives the rerun that naming causes.
@@ -237,7 +254,7 @@ def _resolve_source(uploaded, local_path: str) -> str | None:
 
 
 def _run(src, model, language, multilingual, transliterate, translate,
-         backend, hf_token, num_speakers,
+         aliases, backend, hf_token, num_speakers,
          identify, threshold, detect_emotion, source, audio_weight) -> None:
     # Drop the previous run's result before starting. Streamlit renders the
     # results block below this one, so leaving it would show a finished
@@ -261,6 +278,7 @@ def _run(src, model, language, multilingual, transliterate, translate,
             multilingual=multilingual,
             transliterate=transliterate,
             translate=translate,
+            language_aliases=aliases,
             identify_speakers=identify,
             match_threshold=threshold,
             diarization_backend=backend,

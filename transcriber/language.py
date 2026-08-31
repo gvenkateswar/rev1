@@ -271,3 +271,29 @@ def describe_spans(spans: list[LanguageSpan]) -> str:
         f"{s.language} {s.start:.0f}-{s.end:.0f}s ({s.confidence:.2f})"
         for s in spans
     )
+
+
+def parse_aliases(pairs: list[str] | None) -> dict[str, str]:
+    """Turn ["ur=hi", "nn=no"] into {"ur": "hi", "nn": "no"}.
+
+    Whisper detects a *script and register* as much as a language: the same
+    Hindustani sentence comes back as "ur" in Arabic script or "hi" in
+    Devanagari depending on which way the detector leans. Somebody who reads
+    one and not the other wants a consistent answer, and only they can say
+    which.
+    """
+    aliases: dict[str, str] = {}
+    for pair in pairs or []:
+        code, sep, target = pair.partition("=")
+        code, target = code.strip().lower(), target.strip().lower()
+        if not sep or not code or not target:
+            raise ValueError(
+                f"Bad language alias {pair!r}. Expected FROM=TO, e.g. ur=hi"
+            )
+        aliases[code] = target
+    return aliases
+
+
+def apply_aliases(language: str, aliases: dict[str, str]) -> str:
+    """Rewrite one detected code. Unmapped codes pass through untouched."""
+    return aliases.get(language.lower(), language) if aliases else language

@@ -1,7 +1,9 @@
 """Tests for pipeline glue: speaker alignment and language/confidence labelling."""
 from __future__ import annotations
 
-from transcriber import core
+import pytest
+
+from transcriber import core, language
 from transcriber.core import (
     TranscriptSegment, _attach_languages, _overlapping_raw, _ordered_speakers,
     assign_speakers,
@@ -137,9 +139,10 @@ def test_a_failed_detection_is_not_a_disagreement():
 # --------------------------------------------------------------------------- #
 # Detecting a "transcript" that is really the translation
 # --------------------------------------------------------------------------- #
-def flagged(text, english, language="hi"):
-    s = core.TranscriptSegment(0, 5, "S1", text, language=language, english=english)
-    core._flag_missing_native_text([s])
+def flagged(text, english, language="hi", detected=None):
+    s = core.TranscriptSegment(0, 5, "S1", text, language=language,
+                               english=english, detected_language=detected)
+    core._reconcile_english_lines([s])
     return s.native_is_english
 
 
@@ -187,7 +190,7 @@ def test_a_segment_with_no_translation_is_never_flagged():
     """Nothing to compare against is not evidence of anything."""
     s = core.TranscriptSegment(0, 5, "S1", "some long enough text here",
                                language="hi", english=None)
-    core._flag_missing_native_text([s])
+    core._reconcile_english_lines([s])
     assert s.native_is_english is False
 
 
@@ -196,7 +199,7 @@ def test_the_result_counts_the_flagged_lines():
                                   language="hi", english="Hello how are you")
     bad = core.TranscriptSegment(5, 9, "S1", "How do you earn Urfi?",
                                  language="hi", english="How do you earn Urfi?")
-    core._flag_missing_native_text([good, bad])
+    core._reconcile_english_lines([good, bad])
     result = core.TranscriptResult(
         segments=[good, bad], language="hi", speakers=["S1"], source="m.wav")
     assert result.untranscribed_segments == 1
@@ -276,3 +279,61 @@ def test_merging_drops_empty_intervals():
 
 def test_merging_keeps_separate_intervals_apart():
     assert core._merge_intervals([(0, 2), (5, 7)]) == [(0, 2), (5, 7)]
+
+
+def test_english_speech_inside_a_hindi_recording_is_not_an_accusation():
+    """The false positive: the speaker really did say "let me think".
+
+    The transcript is right and the span's label is wrong. Two renderings
+    agreeing is what correct English output looks like, and warning about it
+    is itself a wrong answer.
+    """
+    s = core.TranscriptSegment(0, 5, "S1", "let me think, let me think.",
+                               language="hi", english="Let me think, let me think",
+                               detected_language="en")
+    core._reconcile_english_lines([s])
+    assert s.native_is_english is False
+    assert s.language == "en"          # the label is corrected
+    assert s.english is None           # and the duplicate line dropped
+
+
+def test_audio_that_is_not_english_still_accuses_the_model():
+    """Its own audio says Hindi, yet the text came back English."""
+    assert flagged("How do you earn Urfi?", "How do you earn Urfi?",
+                   detected="hi") is True
+
+
+def test_an_unchecked_segment_is_still_flagged():
+    """detected_language is None when the re-check did not run."""
+    assert flagged("How do you earn Urfi?", "How do you earn Urfi?",
+                   detected=None) is True
+
+
+# --------------------------------------------------------------------------- #
+# Language aliases
+# --------------------------------------------------------------------------- #
+def test_an_alias_rewrites_a_detected_code():
+    assert language.apply_aliases("ur", {"ur": "hi"}) == "hi"
+
+
+def test_an_unmapped_code_passes_through():
+    assert language.apply_aliases("ta", {"ur": "hi"}) == "ta"
+
+
+def test_no_aliases_changes_nothing():
+    assert language.apply_aliases("ur", {}) == "ur"
+
+
+def test_aliases_parse_from_pairs():
+    assert language.parse_aliases(["ur=hi", " NN = no "]) == {"ur": "hi", "nn": "no"}
+
+
+def test_no_alias_arguments_is_an_empty_map():
+    assert language.parse_aliases(None) == {}
+
+
+@pytest.mark.parametrize("bad", ["urhi", "ur=", "=hi", ""])
+def test_a_malformed_alias_is_rejected_loudly(bad):
+    """Silently ignoring it would leave the user wondering why nothing changed."""
+    with pytest.raises(ValueError, match="FROM=TO"):
+        language.parse_aliases([bad])

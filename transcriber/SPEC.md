@@ -140,10 +140,30 @@ audio, where it is the faster choice.
 Because the failure produces clean-looking English rather than obvious
 garbage, the pipeline also detects it: a non-English segment whose native text
 and English translation say nearly the same thing (difflib ratio >= 0.80 over
-letters and digits, minimum 12 characters) is flagged `native_is_english`, and
-both UIs mark those lines. Comparing meaning rather than script keeps it
-correct for Latin-script languages, where a real transcript still reads
-nothing like its translation.
+letters and digits, minimum 12 characters) is a candidate. Comparing meaning
+rather than script keeps that correct for Latin-script languages, where a real
+transcript still reads nothing like its translation.
+
+But two renderings agreeing has a second, opposite cause: **the speaker used
+English** inside a recording labelled otherwise. `_reconcile_english_lines`
+uses the segment's own detected language to choose. English audio means the
+transcript was right and the label wrong, so the line is relabelled and the
+duplicate translation dropped; anything else is flagged `native_is_english`
+and marked in both UIs. The detection is recorded by
+`_recheck_segment_languages` for every segment, including ones too weak to
+re-decode: acting on a detection needs strong evidence, declining to accuse
+the model needs much less, and a warning on a correct line is itself a wrong
+answer.
+
+### Language aliases
+
+Whisper detects a script and register as much as a language -- the same
+Hindustani sentence is `ur` in Arabic script or `hi` in Devanagari depending
+on which way the detector leans. `--language-alias ur=hi` rewrites a detected
+code before it reaches the decode, at all three points a language is chosen
+(the timeline, the per-segment re-check, and gap filling). A malformed alias
+raises rather than being ignored: silently doing nothing would look like the
+option had no effect.
 
 ### Three renderings
 

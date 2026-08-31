@@ -238,8 +238,23 @@ rule-driven romanizer: no model, no network, one API for every script.
 > What you get looks like a clean transcript and is not one. Drop to `base`
 > only for English-only audio.
 
-When it happens anyway, the transcript says so rather than presenting English
-as the original:
+### Hindi or Urdu, Devanagari or Nastaliq
+
+Whisper detects a **script and register** as much as a language: the same
+Hindustani sentence comes back as `ur` in Arabic script or `hi` in Devanagari
+depending on which way the detector leans, sometimes differently line to line.
+If you read one and not the other, pin it:
+
+```sh
+python -m transcriber call.m4a --language-alias ur=hi
+```
+
+Repeatable, and the GUI has a field for it (comma-separate several). It
+rewrites the detected code before decoding, so the transcript comes back in
+the script you asked for. Any pair works — `nn=no`, `bs=hr`.
+
+When the model returns English instead of transcribing, the transcript says so
+rather than presenting English as the original:
 
 ```
 [0:00:01] Speaker 1 [hi]: You keep watching on Instagram that you wear new clothes...
@@ -247,11 +262,20 @@ as the original:
           ⚠ this is the English translation, not the original
 ```
 
-The check is on the words, not the script: a line is flagged when its native
-text and its English translation say nearly the same thing, which is what a
-correct transcript never does. That works for Latin-script languages too —
-Spanish transcribed properly reads nothing like its own translation. JSON
-carries `native_is_english` per segment.
+A line is flagged when its native text and its English translation say nearly
+the same thing — on the words, not the script, so a correctly transcribed
+Latin-script language is safe (Spanish reads nothing like its own
+translation).
+
+**Unless the speaker actually used English.** Two renderings agreeing happens
+for two opposite reasons, and the segment's own audio decides which: if it
+says English, the transcript is right, the *label* was wrong, and the line is
+relabelled `en` with the duplicate translation dropped. Only when the audio
+says otherwise is the model accused of skipping the transcript. An accusation
+should need more evidence than staying quiet does, and a warning on a correct
+line is itself a wrong answer.
+
+JSON carries `native_is_english` and `detected_language` per segment.
 
 > The text emotion model is English-only. Non-English segments are scored on
 > **voice tone alone** rather than being fed to a model that would return a
@@ -293,6 +317,7 @@ Output (txt):
 | `--model` | Whisper size: tiny/base/small/medium/large-v3, or `distil-large-v3` | `small` |
 | `--language` | Pin one language (ISO code) for the whole file | auto-detect |
 | `--no-multilingual` | Detect the language once instead of building a timeline | off |
+| `--language-alias` | `ur=hi` — treat one detected language as another (repeatable) | — |
 | `--no-transliterate` | Skip the Latin transliteration of non-Latin scripts | off |
 | `--no-translate` | Skip the English translation (saves a second Whisper pass) | off |
 | `--diarization` | `cluster` (offline) or `pyannote` (best, needs token) | `cluster` |

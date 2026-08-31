@@ -9,9 +9,10 @@ Runs **entirely on your machine**. The Streamlit GUI just opens in your
 browser; nothing is uploaded anywhere.
 
 ```
-extract audio (ffmpeg) → detect language timeline → Whisper transcription
-                       → speaker diarization → recognise known speakers
-                       → align speakers to words → fuse audio+text emotion
+extract audio (ffmpeg) → detect language timeline → transcribe each span
+                       → translate non-English spans → speaker diarization
+                       → recognise known speakers → align speakers to words
+                       → transliterate non-Latin scripts → fuse audio+text emotion
 ```
 
 ## What makes this different
@@ -20,6 +21,9 @@ extract audio (ffmpeg) → detect language timeline → Whisper transcription
   tags them automatically — no re-labelling each meeting.
 - **Code-switching works.** A bilingual conversation is transcribed in whichever
   language is actually being spoken, with per-segment language labels.
+- **Non-English stays non-English.** Speech is kept in its own script, and each
+  line also gets a Latin transliteration and an English translation — three
+  renderings of the same words, not one lossy compromise.
 - **It admits uncertainty.** Low-confidence lines are flagged, and a voice it
   isn't sure about stays "Speaker 2" instead of being given the wrong name.
 
@@ -30,16 +34,22 @@ first skips loading. See [Performance](#performance) to go faster still.
 
 ## Install
 
-Requires Python 3.9+ and **ffmpeg** on your PATH
-(`sudo apt install ffmpeg` / `brew install ffmpeg` / `choco install ffmpeg`).
+Requires **Python 3.10+** (uroman, the transliterator, needs it) and **ffmpeg**
+on your PATH (`sudo apt install ffmpeg` / `brew install ffmpeg` /
+`choco install ffmpeg`).
 
 ```sh
-cd transcriber
-pip install -r requirements.txt
+pip install -r transcriber/requirements.txt
 ```
 
 The first run downloads the Whisper and emotion models (a few hundred MB),
 then caches them.
+
+On **Apple Silicon**, install a native arm64 Python — a Rosetta x86 build is
+several times slower and loads two conflicting copies of the OpenMP runtime.
+See [Troubleshooting](#troubleshooting) if you hit `Abort trap: 6`, a segfault
+after switching venvs, or `No module named 'pkg_resources'`; each has a
+one-line fix there.
 
 ## Use it — GUI (recommended)
 
@@ -50,7 +60,8 @@ streamlit run transcriber/gui.py
 
 Upload a file (or paste a local path), pick your settings in the sidebar, and
 click **Transcribe**. You get a color-coded, per-speaker transcript with
-emotion tags, plus `.txt` / `.json` / `.srt` downloads.
+emotion tags — and, for non-English lines, the transliteration and translation
+underneath — plus `.txt` / `.json` / `.srt` / `.vtt` downloads.
 
 ## Remembering speakers
 
@@ -134,24 +145,63 @@ By default the language is auto-detected **and allowed to change mid-recording**
 so a Hindi/English conversation transcribes correctly throughout instead of
 being force-decoded into whichever language came first.
 
+Non-English speech stays in the script it was spoken in, and carries two more
+renderings of the same words:
+
 ```sh
 python -m transcriber bilingual-call.m4a
 # Languages: hi (142s), en (96s)
 # [0:00:03] Priya [hi]: नमस्ते, कैसे हैं आप?
+#           [latin] namaste, kaise haim aap?
+#           [english] Hello, how are you?
 # [0:00:07] Rahul [en]: Doing well, thanks — shall we start?
 ```
 
-Language tags only appear when a recording actually contains more than one
-language. To pin a single language (slightly faster, and correct if you know
-there is only one), pass `--language en`. To auto-detect once for the whole file
-rather than continuously, pass `--no-multilingual`.
+| Rendering | What it is | JSON field |
+|---|---|---|
+| Native script | What was said, written the way it is written | `text` |
+| Latin transliteration | The *same words*, spelled in the Latin alphabet | `latin` |
+| English translation | What those words *mean*, in English | `english` |
 
-**How it works:** faster-whisper's `multilingual=True` re-detects the language on
-every 30s decode window, which is what makes the decode correct. It does not
-report *which* language each segment used, so a separate detection pass builds a
-language timeline and labels every segment. A switch must be confirmed by two
-consecutive windows before it is accepted, so a loanword or a name does not
-register as a language change.
+Both extra lines appear only when they add something. An English segment gets
+neither. A segment already written in Latin letters — French, Vietnamese,
+Turkish — gets a translation but no transliteration, because romanizing it
+would just reprint the line. All four output formats carry them: `txt`, `json`,
+`srt` and `vtt`.
+
+- `--no-transliterate` skips the romanization.
+- `--no-translate` skips the translation. It is a second Whisper pass, so this
+  is the faster option.
+- `--language en` pins one language for the whole file.
+- `--no-multilingual` auto-detects once instead of building a timeline.
+
+### How it works
+
+The language timeline comes first: overlapping 30s probes, 15s apart, and a
+switch is only accepted once **two consecutive probes agree** — so a loanword
+or a name does not register as a language change.
+
+Each span is then decoded **with its language pinned**. This is the part that
+keeps Hindi in Devanagari. Two things otherwise push Whisper into English:
+
+1. Left to itself, it re-detects on each 30s window in isolation. Our timeline
+   sees overlapping windows and requires confirmation, so it is the better
+   answer — and once you have it, guessing again during the decode can only
+   lose.
+2. Whisper conditions each window on the text it produced for the previous
+   one. Across a language change that prompt is a block of the *old* language,
+   and the model follows it. Spans are decoded independently, so nothing
+   prompts the next span in the wrong language.
+
+The English translation is Whisper's own `translate` task — English is the only
+target it was trained for — run as a second pass over the non-English spans
+only. The transliteration is [uroman](https://pypi.org/project/uroman/), a
+rule-driven romanizer: no model, no network, one API for every script.
+
+> **Use `--model small` or better for non-English speech.** `tiny` and `base`
+> have high error rates outside English and will drift into English on their
+> own, whatever the pipeline pins. This is a model-quality limit, not a
+> settings problem.
 
 > The text emotion model is English-only. Non-English segments are scored on
 > **voice tone alone** rather than being fed to a model that would return a
@@ -192,7 +242,9 @@ Output (txt):
 |------|---------|---------|
 | `--model` | Whisper size: tiny/base/small/medium/large-v3, or `distil-large-v3` | `base` |
 | `--language` | Pin one language (ISO code) for the whole file | auto-detect |
-| `--no-multilingual` | Detect the language once instead of per 30s window | off |
+| `--no-multilingual` | Detect the language once instead of building a timeline | off |
+| `--no-transliterate` | Skip the Latin transliteration of non-Latin scripts | off |
+| `--no-translate` | Skip the English translation (saves a second Whisper pass) | off |
 | `--diarization` | `cluster` (offline) or `pyannote` (best, needs token) | `cluster` |
 | `--speakers N` | Number of speakers if known | auto-detect |
 | `--hf-token` | HF token for pyannote (or set `HF_TOKEN`) | — |
@@ -386,6 +438,24 @@ transcription": it drops overlapping speech turns, and this pipeline assigns
 each Whisper word to the turn covering it, which is ambiguous when two turns
 overlap.
 
+### Non-English speech comes out written in English
+
+Two causes, and they stack.
+
+**The pipeline used to let Whisper pick the language during decoding.** Fixed:
+each detected language span is now decoded with its language pinned, and spans
+are decoded independently so one cannot prompt the next in the wrong language.
+See [How it works](#how-it-works) above for why both halves of that matter.
+
+**The model may simply be too small.** `tiny` and `base` have high error rates
+outside English and drift into it on their own — no amount of pinning fixes a
+model that does not know the language well. Use `--model small` or better
+(`medium`, `large-v3`), or `distil-large-v3` for near-large accuracy at a
+fraction of the cost. In the GUI, the model dropdown carries the same note.
+
+If you know the whole recording is in one language, `--language hi` is both
+faster and stricter than auto-detection.
+
 ### "No module named 'pkg_resources'" from Resemblyzer
 
 Fix:
@@ -491,11 +561,15 @@ Going faster still:
 - **Model size:** `--model distil-large-v3` is near-large accuracy at a
   fraction of the cost; `tiny`/`base` are fastest on CPU.
 - **Skip emotion:** `--no-emotion` drops the emotion stage entirely.
+- **Skip translation:** `--no-translate` drops the second Whisper pass. It runs
+  over the non-English spans only, so on an English recording there is nothing
+  to save; on an all-Hindi one it is close to a second full decode.
 
 Example timing line (CPU, `base`, ~2 min clip):
 
 ```
-Timing: extract=0.4s transcribe=18.2s diarize=6.1s emotion=3.4s  (total 28.1s)
+Timing: extract=0.4s language=1.1s transcribe=18.2s translate=9.7s
+        diarize=6.1s emotion=3.4s  (total 38.9s)
 ```
 
 ## Library use
@@ -509,6 +583,10 @@ print(result.identified)    # {"Speaker 1": "Priya"}
 
 for seg in result.segments:
     print(seg.start, seg.speaker, seg.language, seg.confidence, seg.text)
+    if seg.latin:                       # None when already in Latin script
+        print("   latin:  ", seg.latin)
+    if seg.english:                     # None when already English
+        print("   english:", seg.english)
 ```
 
 Remember a speaker straight from a result, without re-processing the audio:
@@ -525,14 +603,16 @@ with SpeakerStore() as store:
 ```
 transcriber/
   audio.py        # ffmpeg extraction + waveform slicing
-  transcribe.py   # Whisper (segments, words, confidence, multilingual decode)
+  transcribe.py   # Whisper: per-span decode, translate pass, confidence
   language.py     # language timeline for code-switching
+  translit.py     # Latin transliteration of non-Latin scripts (uroman)
   diarize.py      # both diarization backends -> unified Turns
   identify.py     # voiceprint extraction + matching against known speakers
   speakerdb.py    # persistent SQLite speaker/voiceprint store
   emotion.py      # audio + text emotion, fused, language-aware
   core.py         # pipeline + speaker/word alignment
   output.py       # txt / json / srt / vtt renderers
+  runtime.py      # OpenMP guard + optional-dependency imports
   cli.py          # `python -m transcriber`
   gui.py          # `streamlit run transcriber/gui.py`
   tests/          # pure-logic tests (no models or ffmpeg needed)

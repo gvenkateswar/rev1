@@ -137,3 +137,56 @@ def test_no_identify_alone_disables_identification(monkeypatch):
     monkeypatch.setattr(cli, "transcribe_file", fake_transcribe_file)
     cli.main(["audio.wav", "--no-identify"])
     assert captured["identify_speakers"] is False
+
+
+# --------------------------------------------------------------------------- #
+# Three renderings in the rendered output
+# --------------------------------------------------------------------------- #
+def trilingual() -> TranscriptResult:
+    return result(segments=[
+        TranscriptSegment(0, 3, "Priya", "Good morning.", language="en",
+                          confidence=0.95, emotion="happy", emotion_score=0.8),
+        TranscriptSegment(3, 7, "Speaker 2", "नमस्ते", language="hi",
+                          latin="namaste", english="greetings",
+                          confidence=0.88, emotion="neutral",
+                          emotion_score=0.6),
+    ])
+
+
+def test_text_shows_native_then_latin_then_english():
+    lines = to_text(trilingual()).splitlines()
+    assert lines[1].endswith("नमस्ते")
+    assert lines[2].strip() == "[latin] namaste"
+    assert lines[3].strip() == "[english] greetings"
+
+
+def test_an_english_line_gains_no_extra_lines():
+    """The common case must not cost the reader two blank-ish lines."""
+    lines = to_text(trilingual()).splitlines()
+    assert "[latin]" not in lines[0]
+    assert "[english]" not in lines[0]
+
+
+def test_renderings_reach_srt_and_vtt():
+    for fmt in ("srt", "vtt"):
+        out = render(trilingual(), fmt)
+        assert "[latin] namaste" in out, fmt
+        assert "[english] greetings" in out, fmt
+
+
+def test_renderings_survive_json_round_trip():
+    payload = json.loads(render(trilingual(), "json"))
+    hindi = payload["segments"][1]
+    assert (hindi["text"], hindi["latin"], hindi["english"]) == (
+        "नमस्ते", "namaste", "greetings")
+    assert payload["segments"][0]["latin"] is None
+
+
+def test_a_segment_with_only_a_translation_shows_only_that():
+    """Romanization off, translation on -- one extra line, not a blank one."""
+    one = result(segments=[
+        TranscriptSegment(0, 3, "S1", "नमस्ते", language="hi",
+                          english="greetings")])
+    lines = to_text(one).splitlines()
+    assert len(lines) == 2
+    assert lines[1].strip() == "[english] greetings"

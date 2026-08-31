@@ -32,12 +32,21 @@ def stub_pipeline(monkeypatch, tmp_path):
     monkeypatch.setattr(
         core.os, "unlink", lambda p: state["unlinked"].append(p))
 
-    monkeypatch.setattr(core, "transcribe", lambda *a, **k: (
-        [RawSegment(0, 4, "hello there", [
+    native = [
+        RawSegment(0, 4, "hello there", [
             Word(0, 1, "hello", 0.9), Word(1, 4, " there", 0.9)]),
-         RawSegment(40, 44, "namaste", [Word(40, 44, "namaste", 0.5)])],
-        "en",
-    ))
+        RawSegment(40, 44, "\u0928\u092e\u0938\u094d\u0924\u0947", [
+            Word(40, 44, "\u0928\u092e\u0938\u094d\u0924\u0947", 0.5)]),
+    ]
+
+    def fake_spans(wav_path, spans, *, model, task="transcribe", **kw):
+        state.setdefault("tasks", []).append((task, [s.language for s in spans]))
+        if task == "translate":
+            return [RawSegment(40, 44, "greetings")]
+        return list(native)
+
+    monkeypatch.setattr(core, "transcribe", lambda *a, **k: (list(native), "en"))
+    monkeypatch.setattr(core, "transcribe_spans", fake_spans)
     monkeypatch.setattr(core, "diarize", lambda *a, **k: [
         Turn(0, 4, "Speaker 1"), Turn(40, 44, "Speaker 2")])
     monkeypatch.setattr(core, "detect_language_timeline", lambda *a, **k: [
@@ -158,3 +167,68 @@ def test_dominant_language_wins_over_first_detected(stub_pipeline, monkeypatch):
                                   detect_emotion=False)
     assert result.language == "hi"
     assert list(result.languages) == ["hi", "en"]
+
+
+# --------------------------------------------------------------------------- #
+# Three renderings: native script, Latin transliteration, English translation
+# --------------------------------------------------------------------------- #
+NAMASTE = "नमस्ते"
+
+
+def test_native_script_survives_the_pipeline(stub_pipeline):
+    """The reported bug: non-English speech came back written in English."""
+    result = core.transcribe_file("m.mp4", identify_speakers=False,
+                                  detect_emotion=False)
+    assert result.segments[1].text == NAMASTE
+
+
+def test_translation_only_decodes_the_non_english_spans(stub_pipeline):
+    core.transcribe_file("m.mp4", identify_speakers=False, detect_emotion=False)
+    assert stub_pipeline["tasks"] == [
+        ("transcribe", ["en", "hi"]),
+        ("translate", ["hi"]),      # the English span is not decoded twice
+    ]
+
+
+def test_translation_lands_on_the_segment_it_overlaps(stub_pipeline):
+    result = core.transcribe_file("m.mp4", identify_speakers=False,
+                                  detect_emotion=False)
+    assert result.segments[0].english is None      # already English
+    assert result.segments[1].english == "greetings"
+
+
+def test_transliteration_fills_latin_for_non_latin_script_only(stub_pipeline):
+    pytest.importorskip("uroman")
+    result = core.transcribe_file("m.mp4", identify_speakers=False,
+                                  detect_emotion=False)
+    assert result.segments[0].latin is None        # already Latin
+    assert result.segments[1].latin == "namaste"
+
+
+def test_both_renderings_can_be_turned_off(stub_pipeline):
+    result = core.transcribe_file("m.mp4", identify_speakers=False,
+                                  detect_emotion=False,
+                                  transliterate=False, translate=False)
+    assert all(s.latin is None for s in result.segments)
+    assert all(s.english is None for s in result.segments)
+    assert [t for t, _ in stub_pipeline["tasks"]] == ["transcribe"]
+
+
+def test_an_english_recording_pays_for_no_translation_pass(
+        stub_pipeline, monkeypatch):
+    monkeypatch.setattr(core, "detect_language_timeline", lambda *a, **k: [
+        LanguageSpan(0, 60, "en", 0.95)])
+    core.transcribe_file("m.mp4", identify_speakers=False, detect_emotion=False)
+    assert [t for t, _ in stub_pipeline["tasks"]] == ["transcribe"]
+    assert "translate" not in core.transcribe_file(
+        "m.mp4", identify_speakers=False, detect_emotion=False).timings
+
+
+def test_renderings_are_serialized(stub_pipeline):
+    pytest.importorskip("uroman")
+    result = core.transcribe_file("m.mp4", identify_speakers=False,
+                                  detect_emotion=False)
+    payload = result.segments[1].to_dict()
+    assert payload["text"] == NAMASTE
+    assert payload["latin"] == "namaste"
+    assert payload["english"] == "greetings"

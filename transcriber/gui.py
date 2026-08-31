@@ -7,6 +7,7 @@ uploaded anywhere.
 """
 from __future__ import annotations
 
+import html
 import os
 import sys
 import tempfile
@@ -25,7 +26,7 @@ try:
     from .core import transcribe_file
     from .emotion import _EMOJI
     from .identify import DEFAULT_MIN_ENROLL_SECONDS
-    from .output import LOW_CONFIDENCE, render
+    from .output import LOW_CONFIDENCE, render, renderings
     from .speakerdb import SpeakerStore, default_db_path
 except ImportError:
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -33,7 +34,7 @@ except ImportError:
     from transcriber.core import transcribe_file
     from transcriber.emotion import _EMOJI
     from transcriber.identify import DEFAULT_MIN_ENROLL_SECONDS
-    from transcriber.output import LOW_CONFIDENCE, render
+    from transcriber.output import LOW_CONFIDENCE, render, renderings
     from transcriber.speakerdb import SpeakerStore, default_db_path
 
 # Stable colors per speaker slot (cycled if there are more speakers).
@@ -73,8 +74,13 @@ def main() -> None:
     with st.sidebar:
         st.header("Settings")
         model = st.selectbox(
-            "Whisper model", ["tiny", "base", "small", "medium", "large"],
-            index=1, help="Bigger = more accurate but slower.",
+            "Whisper model",
+            ["tiny", "base", "small", "medium", "large-v3", "distil-large-v3"],
+            index=1,
+            help="Bigger = more accurate but slower. For anything other than "
+                 "English, use 'small' or better: the tiny and base models "
+                 "have high error rates on non-English speech and drift into "
+                 "English on their own.",
         )
         language = st.text_input("Language (blank = auto-detect)", value="")
         multilingual = st.checkbox(
@@ -83,6 +89,17 @@ def main() -> None:
             help="Re-detects the language every 30s, so a bilingual "
                  "conversation transcribes correctly throughout. Ignored when "
                  "a language is pinned above.",
+        )
+        transliterate = st.checkbox(
+            "Transliterate non-Latin scripts", value=True,
+            help="Spells non-Latin speech in the Latin alphabet as well, so "
+                 "you can follow along without reading the script.",
+        )
+        translate = st.checkbox(
+            "Translate non-English speech", value=True,
+            help="Adds an English translation. This is a second Whisper pass "
+                 "over the non-English stretches only, so it roughly doubles "
+                 "the time spent on those parts.",
         )
 
         st.subheader("Speakers")
@@ -138,9 +155,9 @@ def main() -> None:
         if src is None:
             st.error("Please upload a file or enter a valid local path.")
             return
-        _run(src, model, language, multilingual, backend, hf_token,
-             num_speakers, identify, threshold, detect_emotion, source,
-             audio_weight)
+        _run(src, model, language, multilingual, transliterate, translate,
+             backend, hf_token, num_speakers, identify, threshold,
+             detect_emotion, source, audio_weight)
 
     # Rendered outside the button so it survives the rerun that naming causes.
     if st.session_state.get("result") is not None:
@@ -191,7 +208,8 @@ def _resolve_source(uploaded, local_path: str) -> str | None:
     return None
 
 
-def _run(src, model, language, multilingual, backend, hf_token, num_speakers,
+def _run(src, model, language, multilingual, transliterate, translate,
+         backend, hf_token, num_speakers,
          identify, threshold, detect_emotion, source, audio_weight) -> None:
     bar = st.progress(0.0, text="Starting…")
 
@@ -204,6 +222,8 @@ def _run(src, model, language, multilingual, backend, hf_token, num_speakers,
             whisper_model=model,
             language=language or None,
             multilingual=multilingual,
+            transliterate=transliterate,
+            translate=translate,
             identify_speakers=identify,
             match_threshold=threshold,
             diarization_backend=backend,
@@ -351,13 +371,22 @@ def _render_transcript(result, detect_emotion: bool) -> None:
                           f"</span>")
             emo = (f" &nbsp; {emoji} <b>{seg.emotion}</b> "
                    f"<span style='color:#888'>{seg.emotion_score:.0%}</span>{detail}")
+        # Everything interpolated below is escaped: the transcript is model
+        # output and the speaker names are typed by the user, and this block
+        # is rendered as raw HTML.
+        extra = "".join(
+            f"<div style='color:#555;font-size:0.92em;margin-top:.15em'>"
+            f"<span style='color:#999'>{label}</span> {html.escape(text)}</div>"
+            for label, text in renderings(seg)
+        )
         st.markdown(
             f"<div style='border-left:4px solid {color};padding:.2em .8em;"
             f"margin:.3em 0'>"
-            f"<span style='color:{color};font-weight:600'>{seg.speaker}{known}</span>"
+            f"<span style='color:{color};font-weight:600'>"
+            f"{html.escape(seg.speaker)}{known}</span>"
             f"<span style='color:#888'> · {_fmt_ts(seg.start)}</span>"
             f"{lang}{conf}{emo}<br>"
-            f"{seg.text}</div>",
+            f"{html.escape(seg.text)}{extra}</div>",
             unsafe_allow_html=True,
         )
 

@@ -22,9 +22,16 @@ from . import audio as _audio
 from .diarize import Turn, diarize
 from .language import LanguageSpan, detect_language_timeline, language_for
 from .language import summarize as _summarize_languages
-from .transcribe import RawSegment, Word, load_model, transcribe
+from .transcribe import (
+    RawSegment, Word, load_model, transcribe, transcribe_spans,
+)
 
 ProgressCb = Callable[[str, float], None]
+
+# Whisper's "translate" task has exactly one target: English. It was never
+# trained to translate into anything else, so this is the language a segment
+# is already in when there is nothing to translate it to.
+ENGLISH = "en"
 
 
 @dataclass
@@ -32,8 +39,10 @@ class TranscriptSegment:
     start: float
     end: float
     speaker: str
-    text: str
+    text: str                   # what was said, in the script it was said in
     language: str = "en"
+    latin: str | None = None    # Latin transliteration, None if already Latin
+    english: str | None = None  # English translation, None if already English
     confidence: float = 1.0     # mean word probability, 0..1
     known_speaker: bool = False  # True when matched to an enrolled speaker
     emotion: str = "neutral"
@@ -51,6 +60,8 @@ class TranscriptSegment:
             "speaker": self.speaker,
             "known_speaker": self.known_speaker,
             "text": self.text,
+            "latin": self.latin,
+            "english": self.english,
             "language": self.language,
             "confidence": round(self.confidence, 4),
             "emotion": self.emotion,
@@ -119,6 +130,8 @@ def transcribe_file(
     speaker_db: str | None = None,
     match_threshold: float | None = None,
     match_margin: float | None = None,
+    transliterate: bool = True,
+    translate: bool = True,
     detect_emotion: bool = True,
     audio_weight: float = 0.5,
     use_audio_emotion: bool = True,
@@ -130,6 +143,12 @@ def transcribe_file(
     *multilingual* allows the language to change mid-recording. *language*
     pins one language and disables that. *identify_speakers* matches diarized
     voices against the persistent speaker store to recover real names.
+
+    Non-English speech is kept in the script it was spoken in and carries two
+    further renderings: *transliterate* spells it in the Latin alphabet, and
+    *translate* runs a second Whisper pass to put it into English. Both leave
+    already-English segments untouched, and translation only decodes the
+    non-English stretches, so an English recording pays for neither.
     """
     progress = progress or _noop
     hf_token = hf_token or os.environ.get("HF_TOKEN")
@@ -151,13 +170,32 @@ def transcribe_file(
 
         progress("Transcribing", 0.15)
         with _timed(timings, "transcribe"):
-            raw_segments, lang = transcribe(
-                wav_path,
-                model_name=whisper_model,
-                language=language,
-                multilingual=multilingual,
-                model=model,
-            )
+            if spans:
+                # We already know which language is spoken where, from
+                # overlapping probes with a confirmation rule. Decoding each
+                # span with that language pinned beats letting Whisper guess
+                # again per 30s window, which is what lets a non-English
+                # stretch come back written in English.
+                raw_segments = transcribe_spans(wav_path, spans, model=model)
+                lang = spans[0].language
+            else:
+                raw_segments, lang = transcribe(
+                    wav_path,
+                    model_name=whisper_model,
+                    language=language,
+                    multilingual=multilingual,
+                    model=model,
+                )
+
+        translated: list[RawSegment] = []
+        to_translate = _spans_to_translate(spans, lang, wav_path) if translate else []
+        if to_translate:
+            progress("Translating", 0.40)
+            with _timed(timings, "translate"):
+                translated = transcribe_spans(
+                    wav_path, to_translate, model=model,
+                    task="translate", word_timestamps=False,
+                )
 
         progress("Separating speakers", 0.55)
         with _timed(timings, "diarize"):
@@ -180,6 +218,9 @@ def transcribe_file(
 
         segments = assign_speakers(raw_segments, turns)
         _attach_languages(segments, raw_segments, spans, lang)
+        _attach_translations(segments, translated)
+        if transliterate:
+            _attach_transliterations(segments)
         for seg in segments:
             seg.known_speaker = seg.speaker in identified.values()
 
@@ -265,6 +306,74 @@ def _attach_languages(
         source = _overlapping_raw(seg, raw_segments)
         if source is not None:
             seg.confidence = source.confidence
+
+
+def _spans_to_translate(
+    spans: list[LanguageSpan], detected: str, wav_path: str
+) -> list[LanguageSpan]:
+    """The stretches worth running the translation pass over.
+
+    English stretches are skipped: Whisper translates into English, so it has
+    nothing to add to speech already in it, and the pass costs a second full
+    decode of whatever it is handed.
+    """
+    if spans:
+        return [s for s in spans if s.language != ENGLISH]
+    if detected == ENGLISH:
+        return []
+    # No timeline (a short file, or detection declined). The whole recording
+    # is one span of whatever Whisper detected.
+    return [
+        LanguageSpan(0.0, _audio.audio_duration(wav_path), detected, 1.0)
+    ]
+
+
+def _attach_translations(
+    segments: list[TranscriptSegment], translated: list[RawSegment]
+) -> None:
+    """Fill in ``english`` from a separate translate-task decode.
+
+    The two passes segment the audio independently, so they cannot be zipped.
+    Each translated segment is given to the transcript segment it overlaps
+    most and the pieces are joined in time order -- a partition, so no
+    sentence is attributed to two speakers at once.
+    """
+    if not segments or not translated:
+        return
+
+    buckets: dict[int, list[str]] = {}
+    for raw in translated:
+        index = _best_overlap_index(raw, segments)
+        if index is not None:
+            buckets.setdefault(index, []).append(raw.text.strip())
+
+    for index, parts in buckets.items():
+        text = " ".join(p for p in parts if p).strip()
+        if text:
+            segments[index].english = text
+
+
+def _best_overlap_index(
+    raw: RawSegment, segments: list[TranscriptSegment]
+) -> int | None:
+    best, best_overlap = None, 0.0
+    for i, seg in enumerate(segments):
+        overlap = min(seg.end, raw.end) - max(seg.start, raw.start)
+        if overlap > best_overlap:
+            best, best_overlap = i, overlap
+    return best
+
+
+def _attach_transliterations(segments: list[TranscriptSegment]) -> None:
+    """Fill in ``latin`` for segments written in a non-Latin script.
+
+    Imported here rather than at module scope so that uroman is only needed by
+    a run that actually has a non-Latin script to romanize.
+    """
+    from .translit import romanize
+
+    for seg in segments:
+        seg.latin = romanize(seg.text, seg.language)
 
 
 def _overlapping_raw(

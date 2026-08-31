@@ -37,14 +37,23 @@ def build_parser() -> argparse.ArgumentParser:
                    choices=["txt", "json", "srt", "vtt"],
                    help="Output format (default: txt).")
     p.add_argument("--model", default="base",
-                   help="Whisper model size: tiny/base/small/medium/large "
-                        "(default: base).")
+                   help="Whisper model size: tiny/base/small/medium/large-v3, "
+                        "or a distil-whisper id like distil-large-v3 "
+                        "(default: base). Use small or better for non-English "
+                        "speech -- tiny and base have high error rates on it "
+                        "and drift into English on their own.")
     p.add_argument("--language", default=None,
                    help="Force one language (ISO code) for the whole file. "
                         "Default: auto-detect, allowing mid-file switches.")
     p.add_argument("--no-multilingual", action="store_true",
                    help="Decode the whole file in one auto-detected language "
                         "instead of allowing the language to change mid-file.")
+    p.add_argument("--no-transliterate", action="store_true",
+                   help="Skip the Latin transliteration of non-Latin scripts.")
+    p.add_argument("--no-translate", action="store_true",
+                   help="Skip the English translation of non-English speech. "
+                        "The translation is a second Whisper pass over the "
+                        "non-English stretches, so this is the faster option.")
     p.add_argument("--diarization", default="cluster",
                    choices=["cluster", "pyannote"],
                    help="Speaker backend: 'cluster' (offline, no token) or "
@@ -94,6 +103,8 @@ def main(argv: list[str] | None = None) -> int:
             whisper_model=args.model,
             language=args.language,
             multilingual=not args.no_multilingual,
+            transliterate=not args.no_transliterate,
+            translate=not args.no_translate,
             # Naming a speaker needs their voiceprint, which only the
             # identification stage extracts -- so --name-speaker implies it
             # even under --no-identify. With nothing enrolled yet, matching is

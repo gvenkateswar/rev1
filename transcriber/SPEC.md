@@ -37,10 +37,12 @@ A voiceprint is a biometric identifier. Treat the store accordingly:
 ### Pipeline
 
     extract audio (ffmpeg)
-      -> language timeline      (detect_language over windows)
-      -> transcription          (faster-whisper, multilingual=True)
+      -> language timeline      (detect_language over overlapping windows)
+      -> transcription          (one decode per span, language pinned)
+      -> translation            (Whisper translate task, non-English spans)
       -> diarization            (cluster | pyannote)  -> anonymous Speaker N
       -> speaker identification (voiceprint match vs. speaker DB) -> real names
+      -> transliteration        (uroman, non-Latin scripts)
       -> emotion                (language-aware fusion)
 
 Identification slots between diarization and emotion: diarization says "these
@@ -48,19 +50,62 @@ turns are the same person", identification says "that person is Priya".
 
 ### Multilingual
 
-`faster_whisper.WhisperModel.transcribe(multilingual=True)` re-runs language
-detection on each 30s decode window and swaps the tokenizer, which is what makes
-code-switching decode correctly. It does **not** report which language each
-segment used — `Segment` has no language field and `info.language` is only the
-first detection.
+`language.py` runs a `detect_language` pass over overlapping windows (30s, 15s
+hop) to build a language timeline. Cost is one encoder pass per window, no
+decode. Contiguous same-language windows collapse into spans; spans shorter
+than `min_span` (default 3s) are absorbed into their neighbour, and a switch
+must be confirmed by two consecutive probes, because single-window flips are
+usually detector noise rather than a real switch.
 
-So `language.py` runs a separate `detect_language` pass over overlapping windows
-to build a language timeline, then labels each segment by the dominant language
-across its span. Cost is one extra encoder pass per window, no decode.
+The timeline then **steers the decode**: each span is transcribed separately
+with `language=` pinned to it. Two reasons, both observed as non-English
+speech coming back written in English:
 
-Contiguous same-language windows collapse into spans; spans shorter than
-`min_span` (default 3s) are absorbed into their neighbour, because single-window
-flips are usually detector noise rather than a real switch.
+1. `transcribe(multilingual=True)` re-detects on each 30s window in isolation.
+   The timeline sees overlapping windows and requires confirmation, so it is
+   the better answer; re-guessing during the decode can only lose. It also
+   does not report which language each segment used — `Segment` has no
+   language field and `info.language` is only the first detection — so it
+   could never have labelled segments on its own.
+2. Whisper conditions each window on the previous window's output
+   (`condition_on_previous_text`, default True). Across a language change that
+   prompt is a block of the old language and the model follows it. Spans are
+   decoded independently, so no span prompts the next one. Where a single pass
+   is still used (no timeline, or a pinned language), the flag is off unless
+   the language is pinned.
+
+Whisper model size is the remaining limit: `tiny` and `base` have high error
+rates outside English and drift into it regardless. Documented in the README
+and in both UIs rather than worked around.
+
+### Three renderings
+
+Non-English speech is presented three ways, because the useful rendering
+depends on the reader:
+
+| Field | Content | Produced by |
+|---|---|---|
+| `text` | the words, in the script they were spoken in | Whisper `transcribe` |
+| `latin` | the *same words*, in the Latin alphabet | uroman |
+| `english` | what those words *mean* | Whisper `translate` |
+
+Each optional field is `None` when it would add nothing — `latin` for text
+already in Latin script (including accented Latin: French, Vietnamese,
+Turkish), `english` for English. The renderers show a line only for a field
+that is set, so an English transcript is unchanged.
+
+Translation is Whisper's own `translate` task; English is the only target it
+was trained for. It is a second decode, so it runs over the non-English spans
+only and is skippable (`--no-translate`).
+
+The two passes segment independently, so they cannot be zipped. Each
+translated segment is assigned to the transcript segment it overlaps most — a
+partition, so no sentence is attributed to two speakers.
+
+Transliteration uses uroman: rule-driven (no model, no network) and script-
+driven, so one API covers every writing system instead of a per-script library
+that silently does nothing for the script nobody wired up. It is imported only
+when a run actually has a non-Latin script to romanize.
 
 ### Speaker identification
 
@@ -107,10 +152,11 @@ silently reweighting.
 | `transcriber/speakerdb.py` | **new** — SQLite store: schema, CRUD, centroids |
 | `transcriber/identify.py` | **new** — voiceprint extraction, matching, assignment |
 | `transcriber/language.py` | **new** — language timeline, span grouping |
-| `transcriber/core.py` | identification stage; per-segment `language`, `confidence` |
-| `transcriber/transcribe.py` | `multilingual=True`; expose word/segment confidence |
+| `transcriber/translit.py` | **new** — uroman romanization, script test |
+| `transcriber/core.py` | identification, translation and transliteration stages; per-segment `language`, `latin`, `english`, `confidence` |
+| `transcriber/transcribe.py` | per-span decode, translate task, timestamp shifting, confidence |
 | `transcriber/emotion.py` | skip English-only text model on non-English |
-| `transcriber/output.py` | language + confidence in txt/json/srt |
+| `transcriber/output.py` | language, confidence and the three renderings in txt/json/srt/vtt |
 | `transcriber/cli.py` | identification flags; `speakers` subcommands |
 | `transcriber/gui.py` | name-a-speaker UI writing back to the store |
 | `transcriber/tests/` | **new** — unit tests for matching, spans, alignment |
@@ -137,7 +183,8 @@ only `str(exc)`, so it also prints the traceback to the terminal.
 
 - Real-time / streaming transcription.
 - Cloud sync, multi-user accounts, sharing.
-- Translation track (English translation alongside the native transcript).
+- Translation into any language other than English. Whisper's translate task
+  has one target and there is no second translation model here.
 - Voice as an authentication factor. Matching here is a labelling convenience
   with a deliberate false-negative bias; it is not a security control.
 - Replacing the diarization backends.
@@ -166,9 +213,17 @@ End-to-end, on a machine with the full requirements and ffmpeg installed:
     python -m transcriber meeting2.wav
     #    -> [0:00:05] Priya: ...
 
-    # 4. Confirm the store
+    # 4. A non-English recording — three renderings, native script first
+    python -m transcriber hindi-call.m4a --model small
+    #    -> [0:00:03] Priya [hi]: नमस्ते, कैसे हैं आप?
+    #                 [latin] namaste, kaise haim aap?
+    #                 [english] Hello, how are you?
+    #    Check: the first line is in Devanagari, not English. If it is not,
+    #    the model is too small before anything else is wrong.
+
+    # 5. Confirm the store
     python -m transcriber speakers list
 
-Success criterion: step 3 labels Priya and Rahul without being told, and a
+Success criterion: step 3 labels Priya and Rahul without being told; a
 bilingual recording shows per-segment language codes that track the actual
-switches.
+switches; and step 4's native line is in the script that was spoken.

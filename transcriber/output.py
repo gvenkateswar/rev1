@@ -1,4 +1,10 @@
-"""Render a TranscriptResult to text, JSON, or SRT subtitles.
+"""Render a TranscriptResult to text, JSON, or SRT/VTT subtitles.
+
+Non-English speech is shown in up to three renderings: the script it was
+spoken in, a Latin transliteration of those same words, and an English
+translation of them. Each extra line appears only when it says something the
+line above it does not -- an English segment gets neither, and a segment
+already written in Latin letters gets no transliteration.
 
 Language tags appear only when the recording actually contains more than one
 language -- tagging every line "[en]" in a monolingual transcript is noise.
@@ -34,6 +40,20 @@ def _fmt_srt_ts(seconds: float) -> str:
 LOW_CONFIDENCE = 0.60
 
 
+def renderings(seg: TranscriptSegment) -> list[tuple[str, str]]:
+    """The (label, text) lines that follow *seg*'s native-script line.
+
+    Empty for an English segment written in Latin script, which is the common
+    case and should cost the reader no extra lines.
+    """
+    extra = []
+    if seg.latin:
+        extra.append(("latin", seg.latin))
+    if seg.english:
+        extra.append(("english", seg.english))
+    return extra
+
+
 def to_text(
     result: TranscriptResult,
     show_emotion: bool = True,
@@ -57,6 +77,9 @@ def to_text(
         if mark_low_confidence and seg.confidence < LOW_CONFIDENCE:
             tags += f" [low confidence {seg.confidence:.0%}]"
         lines.append(f"[{_fmt_ts(seg.start)}] {seg.speaker}{tags}: {seg.text}")
+        # Indent to the width of "[hh:mm:ss] " so the continuations sit under
+        # the text rather than under the timestamp column.
+        lines.extend(f"{'':11}[{label}] {text}" for label, text in renderings(seg))
     return "\n".join(lines) + ("\n" if lines else "")
 
 
@@ -98,6 +121,7 @@ def to_srt(result: TranscriptResult, show_emotion: bool = True) -> str:
             f"{i}\n"
             f"{_fmt_srt_ts(seg.start)} --> {_fmt_srt_ts(seg.end)}\n"
             f"{seg.speaker}{tag}: {seg.text}\n"
+            + "".join(f"[{label}] {text}\n" for label, text in renderings(seg))
         )
     return "\n".join(blocks)
 
@@ -111,6 +135,7 @@ def to_vtt(result: TranscriptResult, show_emotion: bool = True) -> str:
             f"{_fmt_srt_ts(seg.start).replace(',', '.')} --> "
             f"{_fmt_srt_ts(seg.end).replace(',', '.')}\n"
             f"<v {seg.speaker}>{seg.speaker}{tag}: {seg.text}\n"
+            + "".join(f"[{label}] {text}\n" for label, text in renderings(seg))
         )
     return "\n".join(blocks)
 

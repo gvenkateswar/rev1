@@ -12,8 +12,9 @@ process, this makes every run after the first skip model loading entirely.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
+from . import audio as _audio
 from .runtime import require
 
 # (name, device, compute_type) -> WhisperModel
@@ -90,16 +91,19 @@ def load_model(
 
 
 def transcribe(
-    wav_path: str,
+    audio,
     model_name: str = "base",
     language: str | None = None,
     word_timestamps: bool = True,
     vad_filter: bool = True,
     beam_size: int = 5,
     multilingual: bool = True,
+    task: str = "transcribe",
     model=None,
 ) -> tuple[list[RawSegment], str]:
-    """Transcribe *wav_path*. Returns (segments, detected_language).
+    """Transcribe *audio* (a WAV path or a 16 kHz float waveform).
+
+    Returns (segments, detected_language).
 
     *vad_filter* drops silence before decoding (big speedup on real audio).
 
@@ -109,18 +113,30 @@ def transcribe(
     often mistranslated) into the first language detected. It is ignored when
     *language* pins a single language, and by English-only models.
 
+    *task* is Whisper's own: "transcribe" writes what was said in the language
+    it was said in; "translate" writes an English translation of it. Whisper
+    has no other target language -- English is the only one it was trained to
+    translate into.
+
     Pass a preloaded *model* to skip the cache lookup entirely.
     """
     model = model or load_model(model_name)
 
     seg_iter, info = model.transcribe(
-        wav_path,
+        audio,
         language=language,
+        task=task,
         word_timestamps=word_timestamps,
         vad_filter=vad_filter,
         beam_size=beam_size,
         # Pinning a language is an explicit instruction to stay in it.
         multilingual=multilingual and language is None,
+        # Whisper conditions each 30s window on the text it produced for the
+        # previous one. Across a language change that prompt is a block of the
+        # *old* language, and the model follows it -- which is how a Hindi
+        # stretch comes back written in English. Drop the carry-over whenever
+        # the language is free to change.
+        condition_on_previous_text=language is not None,
     )
 
     segments: list[RawSegment] = []
@@ -146,3 +162,76 @@ def transcribe(
             )
         )
     return segments, info.language
+
+
+def shift_segments(segments: list[RawSegment], offset: float) -> list[RawSegment]:
+    """Move *segments* (and their words) *offset* seconds later.
+
+    Decoding a slice of a recording yields timestamps relative to the slice.
+    Everything downstream -- diarization, speaker alignment, the language
+    timeline -- works in whole-recording time, so the slice has to be put back
+    where it came from.
+    """
+    return [
+        replace(
+            seg,
+            start=seg.start + offset,
+            end=seg.end + offset,
+            words=[
+                replace(w, start=w.start + offset, end=w.end + offset)
+                for w in seg.words
+            ],
+        )
+        for seg in segments
+    ]
+
+
+def transcribe_spans(
+    wav_path: str,
+    spans,
+    *,
+    model,
+    task: str = "transcribe",
+    word_timestamps: bool = True,
+    beam_size: int = 5,
+) -> list[RawSegment]:
+    """Decode each language span with its own language pinned.
+
+    *spans* is any sequence of objects with ``start``, ``end`` and
+    ``language`` -- :class:`transcriber.language.LanguageSpan` in practice.
+
+    This exists because letting Whisper pick the language during decoding is
+    the weaker option when we have already worked it out. ``multilingual=True``
+    re-detects on each 30s window in isolation, from one window's audio and
+    nothing else; our timeline detects on overlapping windows and only accepts
+    a switch two consecutive probes agree on, then decodes a whole span in one
+    piece. Pinning the language also rules out the failure the user sees when
+    detection wobbles: a non-English stretch written out in English.
+
+    Spans are decoded independently, so no span can prompt the next one in the
+    wrong language. VAD stays on: faster-whisper maps timestamps back onto the
+    audio it was handed (``restore_speech_timestamps``), so they are still
+    slice-relative and the offset below is still all that is needed -- while
+    skipping silence keeps the decoder from filling it with invented text.
+    """
+    samples, sr = _audio.load_waveform(wav_path)
+
+    out: list[RawSegment] = []
+    for span in spans:
+        chunk = _audio.slice_waveform(samples, sr, span.start, span.end)
+        if chunk.size < sr // 10:        # under 100ms: nothing to decode
+            continue
+        segments, _ = transcribe(
+            chunk,
+            language=span.language,
+            task=task,
+            word_timestamps=word_timestamps,
+            vad_filter=True,
+            beam_size=beam_size,
+            multilingual=False,
+            model=model,
+        )
+        out.extend(shift_segments(segments, span.start))
+
+    out.sort(key=lambda s: s.start)
+    return out

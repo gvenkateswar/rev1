@@ -1,6 +1,7 @@
 """Tests for pipeline glue: speaker alignment and language/confidence labelling."""
 from __future__ import annotations
 
+from transcriber import core
 from transcriber.core import (
     TranscriptSegment, _attach_languages, _overlapping_raw, _ordered_speakers,
     assign_speakers,
@@ -102,3 +103,68 @@ def test_segment_confidence_falls_back_to_logprob():
 
 def test_segment_confidence_is_clamped_to_one():
     assert RawSegment(0, 1, "x", [], avg_logprob=0.5).confidence == 1.0
+
+
+# --------------------------------------------------------------------------- #
+# Translation alignment
+# --------------------------------------------------------------------------- #
+def seg(start, end, text="x", language="hi"):
+    return core.TranscriptSegment(start, end, "Speaker 1", text, language=language)
+
+
+def test_each_translated_segment_goes_to_the_one_it_overlaps_most():
+    segments = [seg(0, 5), seg(5, 10)]
+    core._attach_translations(segments, [
+        RawSegment(0, 4, "first"), RawSegment(6, 9, "second"),
+    ])
+    assert segments[0].english == "first"
+    assert segments[1].english == "second"
+
+
+def test_several_translated_segments_join_into_one():
+    segments = [seg(0, 10)]
+    core._attach_translations(segments, [
+        RawSegment(0, 4, "one "), RawSegment(4, 8, " two"),
+    ])
+    assert segments[0].english == "one two"
+
+
+def test_a_translated_segment_is_never_attributed_twice():
+    """Straddling the boundary, it belongs to the side it covers more of."""
+    segments = [seg(0, 5), seg(5, 10)]
+    core._attach_translations(segments, [RawSegment(4, 9, "straddles")])
+    assert [s.english for s in segments] == [None, "straddles"]
+
+
+def test_no_translation_leaves_the_field_alone():
+    segments = [seg(0, 5)]
+    core._attach_translations(segments, [])
+    assert segments[0].english is None
+
+
+def test_blank_translations_do_not_produce_empty_strings():
+    segments = [seg(0, 5)]
+    core._attach_translations(segments, [RawSegment(0, 5, "   ")])
+    assert segments[0].english is None
+
+
+# --------------------------------------------------------------------------- #
+# Choosing what to translate
+# --------------------------------------------------------------------------- #
+def test_english_spans_are_not_translated():
+    spans = [LanguageSpan(0, 30, "en", 0.9), LanguageSpan(30, 60, "hi", 0.9)]
+    picked = core._spans_to_translate(spans, "en", "unused.wav")
+    assert [s.language for s in picked] == ["hi"]
+
+
+def test_an_all_english_recording_translates_nothing():
+    spans = [LanguageSpan(0, 60, "en", 0.9)]
+    assert core._spans_to_translate(spans, "en", "unused.wav") == []
+    assert core._spans_to_translate([], "en", "unused.wav") == []
+
+
+def test_without_a_timeline_the_whole_file_is_one_span(monkeypatch):
+    monkeypatch.setattr(core._audio, "audio_duration", lambda p: 42.0)
+    picked = core._spans_to_translate([], "hi", "unused.wav")
+    assert len(picked) == 1
+    assert (picked[0].start, picked[0].end, picked[0].language) == (0.0, 42.0, "hi")

@@ -42,12 +42,20 @@ def stub_pipeline(monkeypatch, tmp_path):
 
     def fake_spans(wav_path, spans, *, model, task="transcribe", **kw):
         state.setdefault("tasks", []).append((task, [s.language for s in spans]))
-        if task == "translate":
-            return [RawSegment(40, 44, "greetings")]
         return list(native)
+
+    def fake_translate(wav_path, spans, *, model, **kw):
+        state.setdefault("translated", []).append([s.language for s in spans])
+        return ["greetings" for _ in spans]
 
     monkeypatch.setattr(core, "transcribe", lambda *a, **k: (list(native), "en"))
     monkeypatch.setattr(core, "transcribe_spans", fake_spans)
+    monkeypatch.setattr(core, "translate_each", fake_translate)
+    # The language re-check reads the waveform and probes each segment. Off by
+    # default here; the tests that exercise it turn it on.
+    monkeypatch.setattr(core._audio, "load_waveform",
+                        lambda path: (np.zeros(16_000, dtype=np.float32), 16_000))
+    monkeypatch.setattr(core, "detect_one_language", lambda model, chunk: None)
     monkeypatch.setattr(core, "diarize", lambda *a, **k: [
         Turn(0, 4, "Speaker 1"), Turn(40, 44, "Speaker 2")])
     monkeypatch.setattr(core, "detect_language_timeline", lambda *a, **k: [
@@ -183,15 +191,16 @@ def test_native_script_survives_the_pipeline(stub_pipeline):
     assert result.segments[1].text == NAMASTE
 
 
-def test_translation_only_decodes_the_non_english_spans(stub_pipeline):
+def test_only_the_non_english_lines_are_translated(stub_pipeline):
+    """The English line is not decoded a second time to say the same thing."""
     core.transcribe_file("m.mp4", identify_speakers=False, detect_emotion=False)
-    assert stub_pipeline["tasks"] == [
-        ("transcribe", ["en", "hi"]),
-        ("translate", ["hi"]),      # the English span is not decoded twice
-    ]
+    assert stub_pipeline["tasks"] == [("transcribe", ["en", "hi"])]
+    assert stub_pipeline["translated"] == [["hi"]]
 
 
-def test_translation_lands_on_the_segment_it_overlaps(stub_pipeline):
+def test_each_line_is_translated_from_its_own_audio(stub_pipeline):
+    """Per line, not per language span: a 3s line cannot inherit a 30s
+    paragraph decoded from a stretch it only partly overlaps."""
     result = core.transcribe_file("m.mp4", identify_speakers=False,
                                   detect_emotion=False)
     assert result.segments[0].english is None      # already English
@@ -212,17 +221,17 @@ def test_both_renderings_can_be_turned_off(stub_pipeline):
                                   transliterate=False, translate=False)
     assert all(s.latin is None for s in result.segments)
     assert all(s.english is None for s in result.segments)
-    assert [t for t, _ in stub_pipeline["tasks"]] == ["transcribe"]
+    assert "translated" not in stub_pipeline
 
 
 def test_an_english_recording_pays_for_no_translation_pass(
         stub_pipeline, monkeypatch):
     monkeypatch.setattr(core, "detect_language_timeline", lambda *a, **k: [
         LanguageSpan(0, 60, "en", 0.95)])
-    core.transcribe_file("m.mp4", identify_speakers=False, detect_emotion=False)
-    assert [t for t, _ in stub_pipeline["tasks"]] == ["transcribe"]
-    assert "translate" not in core.transcribe_file(
-        "m.mp4", identify_speakers=False, detect_emotion=False).timings
+    result = core.transcribe_file("m.mp4", identify_speakers=False,
+                                  detect_emotion=False)
+    assert "translated" not in stub_pipeline
+    assert "translate" not in result.timings
 
 
 def test_renderings_are_serialized(stub_pipeline):
@@ -233,3 +242,52 @@ def test_renderings_are_serialized(stub_pipeline):
     assert payload["text"] == NAMASTE
     assert payload["latin"] == "namaste"
     assert payload["english"] == "greetings"
+
+
+# --------------------------------------------------------------------------- #
+# Recovering a short turn the 30s language probes could not see
+# --------------------------------------------------------------------------- #
+def test_a_confidently_english_line_inside_a_hindi_span_is_re_decoded(
+        stub_pipeline, monkeypatch):
+    """The reported case: an English question swallowed by a Hindi recording.
+
+    The whole file is one Hindi span, so the question was decoded as Hindi and
+    came back as nothing usable. Its own audio says English, confidently.
+    """
+    monkeypatch.setattr(core, "detect_language_timeline", lambda *a, **k: [
+        LanguageSpan(0, 60, "hi", 0.9)])
+    monkeypatch.setattr(core, "detect_one_language",
+                        lambda model, chunk: ("en", 0.96))
+    monkeypatch.setattr(core, "decode_chunk",
+                        lambda chunk, **kw: "How do you earn, Urfi?")
+
+    result = core.transcribe_file("m.mp4", identify_speakers=False,
+                                  detect_emotion=False)
+    assert [s.language for s in result.segments] == ["en", "en"]
+    assert result.segments[0].text == "How do you earn, Urfi?"
+    # Now English, so it is not translated into English a second time.
+    assert "translated" not in stub_pipeline
+
+
+def test_an_empty_re_decode_keeps_the_original_line(stub_pipeline, monkeypatch):
+    """A blank re-decode is not a better answer than a wrong one."""
+    monkeypatch.setattr(core, "detect_language_timeline", lambda *a, **k: [
+        LanguageSpan(0, 60, "hi", 0.9)])
+    monkeypatch.setattr(core, "detect_one_language",
+                        lambda model, chunk: ("en", 0.96))
+    monkeypatch.setattr(core, "decode_chunk", lambda chunk, **kw: "   ")
+
+    result = core.transcribe_file("m.mp4", identify_speakers=False,
+                                  detect_emotion=False)
+    assert result.segments[0].text == "hello there"
+    assert result.segments[0].language == "hi"
+
+
+def test_a_pinned_language_is_never_second_guessed(stub_pipeline, monkeypatch):
+    """--language is an instruction, not a hint."""
+    probed = []
+    monkeypatch.setattr(core, "detect_one_language",
+                        lambda model, chunk: probed.append(1) or ("en", 0.99))
+    core.transcribe_file("m.mp4", language="hi", identify_speakers=False,
+                         detect_emotion=False)
+    assert probed == []

@@ -17,22 +17,30 @@ import numpy as np
 
 from . import audio as _audio
 
-# Whisper's own detection window. Using the same size means each probe sees
-# exactly what a decode window would see.
-WINDOW_SECONDS = 30.0
+# Whisper's detector pads short input up to its 30s window, so a probe may be
+# shorter than that window without being invalid -- and it has to be. A
+# 30-second probe cannot see a six-second question in another language: the
+# surrounding speech outvotes it inside every window it appears in, and the
+# switch is invisible however the probes are spaced. Ten seconds is short
+# enough for one conversational turn to dominate its own probe.
+WINDOW_SECONDS = 10.0
 
 # Overlap so a switch that lands mid-window is caught by the next probe.
-HOP_SECONDS = 15.0
+HOP_SECONDS = 5.0
 
 # Spans shorter than this are dropped as residue after smoothing.
 MIN_SPAN_SECONDS = 3.0
 
 # How many consecutive windows must agree before we accept a language switch.
-# Windows are long and overlapping, so one window flipping on a loanword or a
-# proper noun is common; a real switch persists across at least two probes.
-# This, not MIN_SPAN_SECONDS, is what actually rejects single-window noise --
-# with a 15s hop a lone flip already spans 15s and no length rule would catch it.
+# Overlapping windows flip on a loanword or a proper noun often enough that one
+# probe is not evidence; a real switch persists across at least two.
 MIN_CONSECUTIVE_PROBES = 2
+
+# ...unless the detector is this sure. Confirmation exists to reject guesses,
+# and a probe this confident is not one. Without this exemption a switch
+# shorter than two hops -- one speaker's short turn -- is unreachable at any
+# window size, because it can never occupy two probes.
+CONFIDENT_ENOUGH_ALONE = 0.85
 
 # Below this confidence the detector is guessing; we carry the previous
 # language through rather than introduce a spurious switch.
@@ -59,12 +67,12 @@ def detect_language_timeline(
     window: float = WINDOW_SECONDS,
     hop: float = HOP_SECONDS,
     min_span: float = MIN_SPAN_SECONDS,
-    max_windows: int = 240,
+    max_windows: int = 720,
 ) -> list[LanguageSpan]:
     """Probe *wav_path* on a sliding window and return language spans.
 
     *model* is a loaded ``faster_whisper.WhisperModel``. *max_windows* caps the
-    work on very long files (240 windows at a 15s hop covers an hour).
+    work on very long files (720 windows at a 5s hop covers an hour).
     """
     samples, sr = _audio.load_waveform(wav_path)
     duration = len(samples) / float(sr)
@@ -101,6 +109,11 @@ def _window_starts(
         starts.append(t)
         t += hop
     return starts
+
+
+def detect_one_language(model, chunk: np.ndarray) -> tuple[str, float] | None:
+    """Public name for a single-chunk detection, used to re-check segments."""
+    return _detect_one(model, chunk)
 
 
 def _detect_one(model, chunk: np.ndarray) -> tuple[str, float] | None:
@@ -174,7 +187,8 @@ def _require_confirmation(
         run = 1
         while i + run < len(out) and out[i + run][2] == lang:
             run += 1
-        if run >= min_consecutive:
+        confident = max(out[k][3] for k in range(i, i + run))
+        if run >= min_consecutive or confident >= CONFIDENT_ENOUGH_ALONE:
             current = lang
             i += run
         else:

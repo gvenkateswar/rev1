@@ -7,7 +7,11 @@ from transcriber.language import (
 )
 
 
-def probe(start, end, lang, prob=0.95):
+# Middling confidence by default: above MIN_CONFIDENCE, below the level that
+# lets a lone probe stand on its own. That is what a detector doing the thing
+# these tests are about -- flipping on a loanword or a name -- actually looks
+# like, and it keeps the confirmation rule as the behaviour under test.
+def probe(start, end, lang, prob=0.60):
     return (start, end, lang, prob)
 
 
@@ -130,3 +134,34 @@ def test_summarize_totals_seconds_per_language():
 def test_summarize_orders_by_duration():
     spans = [LanguageSpan(0, 5, "hi", 0.9), LanguageSpan(5, 40, "en", 0.9)]
     assert list(summarize(spans)) == ["en", "hi"]
+
+
+# --------------------------------------------------------------------------- #
+# A short turn in another language
+# --------------------------------------------------------------------------- #
+def test_one_confident_probe_stands_without_confirmation():
+    """A six-second question cannot occupy two probes at any window size.
+
+    Requiring confirmation unconditionally makes short turns unreachable, and
+    a short turn in another language is the case this whole feature exists
+    for. Confirmation rejects guesses; a probe this sure is not one.
+    """
+    probes = [probe(0, 10, "hi"), probe(5, 15, "en", 0.97),
+              probe(10, 20, "hi"), probe(15, 25, "hi")]
+    assert [p[2] for p in _require_confirmation(probes, 2)] == \
+        ["hi", "en", "hi", "hi"]
+
+
+def test_an_unsure_lone_probe_is_still_absorbed():
+    probes = [probe(0, 10, "hi"), probe(5, 15, "en", 0.62),
+              probe(10, 20, "hi")]
+    assert [p[2] for p in _require_confirmation(probes, 2)] == ["hi", "hi", "hi"]
+
+
+def test_a_confident_run_is_accepted_as_before():
+    """The exemption is an addition, not a replacement: a confirmed run still
+    switches, and the unsure lone probe at the end is still absorbed."""
+    probes = [probe(0, 10, "hi"), probe(5, 15, "en", 0.9),
+              probe(10, 20, "en", 0.9), probe(15, 25, "hi")]
+    assert [p[2] for p in _require_confirmation(probes, 2)] == \
+        ["hi", "en", "en", "en"]

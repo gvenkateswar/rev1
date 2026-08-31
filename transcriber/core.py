@@ -22,10 +22,14 @@ from typing import Callable
 
 from . import audio as _audio
 from .diarize import Turn, diarize
-from .language import LanguageSpan, detect_language_timeline, language_for
+from .language import (
+    LanguageSpan, detect_language_timeline, detect_one_language,
+    language_for,
+)
 from .language import summarize as _summarize_languages
 from .transcribe import (
-    RawSegment, Word, load_model, transcribe, transcribe_spans,
+    RawSegment, Word, decode_chunk, load_model, transcribe,
+    transcribe_spans, translate_each,
 )
 
 ProgressCb = Callable[[str, float], None]
@@ -231,16 +235,6 @@ def transcribe_file(
                     model=model,
                 )
 
-        translated: list[RawSegment] = []
-        to_translate = _spans_to_translate(spans, lang, wav_path) if translate else []
-        if to_translate:
-            progress("Translating", 0.40)
-            with _timed(timings, "translate"):
-                translated = transcribe_spans(
-                    wav_path, to_translate, model=model,
-                    task="translate", word_timestamps=False,
-                )
-
         progress("Separating speakers", 0.50)
         with _timed(timings, "diarize"):
             turns = diarize(
@@ -264,7 +258,27 @@ def transcribe_file(
 
         segments = assign_speakers(raw_segments, turns)
         _attach_languages(segments, raw_segments, spans, lang)
-        _attach_translations(segments, translated)
+
+        # Diarization has now cut the recording where the speaker changes,
+        # which is also where the language usually changes. Those boundaries
+        # are far finer than the 30s probes the timeline was built from, so
+        # this is the first chance to catch a switch too short for it.
+        if spans and multilingual and language is None:
+            progress("Checking languages", 0.74)
+            with _timed(timings, "relanguage"):
+                _recheck_segment_languages(wav_path, segments, model)
+
+        if translate:
+            to_translate = [s for s in segments if s.language != ENGLISH]
+            if to_translate:
+                progress("Translating", 0.76)
+                with _timed(timings, "translate"):
+                    for seg, text in zip(
+                        to_translate,
+                        translate_each(wav_path, to_translate, model=model),
+                    ):
+                        seg.english = text or None
+
         _flag_missing_native_text(segments)
         if transliterate:
             _attach_transliterations(segments)
@@ -355,60 +369,66 @@ def _attach_languages(
             seg.confidence = source.confidence
 
 
-def _spans_to_translate(
-    spans: list[LanguageSpan], detected: str, wav_path: str
-) -> list[LanguageSpan]:
-    """The stretches worth running the translation pass over.
+# Below this, a slice is too short for the detector to say anything useful.
+RELANGUAGE_MIN_SECONDS = 2.0
 
-    English stretches are skipped: Whisper translates into English, so it has
-    nothing to add to speech already in it, and the pass costs a second full
-    decode of whatever it is handed.
+# And below this confidence it is not worth overriding the timeline, which was
+# built from far more audio than one segment carries.
+RELANGUAGE_MIN_CONFIDENCE = 0.70
+
+
+def _recheck_segment_languages(
+    wav_path: str, segments: list[TranscriptSegment], model
+) -> int:
+    """Re-detect each segment's language on its own audio; re-decode the
+    ones that were wrong. Returns how many changed.
+
+    The timeline probes 30 seconds at a time, which is as fine as Whisper's
+    detector works -- a six-second question in another language sits inside
+    one probe and cannot be seen. Those spans then pin the decode, so the
+    question comes out decoded as the wrong language, which usually means it
+    comes out as nothing at all.
+
+    Detection is one encoder pass, so checking every segment is cheap; only
+    the segments that actually disagree pay for a second decode.
     """
-    if spans:
-        return [s for s in spans if s.language != ENGLISH]
-    if detected == ENGLISH:
-        return []
-    # No timeline (a short file, or detection declined). The whole recording
-    # is one span of whatever Whisper detected.
-    return [
-        LanguageSpan(0.0, _audio.audio_duration(wav_path), detected, 1.0)
-    ]
+    if not segments:
+        return 0
+
+    samples, sr = _audio.load_waveform(wav_path)
+    changed = 0
+    for seg in segments:
+        chunk = _audio.slice_waveform(samples, sr, seg.start, seg.end)
+        detected = detect_one_language(model, chunk)
+        if not _should_relanguage(seg, detected):
+            continue
+        language, _confidence = detected
+        text = decode_chunk(chunk, model=model, language=language).strip()
+        if not text:
+            # The re-decode found nothing. The original text may be wrong, but
+            # it is what we have, and blanking the line is not an improvement
+            # on it.
+            continue
+        seg.text, seg.language = text, language
+        changed += 1
+
+    if changed:
+        _log(f"relanguage: corrected {changed} segment(s)")
+    return changed
 
 
-def _attach_translations(
-    segments: list[TranscriptSegment], translated: list[RawSegment]
-) -> None:
-    """Fill in ``english`` from a separate translate-task decode.
-
-    The two passes segment the audio independently, so they cannot be zipped.
-    Each translated segment is given to the transcript segment it overlaps
-    most and the pieces are joined in time order -- a partition, so no
-    sentence is attributed to two speakers at once.
-    """
-    if not segments or not translated:
-        return
-
-    buckets: dict[int, list[str]] = {}
-    for raw in translated:
-        index = _best_overlap_index(raw, segments)
-        if index is not None:
-            buckets.setdefault(index, []).append(raw.text.strip())
-
-    for index, parts in buckets.items():
-        text = " ".join(p for p in parts if p).strip()
-        if text:
-            segments[index].english = text
-
-
-def _best_overlap_index(
-    raw: RawSegment, segments: list[TranscriptSegment]
-) -> int | None:
-    best, best_overlap = None, 0.0
-    for i, seg in enumerate(segments):
-        overlap = min(seg.end, raw.end) - max(seg.start, raw.start)
-        if overlap > best_overlap:
-            best, best_overlap = i, overlap
-    return best
+def _should_relanguage(
+    seg: TranscriptSegment, detected: tuple[str, float] | None
+) -> bool:
+    """Whether one segment's own audio outvotes the span it sits in."""
+    if detected is None:
+        return False
+    language, confidence = detected
+    if language == seg.language:
+        return False
+    if seg.end - seg.start < RELANGUAGE_MIN_SECONDS:
+        return False
+    return confidence >= RELANGUAGE_MIN_CONFIDENCE
 
 
 # Two renderings this close together are not a transcript and a translation of
@@ -427,8 +447,7 @@ def _flag_missing_native_text(segments: list[TranscriptSegment]) -> None:
     language pinned: transcribe and translate share one decoder, and the tiny
     and base models conflate the two tasks. What comes out looks like a clean
     transcript, which is worse than an obviously broken one -- nothing on the
-    page says the speaker's own words are missing. Saying so is the difference
-    between a known limitation and a silent wrong answer.
+    page says the speaker's own words are missing.
     """
     for seg in segments:
         if seg.language == ENGLISH or not seg.english:

@@ -106,68 +106,32 @@ def test_segment_confidence_is_clamped_to_one():
 
 
 # --------------------------------------------------------------------------- #
-# Translation alignment
+# Choosing a segment's language from its own audio
 # --------------------------------------------------------------------------- #
 def seg(start, end, text="x", language="hi"):
     return core.TranscriptSegment(start, end, "Speaker 1", text, language=language)
 
 
-def test_each_translated_segment_goes_to_the_one_it_overlaps_most():
-    segments = [seg(0, 5), seg(5, 10)]
-    core._attach_translations(segments, [
-        RawSegment(0, 4, "first"), RawSegment(6, 9, "second"),
-    ])
-    assert segments[0].english == "first"
-    assert segments[1].english == "second"
+def test_a_confident_disagreement_overrides_the_span():
+    """The case this exists for: an English question inside a Hindi stretch."""
+    assert core._should_relanguage(seg(0, 6), ("en", 0.95)) is True
 
 
-def test_several_translated_segments_join_into_one():
-    segments = [seg(0, 10)]
-    core._attach_translations(segments, [
-        RawSegment(0, 4, "one "), RawSegment(4, 8, " two"),
-    ])
-    assert segments[0].english == "one two"
+def test_agreement_with_the_span_changes_nothing():
+    assert core._should_relanguage(seg(0, 6), ("hi", 0.99)) is False
 
 
-def test_a_translated_segment_is_never_attributed_twice():
-    """Straddling the boundary, it belongs to the side it covers more of."""
-    segments = [seg(0, 5), seg(5, 10)]
-    core._attach_translations(segments, [RawSegment(4, 9, "straddles")])
-    assert [s.english for s in segments] == [None, "straddles"]
+def test_an_unsure_disagreement_defers_to_the_span():
+    """The timeline saw far more audio than one segment carries."""
+    assert core._should_relanguage(seg(0, 6), ("en", 0.55)) is False
 
 
-def test_no_translation_leaves_the_field_alone():
-    segments = [seg(0, 5)]
-    core._attach_translations(segments, [])
-    assert segments[0].english is None
+def test_a_segment_too_short_to_judge_is_left_alone():
+    assert core._should_relanguage(seg(0, 1.5), ("en", 0.99)) is False
 
 
-def test_blank_translations_do_not_produce_empty_strings():
-    segments = [seg(0, 5)]
-    core._attach_translations(segments, [RawSegment(0, 5, "   ")])
-    assert segments[0].english is None
-
-
-# --------------------------------------------------------------------------- #
-# Choosing what to translate
-# --------------------------------------------------------------------------- #
-def test_english_spans_are_not_translated():
-    spans = [LanguageSpan(0, 30, "en", 0.9), LanguageSpan(30, 60, "hi", 0.9)]
-    picked = core._spans_to_translate(spans, "en", "unused.wav")
-    assert [s.language for s in picked] == ["hi"]
-
-
-def test_an_all_english_recording_translates_nothing():
-    spans = [LanguageSpan(0, 60, "en", 0.9)]
-    assert core._spans_to_translate(spans, "en", "unused.wav") == []
-    assert core._spans_to_translate([], "en", "unused.wav") == []
-
-
-def test_without_a_timeline_the_whole_file_is_one_span(monkeypatch):
-    monkeypatch.setattr(core._audio, "audio_duration", lambda p: 42.0)
-    picked = core._spans_to_translate([], "hi", "unused.wav")
-    assert len(picked) == 1
-    assert (picked[0].start, picked[0].end, picked[0].language) == (0.0, 42.0, "hi")
+def test_a_failed_detection_is_not_a_disagreement():
+    assert core._should_relanguage(seg(0, 6), None) is False
 
 
 # --------------------------------------------------------------------------- #

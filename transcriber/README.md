@@ -178,9 +178,12 @@ would just reprint the line. All four output formats carry them: `txt`, `json`,
 
 ### How it works
 
-The language timeline comes first: overlapping 30s probes, 15s apart, and a
-switch is only accepted once **two consecutive probes agree** — so a loanword
-or a name does not register as a language change.
+The language timeline comes first: overlapping 10s probes, 5s apart. A switch
+is accepted once **two consecutive probes agree**, *or* on a single probe the
+detector is very sure of (≥0.85) — because a six-second question cannot
+occupy two probes at any window size, and a short turn in another language is
+exactly what this feature is for. Confirmation is there to reject guesses, and
+a probe that confident is not one.
 
 Each span is then decoded **with its language pinned**. This is the part that
 keeps Hindi in Devanagari. Two things otherwise push Whisper into English:
@@ -194,9 +197,22 @@ keeps Hindi in Devanagari. Two things otherwise push Whisper into English:
    and the model follows it. Spans are decoded independently, so nothing
    prompts the next span in the wrong language.
 
-The English translation is Whisper's own `translate` task — English is the only
-target it was trained for — run as a second pass over the non-English spans
-only. The transliteration is [uroman](https://pypi.org/project/uroman/), a
+After diarization, every segment's language is **re-checked on its own
+audio**. Diarization has cut the recording where the speaker changes, which is
+usually where the language changes too, and those boundaries are far finer
+than any probe. A segment whose own audio confidently says a different
+language is decoded again in that language. Detection is one encoder pass, so
+checking every segment is cheap; only the ones that disagree pay for a second
+decode.
+
+The English translation is Whisper's own `translate` task — English is the
+only target it was trained for — run **per transcript line, on that line's own
+audio**. Translating whole language stretches and matching the pieces up
+afterwards cannot be made to work: the two passes segment independently, so a
+three-second line ends up showing a thirty-second paragraph. The cost is
+context — a short line is translated without the sentence around it.
+
+The transliteration is [uroman](https://pypi.org/project/uroman/), a
 rule-driven romanizer: no model, no network, one API for every script.
 
 > **`small` is the minimum for non-English speech, and is the default.**

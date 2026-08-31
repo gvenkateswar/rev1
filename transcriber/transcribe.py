@@ -235,3 +235,56 @@ def transcribe_spans(
 
     out.sort(key=lambda s: s.start)
     return out
+
+
+def decode_chunk(
+    chunk,
+    *,
+    model,
+    language: str | None,
+    task: str = "transcribe",
+    beam_size: int = 5,
+) -> str:
+    """Decode one audio chunk into a single line of text.
+
+    VAD is off: on a chunk that is already one utterance there is nothing to
+    trim, and trimming could take the whole thing.
+    """
+    segments, _ = transcribe(
+        chunk,
+        language=language,
+        task=task,
+        word_timestamps=False,
+        vad_filter=False,
+        beam_size=beam_size,
+        multilingual=False,
+        model=model,
+    )
+    return " ".join(s.text.strip() for s in segments if s.text.strip()).strip()
+
+
+def translate_each(wav_path: str, spans, *, model, beam_size: int = 5) -> list[str]:
+    """One English translation per span, decoded from that span's own audio.
+
+    Returns a list the same length as *spans*; an empty string means the span
+    was too short to decode.
+
+    Translating whole language stretches and matching the pieces to the
+    transcript afterwards cannot be made to work: the two passes segment
+    independently, so a three-second line gets handed a thirty-second
+    paragraph and the two renderings stop describing the same audio.
+    Decoding each line's own audio removes the alignment problem rather than
+    improving the guess at it. The cost is context -- a short line is
+    translated without the sentence around it.
+    """
+    samples, sr = _audio.load_waveform(wav_path)
+
+    out: list[str] = []
+    for span in spans:
+        chunk = _audio.slice_waveform(samples, sr, span.start, span.end)
+        if chunk.size < sr // 2:            # under 0.5s: nothing to translate
+            out.append("")
+            continue
+        out.append(decode_chunk(chunk, model=model, language=span.language,
+                                task="translate", beam_size=beam_size))
+    return out

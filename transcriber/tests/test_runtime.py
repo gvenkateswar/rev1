@@ -104,3 +104,43 @@ def test_old_python_is_flagged(monkeypatch):
     monkeypatch.setattr(runtime, "is_rosetta", lambda: False)
     monkeypatch.setattr(runtime.sys, "version_info", (3, 9, 0))
     assert any("3.9" in n for n in runtime.environment_warnings())
+
+
+# --- pyannote token argument ----------------------------------------------- #
+class _V4Pipeline:
+    """pyannote.audio 4.x: the argument is `token`."""
+
+    @staticmethod
+    def from_pretrained(checkpoint, revision=None, hparams_file=None,
+                        subfolder=None, token=None, cache_dir=None):
+        return None
+
+
+class _V3Pipeline:
+    """pyannote.audio 3.x: the argument is `use_auth_token`."""
+
+    @staticmethod
+    def from_pretrained(checkpoint, hparams_file=None, use_auth_token=None,
+                        cache_dir=None):
+        return None
+
+
+def test_token_kwarg_matches_pyannote_4():
+    from transcriber.diarize import _token_kwarg
+
+    assert _token_kwarg(_V4Pipeline, "hf_abc") == {"token": "hf_abc"}
+
+
+def test_token_kwarg_matches_pyannote_3():
+    """The 3.x name must still work; passing the wrong one is a TypeError."""
+    from transcriber.diarize import _token_kwarg
+
+    assert _token_kwarg(_V3Pipeline, "hf_abc") == {"use_auth_token": "hf_abc"}
+
+
+def test_token_kwarg_is_accepted_by_the_signature_it_came_from():
+    """The whole point: the kwarg we build must actually be callable."""
+    from transcriber.diarize import _token_kwarg
+
+    for cls in (_V3Pipeline, _V4Pipeline):
+        cls.from_pretrained("ckpt", **_token_kwarg(cls, "hf_abc"))

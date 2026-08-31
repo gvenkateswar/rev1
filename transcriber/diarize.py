@@ -63,8 +63,18 @@ def _diarize_pyannote(
         )
 
     pipeline = Pipeline.from_pretrained(
-        "pyannote/speaker-diarization-3.1", use_auth_token=hf_token
+        "pyannote/speaker-diarization-3.1", **_token_kwarg(Pipeline, hf_token)
     )
+    if pipeline is None:
+        # from_pretrained returns None rather than raising when the checkpoint
+        # cannot be loaded -- almost always an unaccepted licence or a token
+        # without access. Without this the next line dies on NoneType.
+        raise RuntimeError(
+            "pyannote returned no pipeline for "
+            "'pyannote/speaker-diarization-3.1'. Accept the licence at "
+            "https://hf.co/pyannote/speaker-diarization-3.1 with the same "
+            "account as your token, then try again."
+        )
     kwargs = {}
     if num_speakers:
         kwargs["num_speakers"] = num_speakers
@@ -76,6 +86,20 @@ def _diarize_pyannote(
     ]
     turns.sort(key=lambda t: t.start)
     return _normalize_speaker_names(turns)
+
+
+def _token_kwarg(pipeline_cls, hf_token: str) -> dict:
+    """Name the Hugging Face token argument the installed pyannote expects.
+
+    pyannote.audio 4.x renamed ``use_auth_token`` to ``token``. Passing the
+    wrong one is a TypeError at call time, so pick it from the real signature
+    rather than pinning a version.
+    """
+    import inspect
+
+    params = inspect.signature(pipeline_cls.from_pretrained).parameters
+    name = "token" if "token" in params else "use_auth_token"
+    return {name: hf_token}
 
 
 # --------------------------------------------------------------------------- #

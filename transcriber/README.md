@@ -361,6 +361,36 @@ pip install -r transcriber/requirements.txt
 Native arm64 also lets faster-whisper and torch use the Apple accelerators,
 which is the single biggest speedup available on these machines.
 
+### "Pipeline.from_pretrained() got an unexpected keyword argument 'use_auth_token'"
+
+pyannote.audio 4.x renamed that argument to `token`. The diarizer now reads the
+installed version's signature and passes whichever name it expects, so both 3.x
+and 4.x work. If you still see this, you are running an older checkout -- pull.
+
+If pyannote instead reports that no pipeline was returned, your token is valid
+but has not accepted the model licence. Accept it at
+[hf.co/pyannote/speaker-diarization-3.1](https://hf.co/pyannote/speaker-diarization-3.1)
+with the **same account** the token belongs to.
+
+The offline `cluster` backend (the default) needs no token and is unaffected.
+
+### Hundreds of "No module named 'torchvision'" tracebacks in the terminal
+
+Harmless, and silenced by `.streamlit/config.toml` in this repo. Streamlit's
+file watcher walks every imported package looking for files to reload on;
+transformers 5 exposes ~100 image processors as lazy attributes, and touching
+them tries to import torchvision, which an audio pipeline has no reason to
+install. Nothing is broken -- the tracebacks just bury the real output.
+
+The config disables the watcher, so source edits no longer live-reload the app;
+restart it instead. Set `fileWatcherType = "auto"` if you want reload back.
+
+### "Class AVFFrameReceiver is implemented in both ..." on macOS
+
+Also harmless. PyAV bundles its own ffmpeg libraries and Homebrew's `ffmpeg`
+installs another copy; macOS notes the duplicate Objective-C classes. It does
+not affect transcription.
+
 ### ffmpeg not found
 
 `ffmpeg` is a system dependency, not a pip package:

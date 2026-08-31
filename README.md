@@ -1,12 +1,23 @@
 # Video & Audio Tools
 
-This repo holds two independent tools:
+This repo holds three independent tools:
 
 1. **Video Shorts Generator** (below) — find the best 30s clips in a long video.
 2. **[Speaker & Emotion Transcriber](transcriber/README.md)** — transcribe
    audio/video, tell speakers apart, and tag each segment with an emotion fused
    from voice tone *and* the words. CLI + local Streamlit GUI. See
    [`transcriber/`](transcriber/).
+3. **[Hindustani Music Lesson Transcriber](music_lesson/README.md)** — the same
+   pipeline turned inside out for recorded music lessons: pitch analysis runs
+   first and gates speech recognition, so singing comes out as sargam against
+   your Sa instead of as hallucinated words, and the Hindi/English explanation
+   around it is transcribed and romanized. See [`music_lesson/`](music_lesson/).
+
+Tests for the music-lesson tool run with no model downloads and no network:
+
+```sh
+python -m unittest discover -s tests -v
+```
 
 ---
 

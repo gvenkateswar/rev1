@@ -1,0 +1,256 @@
+"""Streamlit GUI for the music-lesson transcriber. Run locally with:
+
+    streamlit run music_lesson/gui.py
+
+Everything runs on your machine — the recordings of your lessons never leave it.
+"""
+from __future__ import annotations
+
+import os
+import sys
+import tempfile
+
+import streamlit as st
+
+# `streamlit run music_lesson/gui.py` executes this file as a top-level script
+# (no package context), so relative imports would fail. Fall back to absolute
+# imports after putting the repo root on sys.path.
+try:
+    from .core import ATTEMPT, transcribe_lesson
+    from .output import render, to_practice_sheet
+    from .swara import parse_tonic
+except ImportError:
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from music_lesson.core import ATTEMPT, transcribe_lesson
+    from music_lesson.output import render, to_practice_sheet
+    from music_lesson.swara import parse_tonic
+
+_SPEAKER_COLORS = ["#b45309", "#1d4ed8", "#059669", "#7c3aed", "#db2777"]
+
+
+def _speaker_color(speakers: list[str], name: str) -> str:
+    index = speakers.index(name) if name in speakers else 0
+    return _SPEAKER_COLORS[index % len(_SPEAKER_COLORS)]
+
+
+def _fmt_ts(seconds: float) -> str:
+    minutes, secs = divmod(int(seconds), 60)
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours:d}:{minutes:02d}:{secs:02d}" if hours else f"{minutes:d}:{secs:02d}"
+
+
+def _sidebar() -> dict:
+    with st.sidebar:
+        st.header("Settings")
+
+        st.subheader("Your Sa")
+        tonic_text = st.text_input(
+            "Tonic", value="",
+            placeholder="e.g. C#3, D3, or 138.6",
+            help="Leave blank to detect it. Setting it is more reliable than "
+                 "any detector — you know what your tanpura is tuned to.",
+        )
+
+        st.subheader("Speech")
+        model = st.selectbox(
+            "Whisper model", ["tiny", "base", "small", "medium", "large-v3"],
+            index=2,
+            help="'small' is the floor for Hindi. 'medium' is noticeably "
+                 "better on code-switching if you can wait.",
+        )
+        language = st.selectbox(
+            "Language", ["auto (code-switching)", "hi", "en"], index=0,
+            help="Auto re-detects per window, which is what a Hindi/English "
+                 "lesson needs.",
+        )
+        fix_vocabulary = st.checkbox(
+            "Repair Hindustani vocabulary", value=True,
+            help="Turns 'tea total' back into 'teentaal'. Every repair is "
+                 "listed in the JSON export.",
+        )
+        extra_terms = st.text_input(
+            "Extra vocabulary (comma separated)", value="",
+            placeholder="Bageshri, Panditji, Gwalior",
+            help="Primes the decoder with names it would otherwise mangle.",
+        )
+
+        st.subheader("Music")
+        sung_threshold = st.slider(
+            "Singing sensitivity", 0.30, 0.75, 0.50, 0.05,
+            help="Lower catches quiet humming; higher stops slow, deliberate "
+                 "speech from being read as a demonstration.",
+        )
+        keep_sung_text = st.checkbox(
+            "Keep Whisper's words over singing", value=False,
+            help="Usually hallucination — turn on to catch bandish lyrics.",
+        )
+
+        st.subheader("Voices")
+        diarize = st.checkbox("Tell guru and student apart", value=True)
+        num_speakers = st.number_input(
+            "How many voices (0 = auto)", min_value=0, max_value=8, value=0,
+            disabled=not diarize,
+        )
+
+    return {
+        "tonic_text": tonic_text.strip(),
+        "model": model,
+        "language": None if language.startswith("auto") else language,
+        "fix_vocabulary": fix_vocabulary,
+        "extra_terms": [t.strip() for t in extra_terms.split(",") if t.strip()],
+        "sung_threshold": sung_threshold,
+        "keep_sung_text": keep_sung_text,
+        "diarize": diarize,
+        "num_speakers": int(num_speakers) or None,
+    }
+
+
+def _pick_input() -> str | None:
+    tab_path, tab_upload = st.tabs(["Local file path", "Upload"])
+    with tab_path:
+        path = st.text_input(
+            "Path to the recording",
+            placeholder="/Users/you/lessons/2024-03-12-yaman.m4a",
+            help="Best for long lessons — no upload size limit, no copy.",
+        )
+        if path and os.path.exists(path):
+            return path
+        if path:
+            st.error(f"No file at {path}")
+    with tab_upload:
+        upload = st.file_uploader(
+            "Audio or video", type=["mp3", "m4a", "wav", "aac", "flac",
+                                    "ogg", "mp4", "mov", "mkv"],
+        )
+        if upload is not None:
+            suffix = os.path.splitext(upload.name)[1] or ".m4a"
+            handle = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+            handle.write(upload.getbuffer())
+            handle.close()
+            return handle.name
+    return None
+
+
+def _show_summary(result) -> None:
+    left, middle, right = st.columns(3)
+    left.metric("Sa (tonic)", result.tonic.western, f"{result.tonic.hz:.1f} Hz")
+    middle.metric("Sung", _fmt_ts(result.sung_seconds))
+    right.metric("Spoken", _fmt_ts(result.spoken_seconds))
+
+    st.markdown(f"**Scale:** {result.scale.summary()}")
+    if result.mentions.get("ragas"):
+        st.markdown(f"**Raags named out loud:** {', '.join(result.mentions['ragas'])}")
+    if result.mentions.get("talas"):
+        st.markdown(f"**Taals named:** {', '.join(result.mentions['talas'])}")
+    if result.tonic.confidence < 0.25 and result.sung_seconds > 0:
+        st.warning(
+            "Sa was hard to pin down, and the sargam is only as good as the "
+            "tonic. Type your Sa in the sidebar and re-run."
+        )
+
+
+def _show_transcript(result) -> None:
+    for segment in result.segments:
+        color = _speaker_color(result.speakers, segment.speaker)
+        who = segment.speaker or ""
+        stamp = _fmt_ts(segment.start)
+        if segment.is_sung:
+            label = "sings back" if segment.kind == ATTEMPT else "sings"
+            st.markdown(
+                f"<div style='margin-bottom:0.55rem'>"
+                f"<span style='color:#6b7280'>{stamp}</span> "
+                f"<b style='color:{color}'>{who}</b> "
+                f"<i style='color:#6b7280'>{label}</i><br>"
+                f"<code style='font-size:1.05rem;letter-spacing:0.08em'>"
+                f"{segment.sargam}</code></div>",
+                unsafe_allow_html=True,
+            )
+        else:
+            roman = (
+                f"<br><span style='color:#6b7280;font-size:0.9rem'>{segment.roman}</span>"
+                if segment.roman else ""
+            )
+            st.markdown(
+                f"<div style='margin-bottom:0.55rem'>"
+                f"<span style='color:#6b7280'>{stamp}</span> "
+                f"<b style='color:{color}'>{who}</b>: {segment.text}{roman}</div>",
+                unsafe_allow_html=True,
+            )
+
+
+def main() -> None:
+    st.set_page_config(page_title="Music Lesson Transcriber", page_icon="🎼",
+                       layout="wide")
+    st.title("🎼 Hindustani lesson transcriber")
+    st.caption(
+        "Separates the singing from the talking, writes the singing as sargam "
+        "against your Sa, and transcribes the Hindi/English explanation around "
+        "it. Runs entirely on your machine."
+    )
+
+    settings = _sidebar()
+    source = _pick_input()
+
+    if st.button("Transcribe lesson", type="primary", disabled=source is None):
+        tonic = None
+        if settings["tonic_text"]:
+            try:
+                tonic = parse_tonic(settings["tonic_text"])
+            except ValueError as exc:
+                st.error(str(exc))
+                return
+
+        bar = st.progress(0.0, text="Starting…")
+
+        def progress(stage: str, frac: float) -> None:
+            bar.progress(min(frac, 1.0), text=stage)
+
+        try:
+            result = transcribe_lesson(
+                source,
+                whisper_model=settings["model"],
+                language=settings["language"],
+                tonic=tonic,
+                diarize_speakers=settings["diarize"],
+                num_speakers=settings["num_speakers"],
+                extra_terms=settings["extra_terms"],
+                fix_vocabulary=settings["fix_vocabulary"],
+                keep_sung_text=settings["keep_sung_text"],
+                sung_threshold=settings["sung_threshold"],
+                progress=progress,
+            )
+        except (RuntimeError, FileNotFoundError, ValueError) as exc:
+            bar.empty()
+            st.error(str(exc))
+            return
+        bar.empty()
+        st.session_state["result"] = result
+
+    result = st.session_state.get("result")
+    if result is None:
+        return
+
+    _show_summary(result)
+    sheet_tab, transcript_tab, download_tab = st.tabs(
+        ["Practice sheet", "Transcript", "Download"]
+    )
+    with sheet_tab:
+        st.markdown(to_practice_sheet(result))
+    with transcript_tab:
+        _show_transcript(result)
+    with download_tab:
+        stem = os.path.splitext(os.path.basename(result.source))[0]
+        for fmt, label, mime in [
+            ("md", "Practice sheet (.md)", "text/markdown"),
+            ("txt", "Transcript (.txt)", "text/plain"),
+            ("srt", "Subtitles (.srt)", "text/plain"),
+            ("json", "Everything (.json)", "application/json"),
+        ]:
+            st.download_button(
+                label, data=render(result, fmt),
+                file_name=f"{stem}.{fmt}", mime=mime, key=f"dl_{fmt}",
+            )
+
+
+if __name__ == "__main__":
+    main()

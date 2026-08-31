@@ -320,6 +320,40 @@ predicted and which channel is driving the result:
 
 ## Troubleshooting
 
+### "zsh: command not found: python" — then it segfaults
+
+These are the same problem: **the venv is not activated.**
+
+`python` exists only inside the venv. If the shell cannot find it, you are
+outside, and `python3` then resolves to whatever system Python is on PATH —
+on this Mac, an x86_64 3.9 under Rosetta, which is the configuration that
+crashes.
+
+```bash
+cd /path/to/rev1
+source .venv/bin/activate
+python -m streamlit run transcriber/gui.py    # `python`, not `python3`
+```
+
+`python -V` should say 3.12, and `python -c "import platform; print(platform.machine())"`
+should say `arm64`. If either is wrong, see
+[macOS on Apple Silicon](#macos-on-apple-silicon-use-a-native-arm64-python).
+
+The run gets a fair way in before dying — the terminal shows extract,
+language, transcribe and translate all completing — because the crash happens
+when diarization loads its models, well after startup. The per-stage log is
+what tells you where:
+
+```
+transcriber: translate: done in 4.0s
+transcriber: diarize: started
+zsh: segmentation fault
+```
+
+A segfault leaves no Python traceback: the crash is below the interpreter, so
+there is nothing to catch and nothing to print. The stage log is the only
+record of how far it got.
+
 ### The process crashes with "Abort trap: 6" / a Python crash report
 
 If the crash report mentions `__kmp_abort_process` in `libiomp5.dylib`, or you

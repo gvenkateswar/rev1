@@ -271,3 +271,51 @@ def test_an_import_error_without_a_module_name_still_reports_the_cause(monkeypat
     message = str(err.value)
     assert "is not installed" not in message
     assert "cannot import name 'binary_dilation'" in message
+
+
+# --------------------------------------------------------------------------- #
+# announce_environment(): once per process, not once per Streamlit rerun
+# --------------------------------------------------------------------------- #
+class Recorder:
+    def __init__(self):
+        self.written = []
+
+    def write(self, text):
+        self.written.append(text)
+
+    def flush(self):
+        pass
+
+
+def test_the_notes_are_written_only_once(monkeypatch):
+    """Streamlit re-runs its script constantly; the terminal copy must not."""
+    monkeypatch.setattr(runtime, "environment_warnings", lambda: ["slow python"])
+    monkeypatch.setattr(runtime, "_ANNOUNCED", False)
+
+    out = Recorder()
+    first = runtime.announce_environment(out)
+    second = runtime.announce_environment(out)
+
+    assert out.written == ["Note: slow python\n"]
+    # The caller still gets them every time, so a page can keep showing them.
+    assert first == second == ["slow python"]
+
+
+def test_a_clean_environment_writes_nothing_and_stays_unannounced(monkeypatch):
+    monkeypatch.setattr(runtime, "environment_warnings", lambda: [])
+    monkeypatch.setattr(runtime, "_ANNOUNCED", False)
+
+    out = Recorder()
+    assert runtime.announce_environment(out) == []
+    assert out.written == []
+    assert runtime._ANNOUNCED is False
+
+
+def test_rosetta_is_described_as_a_crash_not_a_slowdown(monkeypatch):
+    """It segfaults. Calling that "slower than it needs to be" misled a user
+    into running it anyway and losing a transcription to a silent crash."""
+    monkeypatch.setattr(runtime, "is_rosetta", lambda: True)
+    monkeypatch.setattr(runtime.sys, "version_info", (3, 12, 0))
+    [note] = runtime.environment_warnings()
+    assert "CRASH" in note
+    assert "arm64" in note

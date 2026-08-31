@@ -23,7 +23,7 @@ import streamlit as st
 # Either path runs transcriber/__init__.py, which sets the OpenMP flag before
 # torch or ctranslate2 can load. Keep that import ahead of anything heavier.
 try:
-    from .runtime import environment_warnings
+    from .runtime import announce_environment
     from .core import transcribe_file
     from .emotion import _EMOJI
     from .identify import DEFAULT_MIN_ENROLL_SECONDS
@@ -31,7 +31,7 @@ try:
     from .speakerdb import SpeakerStore, default_db_path
 except ImportError:
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from transcriber.runtime import environment_warnings
+    from transcriber.runtime import announce_environment
     from transcriber.core import transcribe_file
     from transcriber.emotion import _EMOJI
     from transcriber.identify import DEFAULT_MIN_ENROLL_SECONDS
@@ -65,12 +65,12 @@ def main() -> None:
         "emotion — fused from voice tone *and* what was said."
     )
 
-    # Also to stderr: when the environment is bad enough to crash the process
-    # (a mismatched interpreter segfaults before or during model loading), the
-    # browser never renders, and the terminal is the only place left to look.
-    for note in environment_warnings():
+    # Also to stderr: when the environment is bad enough to crash the process,
+    # the browser never renders the result and the terminal is the only place
+    # left to look. announce_environment writes there once per process, not
+    # once per Streamlit rerun.
+    for note in announce_environment():
         st.warning(note)
-        sys.stderr.write(f"Note: {note}\n")
 
     with st.sidebar:
         st.header("Settings")

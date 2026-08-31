@@ -78,12 +78,15 @@ def environment_warnings() -> list[str]:
 
     if is_rosetta():
         notes.append(
-            "Running x86_64 Python under Rosetta on Apple Silicon. Transcription "
-            "will be several times slower than it needs to be, and the x86 "
-            "wheels are what force two copies of the OpenMP runtime into one "
-            "process. Install a native arm64 Python (e.g. python.org's "
-            "universal2 build or `brew install python@3.12`) and reinstall the "
-            "requirements into a fresh venv."
+            "Running x86_64 Python under Rosetta on Apple Silicon. Expect this "
+            "run to CRASH, not merely to be slow: the x86 wheels load two "
+            "copies of the OpenMP runtime into one process, and the result is "
+            "a segmentation fault partway through -- usually during "
+            "diarization, with no traceback, because the crash happens below "
+            "Python. It is also several times slower. Install a native arm64 "
+            "Python (e.g. python.org's universal2 build or "
+            "`brew install python@3.12`), make a fresh venv with it, and "
+            "activate that venv before starting the app."
         )
 
     if sys.version_info < (3, 10):
@@ -139,3 +142,27 @@ def _import_error_message(
         f"{missing or 'further down its dependency chain'}. "
         f"Run `python -c \"import {module}\"` for the full traceback."
     )
+
+
+# Streamlit re-executes its entry script on every interaction, so writing the
+# notes inline reprinted the same paragraphs on every rerun. Module state
+# survives that -- modules are imported once per process, only the script is
+# re-run -- which is what lets "once" mean once here.
+_ANNOUNCED = False
+
+
+def announce_environment(stream=None) -> list[str]:
+    """Write the environment notes to *stream* the first time, and return them.
+
+    Callers still get the notes on every call, so a UI can keep showing them;
+    only the terminal copy is written once.
+    """
+    global _ANNOUNCED
+    notes = environment_warnings()
+    if notes and not _ANNOUNCED:
+        stream = sys.stderr if stream is None else stream
+        for note in notes:
+            stream.write(f"Note: {note}\n")
+        stream.flush()
+        _ANNOUNCED = True
+    return notes

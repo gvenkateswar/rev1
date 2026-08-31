@@ -16,7 +16,9 @@ from __future__ import annotations
 
 # Must run before torch or ctranslate2 load -- they bundle conflicting copies of
 # the OpenMP runtime that abort the process on macOS. See runtime.py.
-from .runtime import configure_openmp, environment_warnings
+from .runtime import (
+    announce_environment, configure_openmp, environment_warnings,
+)
 
 configure_openmp()
 
@@ -30,6 +32,7 @@ __all__ = [
     "Speaker",
     "SpeakerStore",
     "configure_openmp",
+    "announce_environment",
     "environment_warnings",
 ]
 __version__ = "0.3.0"

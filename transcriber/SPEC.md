@@ -106,12 +106,16 @@ Turkish), `english` for English. The renderers show a line only for a field
 that is set, so an English transcript is unchanged.
 
 Translation is Whisper's own `translate` task; English is the only target it
-was trained for. It is a second decode, so it runs over the non-English spans
-only and is skippable (`--no-translate`).
+was trained for. It is a second decode, so it runs over non-English lines only
+and is skippable (`--no-translate`).
 
-The two passes segment independently, so they cannot be zipped. Each
-translated segment is assigned to the transcript segment it overlaps most — a
-partition, so no sentence is attributed to two speakers.
+It runs per transcript line, on that line's own audio, not per
+language span. Span-level translation was tried and cannot work: the two
+passes segment independently, so a three-second line was handed a
+thirty-second paragraph and the renderings stopped describing the same audio.
+Aligning by overlap improves the guess; decoding the same slice removes the
+guess. The cost is context -- a short line is translated without the sentence
+around it -- and one decode per line rather than per span.
 
 Transliteration uses uroman: rule-driven (no model, no network) and script-
 driven, so one API covers every writing system instead of a per-script library

@@ -144,3 +144,53 @@ def test_token_kwarg_is_accepted_by_the_signature_it_came_from():
 
     for cls in (_V3Pipeline, _V4Pipeline):
         cls.from_pretrained("ckpt", **_token_kwarg(cls, "hf_abc"))
+
+
+# --- pyannote result unwrapping -------------------------------------------- #
+class _Annotation:
+    """Stand-in for pyannote.core.Annotation (the bit we use)."""
+
+    def __init__(self, tag):
+        self.tag = tag
+
+    def itertracks(self, yield_label=False):
+        return iter(())
+
+
+class _DiarizeOutput:
+    """pyannote.audio 4.x wraps the annotations in a dataclass."""
+
+    def __init__(self):
+        self.speaker_diarization = _Annotation("overlapping")
+        self.exclusive_speaker_diarization = _Annotation("exclusive")
+        self.speaker_embeddings = None
+
+
+def test_prefers_the_exclusive_annotation_on_pyannote_4():
+    """Overlapping turns make word-to-speaker mapping arbitrary, so take the
+    annotation pyannote documents as being for downstream transcription."""
+    from transcriber.diarize import _as_annotation
+
+    assert _as_annotation(_DiarizeOutput()).tag == "exclusive"
+
+
+def test_falls_back_to_speaker_diarization_when_exclusive_is_absent():
+    from transcriber.diarize import _as_annotation
+
+    result = _DiarizeOutput()
+    del result.exclusive_speaker_diarization
+    assert _as_annotation(result).tag == "overlapping"
+
+
+def test_accepts_a_bare_annotation_from_pyannote_3():
+    from transcriber.diarize import _as_annotation
+
+    bare = _Annotation("bare")
+    assert _as_annotation(bare) is bare
+
+
+def test_unrecognised_result_raises_a_named_error():
+    from transcriber.diarize import _as_annotation
+
+    with pytest.raises(RuntimeError, match="Unexpected pyannote result type"):
+        _as_annotation(object())

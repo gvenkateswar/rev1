@@ -374,6 +374,23 @@ with the **same account** the token belongs to.
 
 The offline `cluster` backend (the default) needs no token and is unaffected.
 
+### "'DiarizeOutput' object has no attribute 'itertracks'"
+
+pyannote.audio 4.x wraps its result in a `DiarizeOutput` dataclass instead of
+returning a bare `Annotation`. Handled -- the diarizer unwraps whichever shape
+the installed version returns. Pull if you still see it.
+
+On 4.x it takes `exclusive_speaker_diarization` in preference to
+`speaker_diarization`. pyannote documents that one as "adapted to downstream
+transcription": it drops overlapping speech turns, and this pipeline assigns
+each Whisper word to the turn covering it, which is ambiguous when two turns
+overlap.
+
+### Harmless warnings from pyannote
+
+`std(): degrees of freedom is <= 0` comes from pyannote's pooling layer on a
+speech turn too short to have a variance. It does not stop diarization.
+
 ### Hundreds of "No module named 'torchvision'" tracebacks in the terminal
 
 Harmless, and silenced by `.streamlit/config.toml` in this repo. Streamlit's

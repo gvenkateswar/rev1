@@ -78,7 +78,7 @@ def _diarize_pyannote(
     kwargs = {}
     if num_speakers:
         kwargs["num_speakers"] = num_speakers
-    annotation = pipeline(wav_path, **kwargs)
+    annotation = _as_annotation(pipeline(wav_path, **kwargs))
 
     turns = [
         Turn(start=float(seg.start), end=float(seg.end), speaker=str(label))
@@ -86,6 +86,29 @@ def _diarize_pyannote(
     ]
     turns.sort(key=lambda t: t.start)
     return _normalize_speaker_names(turns)
+
+
+def _as_annotation(result):
+    """Get the speech-turn Annotation out of whatever the pipeline returned.
+
+    pyannote.audio 4.x returns a ``DiarizeOutput`` carrying two annotations;
+    3.x returns the ``Annotation`` directly. We prefer
+    ``exclusive_speaker_diarization``, which pyannote documents as "adapted to
+    downstream transcription" because it drops overlapping speech: this
+    pipeline maps each Whisper word onto the turn covering it, and overlapping
+    turns make that choice arbitrary.
+    """
+    for attr in ("exclusive_speaker_diarization", "speaker_diarization"):
+        annotation = getattr(result, attr, None)
+        if annotation is not None:
+            return annotation
+    if hasattr(result, "itertracks"):
+        return result
+    raise RuntimeError(
+        f"Unexpected pyannote result type {type(result).__name__!r}: no speech "
+        "turns found on it. This usually means pyannote.audio changed its "
+        "output format again; please report it."
+    )
 
 
 def _token_kwarg(pipeline_cls, hf_token: str) -> dict:

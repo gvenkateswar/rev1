@@ -28,6 +28,7 @@ def stub_pipeline(monkeypatch, tmp_path):
 
     state = {"unlinked": []}
     monkeypatch.setattr(core._audio, "extract_audio", lambda src: str(wav))
+    monkeypatch.setattr(core._audio, "audio_duration", lambda path: 60.0)
     monkeypatch.setattr(core, "load_model", lambda name: object())
     monkeypatch.setattr(
         core.os, "unlink", lambda p: state["unlinked"].append(p))

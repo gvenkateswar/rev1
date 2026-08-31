@@ -13,6 +13,7 @@ store, so the same person keeps their name across recordings.
 from __future__ import annotations
 
 import os
+import sys
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -108,13 +109,39 @@ def _noop(_stage: str, _frac: float) -> None:
     pass
 
 
+# Diarization on CPU can run for many minutes with nothing to show for it. The
+# browser gets a progress bar; the terminal the app was launched from gets
+# these, so "is it still working?" has an answer in both places. Set
+# TRANSCRIBER_QUIET=1 to silence them (a library caller usually wants that).
+def _log(message: str) -> None:
+    if os.environ.get("TRANSCRIBER_QUIET"):
+        return
+    sys.stderr.write(f"transcriber: {message}\n")
+    sys.stderr.flush()
+
+
 @contextmanager
 def _timed(timings: dict[str, float], key: str):
+    _log(f"{key}: started")
     t0 = time.perf_counter()
+    finished = False
     try:
         yield
+        finished = True
     finally:
-        timings[key] = time.perf_counter() - t0
+        elapsed = time.perf_counter() - t0
+        timings[key] = elapsed
+        # Say which it was: a stage that died still recorded a duration, and
+        # reporting that as "done" would be a lie.
+        _log(f"{key}: {'done' if finished else 'FAILED'} in {elapsed:.1f}s")
+
+
+def _stage_progress(progress: ProgressCb, label: str, lo: float, hi: float) -> ProgressCb:
+    """Map a stage's own 0..1 progress into its slice of the overall bar."""
+    def report(detail: str, frac: float) -> None:
+        frac = min(1.0, max(0.0, frac))
+        progress(f"{label} — {detail}" if detail else label, lo + (hi - lo) * frac)
+    return report
 
 
 def transcribe_file(
@@ -158,6 +185,13 @@ def transcribe_file(
     with _timed(timings, "extract"):
         wav_path = _audio.extract_audio(src_path)
     try:
+        # Both numbers set expectations for every stage that follows, and the
+        # diarization backend is the one that decides whether this run takes
+        # seconds or an hour.
+        _log(
+            f"{_audio.audio_duration(wav_path):.0f}s of audio | "
+            f"model={whisper_model} diarization={diarization_backend}"
+        )
         # Load once and share: the language probe and the decode use the same
         # model, and loading it twice would double the slowest startup cost.
         model = load_model(whisper_model)
@@ -197,20 +231,22 @@ def transcribe_file(
                     task="translate", word_timestamps=False,
                 )
 
-        progress("Separating speakers", 0.55)
+        progress("Separating speakers", 0.50)
         with _timed(timings, "diarize"):
             turns = diarize(
                 wav_path,
                 backend=diarization_backend,
                 num_speakers=num_speakers,
                 hf_token=hf_token,
+                progress=_stage_progress(
+                    progress, "Separating speakers", 0.50, 0.70),
             )
 
         identified: dict[str, str] = {}
         unmatched: dict[str, str] = {}
         voiceprints: dict = {}
         if identify_speakers and turns:
-            progress("Recognising speakers", 0.65)
+            progress("Recognising speakers", 0.72)
             with _timed(timings, "identify"):
                 identified, unmatched, voiceprints = _identify_speakers(
                     wav_path, turns, speaker_db, match_threshold, match_margin,

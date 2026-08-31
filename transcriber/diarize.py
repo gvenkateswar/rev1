@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import inspect
+
 import numpy as np
 
 from .runtime import require
@@ -32,20 +34,34 @@ def diarize(
     backend: str = "cluster",
     num_speakers: int | None = None,
     hf_token: str | None = None,
+    progress=None,
 ) -> list[Turn]:
-    """Dispatch to the chosen backend. *num_speakers* None means auto-detect."""
+    """Dispatch to the chosen backend. *num_speakers* None means auto-detect.
+
+    *progress* is called as ``progress(detail, fraction)`` with *fraction* in
+    0..1 across this stage. This is the longest stage in the pipeline by a wide
+    margin on CPU, so it is the one that most needs to say it is still alive.
+    """
+    progress = progress or _noop_progress
     if backend == "pyannote":
-        return _diarize_pyannote(wav_path, num_speakers, hf_token)
+        return _diarize_pyannote(wav_path, num_speakers, hf_token, progress)
     if backend == "cluster":
-        return _diarize_cluster(wav_path, num_speakers)
+        return _diarize_cluster(wav_path, num_speakers, progress=progress)
     raise ValueError(f"Unknown diarization backend: {backend!r}")
+
+
+def _noop_progress(_detail: str, _frac: float) -> None:
+    pass
 
 
 # --------------------------------------------------------------------------- #
 # Backend 1: pyannote.audio
 # --------------------------------------------------------------------------- #
 def _diarize_pyannote(
-    wav_path: str, num_speakers: int | None, hf_token: str | None
+    wav_path: str,
+    num_speakers: int | None,
+    hf_token: str | None,
+    progress=_noop_progress,
 ) -> list[Turn]:
     Pipeline = require(
         "pyannote.audio",
@@ -80,7 +96,12 @@ def _diarize_pyannote(
     kwargs = {}
     if num_speakers:
         kwargs["num_speakers"] = num_speakers
+    if _accepts_hook(pipeline):
+        kwargs["hook"] = _progress_hook(progress)
+
+    progress("loading model", 0.0)
     annotation = _as_annotation(pipeline(wav_path, **kwargs))
+    progress("done", 1.0)
 
     turns = [
         Turn(start=float(seg.start), end=float(seg.end), speaker=str(label))
@@ -88,6 +109,37 @@ def _diarize_pyannote(
     ]
     turns.sort(key=lambda t: t.start)
     return _normalize_speaker_names(turns)
+
+
+def _accepts_hook(pipeline) -> bool:
+    """True if this pyannote version takes a progress hook.
+
+    The hook is pyannote's own reporting channel, but it is not part of any
+    API guarantee, so check rather than assume: passing an unexpected keyword
+    would turn a working diarization into a TypeError.
+    """
+    apply = getattr(pipeline, "apply", None)
+    if apply is None:
+        return False
+    try:
+        return "hook" in inspect.signature(apply).parameters
+    except (TypeError, ValueError):     # builtins and C callables have none
+        return False
+
+
+def _progress_hook(progress):
+    """Adapt pyannote's hook protocol to ours.
+
+    pyannote calls this once per step with completed=None, then repeatedly
+    with counts. Extra keyword arguments are accepted on purpose: the
+    signature has gained parameters across versions, and a hook that raises
+    TypeError mid-run would take the diarization down with it.
+    """
+    def hook(step_name, step_artifact=None, file=None, total=None,
+             completed=None, **_ignored):
+        frac = completed / total if total else 0.0
+        progress(str(step_name), frac)
+    return hook
 
 
 def _as_annotation(result):
@@ -136,6 +188,7 @@ def _diarize_cluster(
     window: float = 1.5,
     hop: float = 0.75,
     max_speakers: int = 8,
+    progress=_noop_progress,
 ) -> list[Turn]:
     resemblyzer = require(
         "resemblyzer",
@@ -156,10 +209,14 @@ def _diarize_cluster(
         install="pip install scikit-learn",
     ).silhouette_score
 
+    progress("reading audio", 0.0)
     wav = preprocess_wav(wav_path)            # 16 kHz float, VAD-trimmed
     encoder = VoiceEncoder()
 
-    # Continuous embedding: one partial embedding per `rate` slices.
+    # Continuous embedding: one partial embedding per `rate` slices. This is
+    # one library call over the whole recording, so it can only be reported
+    # either side of -- not during.
+    progress("embedding voices", 0.1)
     sr = 16_000
     rate = 1.0 / hop                          # embeddings per second
     _, cont_embeds, slices = encoder.embed_utterance(
@@ -174,6 +231,7 @@ def _diarize_cluster(
     labels = _cluster_embeddings(
         cont_embeds, num_speakers, max_speakers,
         AgglomerativeClustering, silhouette_score,
+        progress=_sub_progress(progress, "grouping voices", 0.7, 1.0),
     )
 
     # Collapse consecutive same-label windows into turns.
@@ -187,6 +245,7 @@ def _cluster_embeddings(
     max_speakers: int,
     AgglomerativeClustering,
     silhouette_score,
+    progress=_noop_progress,
 ) -> np.ndarray:
     n = len(embeds)
     if n == 1:
@@ -203,6 +262,7 @@ def _cluster_embeddings(
     best_k, best_score, best_labels = 1, -1.0, np.zeros(n, dtype=int)
     upper = min(max_speakers, n)
     for k in range(2, upper + 1):
+        progress(f"trying {k} speakers", (k - 1) / max(1, upper - 1))
         labels = AgglomerativeClustering(n_clusters=k).fit_predict(embeds)
         if len(set(labels)) < 2:
             continue
@@ -247,3 +307,11 @@ def _normalize_speaker_names(turns: list[Turn]) -> list[Turn]:
     for t in turns:
         t.speaker = mapping[t.speaker]
     return turns
+
+
+def _sub_progress(progress, label: str, lo: float, hi: float):
+    """Narrow *progress* to the [lo, hi] slice of this stage."""
+    def report(detail: str, frac: float) -> None:
+        frac = min(1.0, max(0.0, frac))
+        progress(f"{label} ({detail})" if detail else label, lo + (hi - lo) * frac)
+    return report

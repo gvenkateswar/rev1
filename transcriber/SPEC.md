@@ -179,6 +179,29 @@ quotes the original exception, and says that reinstalling will not help.
 The original exception is always chained (`raise ... from exc`). The GUI shows
 only `str(exc)`, so it also prints the traceback to the terminal.
 
+## Progress reporting
+
+Diarization dominates the runtime: on CPU, pyannote runs slower than real time,
+so a 20-minute recording can hold one stage for longer than the recording
+lasts. A bar that does not move is indistinguishable from a hang, and that
+ambiguity was itself the bug.
+
+`diarize()` therefore takes a `progress(detail, fraction)` callback, which
+`core` maps into that stage's slice of the overall bar. pyannote reports
+through its own hook -- passed only when `inspect.signature` shows the
+installed version accepts one, and written to tolerate keywords it has not
+seen, since neither is an API guarantee. The `cluster` backend reports its own
+phases, including each candidate speaker count it tries.
+
+Stage start and finish also go to stderr, where the terminal that launched the
+GUI can see them, along with the audio duration and backend up front.
+`TRANSCRIBER_QUIET=1` silences them. A stage that raises is logged as FAILED,
+never as done.
+
+The GUI clears the previous result when a run starts: it renders results below
+the progress bar, so a stale transcript and its timings otherwise read as
+belonging to the run still in flight.
+
 ## Out of scope
 
 - Real-time / streaming transcription.

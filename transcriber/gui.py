@@ -11,6 +11,7 @@ import html
 import os
 import sys
 import tempfile
+import time
 import traceback
 
 import streamlit as st
@@ -105,7 +106,12 @@ def main() -> None:
         st.subheader("Speakers")
         backend = st.radio(
             "Diarization backend", ["cluster", "pyannote"],
-            captions=["Offline, no token needed", "Best quality, needs HF token"],
+            captions=["Offline, no token needed",
+                      "Best quality, needs HF token — much slower on CPU"],
+            help="pyannote is the more accurate of the two, but on a CPU it "
+                 "runs slower than real time: a long recording can take "
+                 "longer than the recording itself. Watch the terminal you "
+                 "launched from for per-stage progress.",
         )
         hf_token = ""
         if backend == "pyannote":
@@ -211,10 +217,19 @@ def _resolve_source(uploaded, local_path: str) -> str | None:
 def _run(src, model, language, multilingual, transliterate, translate,
          backend, hf_token, num_speakers,
          identify, threshold, detect_emotion, source, audio_weight) -> None:
+    # Drop the previous run's result before starting. Streamlit renders the
+    # results block below this one, so leaving it would show a finished
+    # transcript and its timings underneath a bar that is still moving -- the
+    # last run's numbers read as if they belong to this one.
+    st.session_state.pop("result", None)
+
     bar = st.progress(0.0, text="Starting…")
+    started = time.monotonic()
 
     def progress(stage: str, frac: float) -> None:
-        bar.progress(min(1.0, frac), text=stage)
+        # Elapsed time is the honest signal on a stage that reports no
+        # sub-progress: a still bar with a rising clock is visibly alive.
+        bar.progress(min(1.0, frac), text=f"{stage}  ·  {time.monotonic() - started:.0f}s")
 
     try:
         result = transcribe_file(

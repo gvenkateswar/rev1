@@ -438,6 +438,39 @@ transcription": it drops overlapping speech turns, and this pipeline assigns
 each Whisper word to the turn covering it, which is ambiguous when two turns
 overlap.
 
+### It has been on one stage for ages — is it stuck?
+
+Almost certainly not, if that stage is **Separating speakers** with the
+`pyannote` backend. pyannote runs slower than real time on a CPU: a 20-minute
+recording can take well over 20 minutes, and nothing about the old progress
+bar distinguished that from a hang.
+
+Both surfaces now answer the question:
+
+- The terminal you launched from prints a line when each stage starts and
+  finishes, plus the audio duration and backend up front:
+
+      transcriber: 1183s of audio | model=base diarization=pyannote
+      transcriber: extract: started
+      transcriber: extract: done in 0.4s
+      transcriber: diarize: started
+      transcriber: diarize: done in 412.7s
+
+  Set `TRANSCRIBER_QUIET=1` to turn these off.
+
+- The progress bar shows the stage, pyannote's own sub-step, and a running
+  clock, so a bar that is not moving still visibly counts up. The offline
+  `cluster` backend reports its stages too.
+
+**One thing that used to make this worse:** the results block rendered the
+*previous* run's transcript and timings underneath the in-progress bar, so a
+finished-looking set of numbers sat under a bar that was still working. The
+previous result is now cleared when a run starts.
+
+To make it faster: use the `cluster` backend (seconds rather than minutes, at
+some accuracy cost), pass `--speakers N` when you know the count (it skips the
+search over 2..8 speakers), or run on a CUDA GPU.
+
 ### Non-English speech comes out written in English
 
 Two causes, and they stack.
@@ -553,6 +586,8 @@ The pipeline is tuned for turnaround time:
   first run pays the load cost.
 - **Per-stage timing** — every run reports where the time went (CLI prints it
   to stderr; the GUI shows a metric per stage), so you can tune with data.
+  Stage start/finish also goes to stderr as it happens, so a long run is
+  visibly alive rather than silently pending.
 
 Going faster still:
 
@@ -561,6 +596,9 @@ Going faster still:
 - **Model size:** `--model distil-large-v3` is near-large accuracy at a
   fraction of the cost; `tiny`/`base` are fastest on CPU.
 - **Skip emotion:** `--no-emotion` drops the emotion stage entirely.
+- **Diarization backend:** `cluster` (the default) is seconds where `pyannote`
+  is minutes on CPU. pyannote is more accurate; on a long recording it is also
+  the entire runtime. `--speakers N` skips its search over speaker counts.
 - **Skip translation:** `--no-translate` drops the second Whisper pass. It runs
   over the non-English spans only, so on an English recording there is nothing
   to save; on an all-Hindi one it is close to a second full decode.

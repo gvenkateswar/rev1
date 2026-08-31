@@ -277,6 +277,25 @@ def _run(src, model, language, multilingual, transliterate, translate,
     bar = st.progress(0.0, text="Starting…")
     started = time.monotonic()
 
+    # Lines appear here as they are decoded, long before the finished
+    # transcript exists. They are rough on purpose -- no speaker, no language
+    # re-check, no gap pass -- but they answer "is this working, and is it
+    # hearing the right thing" while there is still time to stop and change
+    # a setting.
+    live = st.empty()
+    heard: list[str] = []
+
+    def on_partial(start: float, text: str) -> None:
+        if not text:
+            return
+        heard.append(f"`{_fmt_ts(start)}`  {html.escape(text)}")
+        # Only the tail: this is a running indicator, not a document, and a
+        # list that grows without limit takes the page with it.
+        live.markdown(
+            "**Hearing so far** *(rough — speakers and languages come later)*\n\n"
+            + "\n\n".join(heard[-8:])
+        )
+
     def progress(stage: str, frac: float) -> None:
         # Elapsed time is the honest signal on a stage that reports no
         # sub-progress: a still bar with a rising clock is visibly alive.
@@ -302,9 +321,12 @@ def _run(src, model, language, multilingual, transliterate, translate,
             use_audio_emotion=source in ("both", "audio"),
             use_text_emotion=source in ("both", "text"),
             progress=progress,
+            on_partial=on_partial,
         )
     except Exception as exc:  # surface any backend/runtime error to the user
         bar.empty()
+        # `live` is deliberately left alone: what it had already heard is the
+        # most useful context for reading the error.
         # Streamlit collapses single newlines, and these messages are
         # multi-line on purpose; two trailing spaces make markdown keep them.
         st.error("Failed: " + str(exc).replace("\n", "  \n"))
@@ -315,6 +337,7 @@ def _run(src, model, language, multilingual, transliterate, translate,
         return
 
     bar.empty()
+    live.empty()          # the finished transcript renders below; this was scaffolding
     st.session_state["result"] = result
     st.session_state["detect_emotion"] = detect_emotion
 

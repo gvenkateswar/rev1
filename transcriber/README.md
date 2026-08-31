@@ -353,6 +353,7 @@ Output (txt):
 | `--model` | Whisper size: tiny/base/small/medium/large-v3, or `distil-large-v3` | `small` |
 | `--language` | Pin one language (ISO code) for the whole file | auto-detect |
 | `--no-multilingual` | Detect the language once instead of building a timeline | off |
+| `--live` | Print lines to stderr as they are decoded | off |
 | `--langid` | `whisper` or `speechbrain` — which detector decides the language | `whisper` |
 | `--language-alias` | `ur=hi` — treat one detected language as another (repeatable) | — |
 | `--no-transliterate` | Skip the Latin transliteration of non-Latin scripts | off |
@@ -654,6 +655,28 @@ On 4.x it takes `exclusive_speaker_diarization` in preference to
 transcription": it drops overlapping speech turns, and this pipeline assigns
 each Whisper word to the turn covering it, which is ambiguous when two turns
 overlap.
+
+### Watching it work
+
+The GUI shows lines as they are decoded, under the progress bar, before the
+finished transcript exists. The CLI does the same with `--live`:
+
+```sh
+python -m transcriber long-interview.m4a --live
+```
+
+```
+[0:00] नमस्ते, कैसे हैं आप?
+[0:07] Doing well, thanks — shall we start?
+```
+
+They are **rough on purpose**: no speaker, no language re-check, no gap pass,
+and a line can still change or merge before the end. The point is to see that
+it is working, and roughly what it is hearing, while there is still time to
+stop and change a setting rather than waiting out a whole run to find out the
+model was wrong about the language.
+
+CLI partials go to stderr, so `-o out.txt` and piping stdout are unaffected.
 
 ### It has been on one stage for ages — is it stuck?
 

@@ -36,6 +36,12 @@ from .transcribe import (
 
 ProgressCb = Callable[[str, float], None]
 
+# (start seconds, text) for one line, the moment it is decoded. Rough: this is
+# before diarization, speaker assignment, the language re-check and the gap
+# pass, so lines can still change or be joined. Its job is to show that work
+# is happening and roughly what is coming out, not to be the transcript.
+PartialCb = Callable[[float, str], None]
+
 # Whisper's "translate" task has exactly one target: English. It was never
 # trained to translate into anything else, so this is the language a segment
 # is already in when there is nothing to translate it to.
@@ -154,6 +160,29 @@ def _timed(timings: dict[str, float], key: str):
         _log(f"{key}: {'done' if finished else 'FAILED'} in {elapsed:.1f}s")
 
 
+def _partial_reporter(
+    on_partial: PartialCb | None, progress: ProgressCb, duration: float
+):
+    """Report each decoded line, and move the bar by position in the audio.
+
+    Returns None when nobody is listening, so the decode does not pay for a
+    callback that does nothing.
+
+    The fraction is how far through the recording the decoder has reached,
+    which is the only honest measure of progress here -- segment count says
+    nothing, since a line can be one word or thirty.
+    """
+    if on_partial is None:
+        return None
+
+    def heard(raw) -> None:
+        on_partial(raw.start, raw.text)
+        if duration > 0:
+            progress("Transcribing", 0.15 + 0.30 * min(1.0, raw.end / duration))
+
+    return heard
+
+
 def _stage_progress(progress: ProgressCb, label: str, lo: float, hi: float) -> ProgressCb:
     """Map a stage's own 0..1 progress into its slice of the overall bar."""
     def report(detail: str, frac: float) -> None:
@@ -186,6 +215,7 @@ def transcribe_file(
     use_audio_emotion: bool = True,
     use_text_emotion: bool = True,
     progress: ProgressCb | None = None,
+    on_partial: PartialCb | None = None,
 ) -> TranscriptResult:
     """Run the full pipeline on *src_path* and return a TranscriptResult.
 
@@ -240,13 +270,16 @@ def transcribe_file(
 
         progress("Transcribing", 0.15)
         with _timed(timings, "transcribe"):
+            heard = _partial_reporter(
+                on_partial, progress, _audio.audio_duration(wav_path))
             if spans:
                 # We already know which language is spoken where, from
                 # overlapping probes with a confirmation rule. Decoding each
                 # span with that language pinned beats letting Whisper guess
                 # again per 30s window, which is what lets a non-English
                 # stretch come back written in English.
-                raw_segments = transcribe_spans(wav_path, spans, model=model)
+                raw_segments = transcribe_spans(
+                    wav_path, spans, model=model, on_segment=heard)
                 lang = spans[0].language
             else:
                 raw_segments, lang = transcribe(
@@ -255,6 +288,7 @@ def transcribe_file(
                     language=language,
                     multilingual=multilingual,
                     model=model,
+                    on_segment=heard,
                 )
 
         progress("Separating speakers", 0.50)

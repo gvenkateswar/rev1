@@ -100,6 +100,7 @@ def transcribe(
     multilingual: bool = True,
     task: str = "transcribe",
     model=None,
+    on_segment=None,
 ) -> tuple[list[RawSegment], str]:
     """Transcribe *audio* (a WAV path or a 16 kHz float waveform).
 
@@ -117,6 +118,11 @@ def transcribe(
     it was said in; "translate" writes an English translation of it. Whisper
     has no other target language -- English is the only one it was trained to
     translate into.
+
+    *on_segment* is called with each RawSegment the moment it is decoded.
+    Decoding is the long stage, and it produces finished lines all the way
+    through; holding them back until the end makes a working run
+    indistinguishable from a stuck one.
 
     Pass a preloaded *model* to skip the cache lookup entirely.
     """
@@ -151,16 +157,17 @@ def transcribe(
             for w in (seg.words or [])
             if w.start is not None and w.end is not None
         ]
-        segments.append(
-            RawSegment(
-                start=float(seg.start),
-                end=float(seg.end),
-                text=seg.text.strip(),
-                words=words,
-                avg_logprob=float(getattr(seg, "avg_logprob", 0.0)),
-                no_speech_prob=float(getattr(seg, "no_speech_prob", 0.0)),
-            )
+        raw = RawSegment(
+            start=float(seg.start),
+            end=float(seg.end),
+            text=seg.text.strip(),
+            words=words,
+            avg_logprob=float(getattr(seg, "avg_logprob", 0.0)),
+            no_speech_prob=float(getattr(seg, "no_speech_prob", 0.0)),
         )
+        segments.append(raw)
+        if on_segment is not None:
+            on_segment(raw)
     return segments, info.language
 
 
@@ -194,6 +201,7 @@ def transcribe_spans(
     task: str = "transcribe",
     word_timestamps: bool = True,
     beam_size: int = 5,
+    on_segment=None,
 ) -> list[RawSegment]:
     """Decode each language span with its own language pinned.
 
@@ -231,7 +239,13 @@ def transcribe_spans(
             multilingual=False,
             model=model,
         )
-        out.extend(shift_segments(segments, span.start))
+        shifted = shift_segments(segments, span.start)
+        if on_segment is not None:
+            # Reported after shifting, so a caller showing them alongside
+            # timestamps sees where in the recording they actually are.
+            for raw in shifted:
+                on_segment(raw)
+        out.extend(shifted)
 
     out.sort(key=lambda s: s.start)
     return out

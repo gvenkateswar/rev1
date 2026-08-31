@@ -20,6 +20,15 @@ from transcriber.transcribe import RawSegment, Word
 from .conftest import make_voice
 
 
+NAMASTE = "\u0928\u092e\u0938\u094d\u0924\u0947"
+
+NATIVE = [
+    RawSegment(0, 4, "hello there", [
+        Word(0, 1, "hello", 0.9), Word(1, 4, " there", 0.9)]),
+    RawSegment(40, 44, NAMASTE, [Word(40, 44, NAMASTE, 0.5)]),
+]
+
+
 class FakeDetector:
     """Stands in for a language detector. Tests set `result` to steer it."""
 
@@ -45,12 +54,7 @@ def stub_pipeline(monkeypatch, tmp_path):
     monkeypatch.setattr(
         core.os, "unlink", lambda p: state["unlinked"].append(p))
 
-    native = [
-        RawSegment(0, 4, "hello there", [
-            Word(0, 1, "hello", 0.9), Word(1, 4, " there", 0.9)]),
-        RawSegment(40, 44, "\u0928\u092e\u0938\u094d\u0924\u0947", [
-            Word(40, 44, "\u0928\u092e\u0938\u094d\u0924\u0947", 0.5)]),
-    ]
+    native = list(NATIVE)
 
     def fake_spans(wav_path, spans, *, model, task="transcribe", **kw):
         state.setdefault("tasks", []).append((task, [s.language for s in spans]))
@@ -194,7 +198,6 @@ def test_dominant_language_wins_over_first_detected(stub_pipeline, monkeypatch):
 # --------------------------------------------------------------------------- #
 # Three renderings: native script, Latin transliteration, English translation
 # --------------------------------------------------------------------------- #
-NAMASTE = "नमस्ते"
 
 
 def test_native_script_survives_the_pipeline(stub_pipeline):
@@ -382,3 +385,43 @@ def test_silence_is_never_filled_in(stub_pipeline, monkeypatch):
                                   detect_emotion=False, translate=False)
     assert called == []
     assert "hallucination" not in [s.text for s in result.segments]
+
+
+# --------------------------------------------------------------------------- #
+# Rough lines while the decode is still running
+# --------------------------------------------------------------------------- #
+def test_lines_are_reported_as_they_are_decoded(stub_pipeline, monkeypatch):
+    """A long decode should not be silent until it finishes."""
+    heard = []
+    monkeypatch.setattr(core, "transcribe_spans",
+                        lambda wav, spans, *, model, on_segment=None, **kw:
+                        [on_segment(r) for r in NATIVE] and list(NATIVE)
+                        if on_segment else list(NATIVE))
+    core.transcribe_file("m.mp4", identify_speakers=False, detect_emotion=False,
+                         on_partial=lambda start, text: heard.append((start, text)))
+    assert heard == [(0, "hello there"), (40, NAMASTE)]
+
+
+def test_the_bar_advances_with_position_in_the_audio(stub_pipeline, monkeypatch):
+    """Segment count says nothing -- a line can be one word or thirty."""
+    seen = []
+    monkeypatch.setattr(core, "transcribe_spans",
+                        lambda wav, spans, *, model, on_segment=None, **kw:
+                        [on_segment(r) for r in NATIVE] and list(NATIVE)
+                        if on_segment else list(NATIVE))
+    core.transcribe_file("m.mp4", identify_speakers=False, detect_emotion=False,
+                         progress=lambda stage, frac: seen.append((stage, frac)),
+                         on_partial=lambda start, text: None)
+    during = [f for stage, f in seen if stage == "Transcribing"]
+    assert during == sorted(during)          # never goes backwards
+    assert during[-1] > during[0]
+
+
+def test_no_listener_means_no_callback_is_built(stub_pipeline, monkeypatch):
+    """The decode should not pay for a callback nobody reads."""
+    got = {}
+    monkeypatch.setattr(core, "transcribe_spans",
+                        lambda wav, spans, *, model, on_segment=None, **kw:
+                        got.setdefault("on_segment", on_segment) or list(NATIVE))
+    core.transcribe_file("m.mp4", identify_speakers=False, detect_emotion=False)
+    assert got["on_segment"] is None

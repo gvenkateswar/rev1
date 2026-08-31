@@ -313,6 +313,23 @@ counts as modified: not knowing is not the same as knowing it is clean.
 
 ## Progress reporting
 
+Decoding is the stage that produces finished output all the way through, so
+holding it back until the end makes a working run indistinguishable from a
+stuck one. `transcribe()` and `transcribe_spans()` take an `on_segment`
+callback invoked as each line is decoded (after timestamp shifting, so a
+caller showing timestamps sees where in the recording the line is), and
+`transcribe_file` exposes it as `on_partial(start, text)`.
+
+These lines are rough by construction: they precede diarization, speaker
+assignment, the language re-check and the gap pass, so they can change or
+merge. Both UIs label them as such. The callback is only built when somebody
+is listening, so a decode does not pay for a no-op.
+
+The bar advances during the decode by *position in the audio*, not by segment
+count -- a segment can be one word or thirty, so counting them reports
+nothing.
+
+
 Diarization dominates the runtime: on CPU, pyannote runs slower than real time,
 so a 20-minute recording can hold one stage for longer than the recording
 lasts. A bar that does not move is indistinguishable from a hang, and that

@@ -27,6 +27,12 @@ def _progress(stage: str, frac: float) -> None:
         sys.stderr.write("\n")
 
 
+def _live_line(start: float, text: str) -> None:
+    """One decoded line, to stderr, so stdout stays the transcript alone."""
+    sys.stderr.write(f"[{int(start) // 60:d}:{int(start) % 60:02d}] {text}\n")
+    sys.stderr.flush()
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="transcriber",
@@ -53,6 +59,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-multilingual", action="store_true",
                    help="Decode the whole file in one auto-detected language "
                         "instead of allowing the language to change mid-file.")
+    p.add_argument("--live", action="store_true",
+                   help="Print each line to stderr as it is decoded, before "
+                        "speakers and languages are worked out. Useful on a "
+                        "long file to see that it is working and roughly what "
+                        "it is hearing.")
     p.add_argument("--langid", default="whisper",
                    choices=["whisper", "speechbrain"],
                    help="Which detector decides the language. 'whisper' is "
@@ -148,6 +159,7 @@ def main(argv: list[str] | None = None) -> int:
             use_audio_emotion=args.emotion_source in ("both", "audio"),
             use_text_emotion=args.emotion_source in ("both", "text"),
             progress=_progress,
+            on_partial=_live_line if args.live else None,
         )
     except (RuntimeError, FileNotFoundError, ValueError) as exc:
         sys.stderr.write(f"\nError: {exc}\n")

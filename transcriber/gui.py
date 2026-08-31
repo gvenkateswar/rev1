@@ -80,11 +80,12 @@ def main() -> None:
         model = st.selectbox(
             "Whisper model",
             ["tiny", "base", "small", "medium", "large-v3", "distil-large-v3"],
-            index=1,
-            help="Bigger = more accurate but slower. For anything other than "
-                 "English, use 'small' or better: the tiny and base models "
-                 "have high error rates on non-English speech and drift into "
-                 "English on their own.",
+            index=2,
+            help="Bigger = more accurate but slower. 'small' is the default "
+                 "because tiny and base do not transcribe non-English speech "
+                 "-- they hand back an English translation instead, which "
+                 "reads like a clean transcript but is not one. Drop to base "
+                 "only for English-only audio.",
         )
         language = st.text_input("Language (blank = auto-detect)", value="")
         multilingual = st.checkbox(
@@ -363,7 +364,19 @@ def _save_names(result, entries: dict[str, str]) -> None:
 
 def _render_transcript(result, detect_emotion: bool) -> None:
     st.subheader("Transcript")
-    show_lang = result.is_multilingual
+    # Tag the language on anything that is not a plain English recording, not
+    # only on mixed ones: on a monolingual Hindi file the code is exactly what
+    # explains what you are looking at.
+    show_lang = result.is_multilingual or result.language != "en"
+
+    missing = result.untranscribed_segments
+    if missing:
+        st.warning(
+            f"{missing} line(s) came back in English instead of the language "
+            "actually spoken — the native text below those is the translation, "
+            "not the speaker's own words. This is the Whisper model, not the "
+            "audio: **switch the model to `small` or larger and run it again.**"
+        )
     for seg in result.segments:
         color = _speaker_color(result.speakers, seg.speaker)
         # A check mark distinguishes a name we recognised from one the user is
@@ -397,6 +410,12 @@ def _render_transcript(result, detect_emotion: bool) -> None:
             f"<span style='color:#999'>{label}</span> {html.escape(text)}</div>"
             for label, text in renderings(seg)
         )
+        if seg.native_is_english:
+            extra += (
+                "<div style='color:#b45309;font-size:0.8em;margin-top:.15em'>"
+                "⚠ this is the English translation, not the original — the "
+                "model did not transcribe the spoken language</div>"
+            )
         st.markdown(
             f"<div style='border-left:4px solid {color};padding:.2em .8em;"
             f"margin:.3em 0'>"

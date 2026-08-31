@@ -74,9 +74,20 @@ speech coming back written in English:
    is still used (no timeline, or a pinned language), the flag is off unless
    the language is pinned.
 
-Whisper model size is the remaining limit: `tiny` and `base` have high error
-rates outside English and drift into it regardless. Documented in the README
-and in both UIs rather than worked around.
+Whisper model size is the remaining limit, and it is not a matter of degree:
+`tiny` and `base` return an English *translation* of non-English speech even
+with the language pinned, because transcribe and translate share one decoder
+and the small checkpoints conflate the tasks. The default is therefore `small`
+in both UIs and in `transcribe_file`. `base` stays available for English-only
+audio, where it is the faster choice.
+
+Because the failure produces clean-looking English rather than obvious
+garbage, the pipeline also detects it: a non-English segment whose native text
+and English translation say nearly the same thing (difflib ratio >= 0.80 over
+letters and digits, minimum 12 characters) is flagged `native_is_english`, and
+both UIs mark those lines. Comparing meaning rather than script keeps it
+correct for Latin-script languages, where a real transcript still reads
+nothing like its translation.
 
 ### Three renderings
 

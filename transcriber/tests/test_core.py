@@ -168,3 +168,71 @@ def test_without_a_timeline_the_whole_file_is_one_span(monkeypatch):
     picked = core._spans_to_translate([], "hi", "unused.wav")
     assert len(picked) == 1
     assert (picked[0].start, picked[0].end, picked[0].language) == (0.0, 42.0, "hi")
+
+
+# --------------------------------------------------------------------------- #
+# Detecting a "transcript" that is really the translation
+# --------------------------------------------------------------------------- #
+def flagged(text, english, language="hi"):
+    s = core.TranscriptSegment(0, 5, "S1", text, language=language, english=english)
+    core._flag_missing_native_text([s])
+    return s.native_is_english
+
+
+def test_an_identical_pair_is_flagged():
+    """Whisper base returned the translation for both renderings."""
+    assert flagged("How do you earn Urfi?", "How do you earn Urfi?") is True
+
+
+def test_a_nearly_identical_pair_is_flagged():
+    """The real case: two English sentences differing in a few words."""
+    assert flagged(
+        "You keep watching on Instagram that you wear new clothes every "
+        "time and you wear a sport.",
+        "You keep watching on Instagram that you wear new clothes every "
+        "time, and you are spotted.",
+    ) is True
+
+
+def test_a_real_transcript_and_its_translation_are_not_flagged():
+    assert flagged("नमस्ते, आप कैसे हैं?", "Hello, how are you?") is False
+
+
+def test_latin_script_languages_are_judged_on_the_words_not_the_script():
+    """Spanish transcribed correctly reads nothing like its translation."""
+    assert flagged("el gato está sobre la mesa", "the cat is on the table",
+                   language="es") is False
+
+
+def test_punctuation_and_case_cannot_hide_a_match():
+    assert flagged("HOW DO YOU EARN URFI",
+                   "How do you earn, Urfi?!") is True
+
+
+def test_short_phrases_are_left_alone():
+    """"ok"/"ok" is a coincidence, not evidence the model gave up."""
+    assert flagged("Ok, thanks", "Ok, thanks") is False
+
+
+def test_english_segments_are_never_flagged():
+    assert flagged("How do you earn Urfi?", "How do you earn Urfi?",
+                   language="en") is False
+
+
+def test_a_segment_with_no_translation_is_never_flagged():
+    """Nothing to compare against is not evidence of anything."""
+    s = core.TranscriptSegment(0, 5, "S1", "some long enough text here",
+                               language="hi", english=None)
+    core._flag_missing_native_text([s])
+    assert s.native_is_english is False
+
+
+def test_the_result_counts_the_flagged_lines():
+    good = core.TranscriptSegment(0, 5, "S1", "नमस्ते जी कैसे हैं आप",
+                                  language="hi", english="Hello how are you")
+    bad = core.TranscriptSegment(5, 9, "S1", "How do you earn Urfi?",
+                                 language="hi", english="How do you earn Urfi?")
+    core._flag_missing_native_text([good, bad])
+    result = core.TranscriptResult(
+        segments=[good, bad], language="hi", speakers=["S1"], source="m.wav")
+    assert result.untranscribed_segments == 1

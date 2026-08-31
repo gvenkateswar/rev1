@@ -38,12 +38,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-f", "--format", default="txt",
                    choices=["txt", "json", "srt", "vtt"],
                    help="Output format (default: txt).")
-    p.add_argument("--model", default="base",
+    p.add_argument("--model", default="small",
                    help="Whisper model size: tiny/base/small/medium/large-v3, "
                         "or a distil-whisper id like distil-large-v3 "
-                        "(default: base). Use small or better for non-English "
-                        "speech -- tiny and base have high error rates on it "
-                        "and drift into English on their own.")
+                        "(default: small). tiny and base do not transcribe "
+                        "non-English speech -- they return an English "
+                        "translation instead. Drop to base only for "
+                        "English-only audio.")
     p.add_argument("--language", default=None,
                    help="Force one language (ISO code) for the whole file. "
                         "Default: auto-detect, allowing mid-file switches.")

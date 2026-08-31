@@ -162,6 +162,7 @@ python -m transcriber bilingual-call.m4a
 | Native script | What was said, written the way it is written | `text` |
 | Latin transliteration | The *same words*, spelled in the Latin alphabet | `latin` |
 | English translation | What those words *mean*, in English | `english` |
+| — | Set when the native text is really the translation | `native_is_english` |
 
 Both extra lines appear only when they add something. An English segment gets
 neither. A segment already written in Latin letters — French, Vietnamese,
@@ -198,10 +199,27 @@ target it was trained for — run as a second pass over the non-English spans
 only. The transliteration is [uroman](https://pypi.org/project/uroman/), a
 rule-driven romanizer: no model, no network, one API for every script.
 
-> **Use `--model small` or better for non-English speech.** `tiny` and `base`
-> have high error rates outside English and will drift into English on their
-> own, whatever the pipeline pins. This is a model-quality limit, not a
-> settings problem.
+> **`small` is the minimum for non-English speech, and is the default.**
+> `tiny` and `base` do not transcribe it at all — they hand back an English
+> *translation* even with the language pinned, because the transcribe and
+> translate tasks share one decoder and the small checkpoints conflate them.
+> What you get looks like a clean transcript and is not one. Drop to `base`
+> only for English-only audio.
+
+When it happens anyway, the transcript says so rather than presenting English
+as the original:
+
+```
+[0:00:01] Speaker 1 [hi]: You keep watching on Instagram that you wear new clothes...
+          [english] You keep watching on Instagram that you wear new clothes...
+          ⚠ this is the English translation, not the original
+```
+
+The check is on the words, not the script: a line is flagged when its native
+text and its English translation say nearly the same thing, which is what a
+correct transcript never does. That works for Latin-script languages too —
+Spanish transcribed properly reads nothing like its own translation. JSON
+carries `native_is_english` per segment.
 
 > The text emotion model is English-only. Non-English segments are scored on
 > **voice tone alone** rather than being fed to a model that would return a
@@ -240,7 +258,7 @@ Output (txt):
 
 | Flag | Meaning | Default |
 |------|---------|---------|
-| `--model` | Whisper size: tiny/base/small/medium/large-v3, or `distil-large-v3` | `base` |
+| `--model` | Whisper size: tiny/base/small/medium/large-v3, or `distil-large-v3` | `small` |
 | `--language` | Pin one language (ISO code) for the whole file | auto-detect |
 | `--no-multilingual` | Detect the language once instead of building a timeline | off |
 | `--no-transliterate` | Skip the Latin transliteration of non-Latin scripts | off |
@@ -657,7 +675,8 @@ Going faster still:
 - **GPU:** with a CUDA card, transcription and the emotion models switch to
   float16 automatically — typically 10-30x on transcription.
 - **Model size:** `--model distil-large-v3` is near-large accuracy at a
-  fraction of the cost; `tiny`/`base` are fastest on CPU.
+  fraction of the cost. `--model base` is faster than the `small` default, but
+  only use it on English-only audio — see the warning above.
 - **Skip emotion:** `--no-emotion` drops the emotion stage entirely.
 - **Diarization backend:** `cluster` (the default) is seconds where `pyannote`
   is minutes on CPU. pyannote is more accurate; on a long recording it is also

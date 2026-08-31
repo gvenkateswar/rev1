@@ -12,6 +12,7 @@ store, so the same person keeps their name across recordings.
 """
 from __future__ import annotations
 
+import difflib
 import os
 import sys
 import time
@@ -44,6 +45,7 @@ class TranscriptSegment:
     language: str = "en"
     latin: str | None = None    # Latin transliteration, None if already Latin
     english: str | None = None  # English translation, None if already English
+    native_is_english: bool = False   # the "native" text came back as English
     confidence: float = 1.0     # mean word probability, 0..1
     known_speaker: bool = False  # True when matched to an enrolled speaker
     emotion: str = "neutral"
@@ -63,6 +65,7 @@ class TranscriptSegment:
             "text": self.text,
             "latin": self.latin,
             "english": self.english,
+            "native_is_english": self.native_is_english,
             "language": self.language,
             "confidence": round(self.confidence, 4),
             "emotion": self.emotion,
@@ -87,6 +90,11 @@ class TranscriptResult:
     # a speaker straight after a run without re-diarizing the audio (which the
     # pipeline deletes on the way out). Not serialized: it is biometric data.
     voiceprints: dict = field(default_factory=dict, repr=False)
+
+    @property
+    def untranscribed_segments(self) -> int:
+        """How many non-English lines came back as English instead."""
+        return sum(1 for s in self.segments if s.native_is_english)
 
     @property
     def is_multilingual(self) -> bool:
@@ -147,7 +155,9 @@ def _stage_progress(progress: ProgressCb, label: str, lo: float, hi: float) -> P
 def transcribe_file(
     src_path: str,
     *,
-    whisper_model: str = "base",
+    # small, not base: base does not transcribe non-English speech, it
+    # returns an English translation of it (see _flag_missing_native_text).
+    whisper_model: str = "small",
     language: str | None = None,
     multilingual: bool = True,
     diarization_backend: str = "cluster",
@@ -255,6 +265,7 @@ def transcribe_file(
         segments = assign_speakers(raw_segments, turns)
         _attach_languages(segments, raw_segments, spans, lang)
         _attach_translations(segments, translated)
+        _flag_missing_native_text(segments)
         if transliterate:
             _attach_transliterations(segments)
         for seg in segments:
@@ -398,6 +409,43 @@ def _best_overlap_index(
         if overlap > best_overlap:
             best, best_overlap = i, overlap
     return best
+
+
+# Two renderings this close together are not a transcript and a translation of
+# it -- they are one English sentence printed twice. Below this the two really
+# do say different things.
+_SAME_TEXT_RATIO = 0.80
+
+# Under this many letters, two short phrases collide by chance ("ok", "hello").
+_MIN_COMPARABLE_CHARS = 12
+
+
+def _flag_missing_native_text(segments: list[TranscriptSegment]) -> None:
+    """Mark segments whose native-script text is really just the English.
+
+    A small Whisper checkpoint hands back an English translation even with the
+    language pinned: transcribe and translate share one decoder, and the tiny
+    and base models conflate the two tasks. What comes out looks like a clean
+    transcript, which is worse than an obviously broken one -- nothing on the
+    page says the speaker's own words are missing. Saying so is the difference
+    between a known limitation and a silent wrong answer.
+    """
+    for seg in segments:
+        if seg.language == ENGLISH or not seg.english:
+            continue
+        seg.native_is_english = _nearly_the_same(seg.text, seg.english)
+
+
+def _nearly_the_same(native: str, english: str) -> bool:
+    a, b = _letters(native), _letters(english)
+    if min(len(a), len(b)) < _MIN_COMPARABLE_CHARS:
+        return False
+    return difflib.SequenceMatcher(None, a, b).ratio() >= _SAME_TEXT_RATIO
+
+
+def _letters(text: str) -> str:
+    """Lowercased letters and digits only, so punctuation cannot mask a match."""
+    return "".join(ch for ch in text.lower() if ch.isalnum())
 
 
 def _attach_transliterations(segments: list[TranscriptSegment]) -> None:

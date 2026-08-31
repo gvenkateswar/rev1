@@ -55,7 +55,32 @@ hop) to build a language timeline. Cost is one encoder pass per window, no
 decode. Contiguous same-language windows collapse into spans; spans shorter
 than `min_span` (default 3s) are absorbed into their neighbour, and a switch
 must be confirmed by two consecutive probes, because single-window flips are
-usually detector noise rather than a real switch.
+usually detector noise rather than a real switch -- unless one probe is at
+least 0.85 confident, which stands alone. A turn shorter than two hops can
+never occupy two probes, so unconditional confirmation makes short turns
+unreachable; confirmation rejects guesses, and a probe that confident is not
+one.
+
+**A 10s window was tried and reverted.** The aim was to resolve turns too
+brief for a 30s probe to notice. It made transcription markedly worse, because
+spans are not only labels -- they are the units the decode runs on. More spans
+means shorter slices decoded in isolation, and Whisper needs surrounding
+context; a recording that had decoded cleanly as one Hindi stretch came back
+as fragments. Language resolution and decode chunking are one knob here, and
+decode quality wins. What remains is a stated limit rather than a fix: a short
+turn at a boundary can be missed, and an intra-sentence switch always is,
+because Whisper picks one language per decode window.
+
+Spans still cannot resolve everything, so after diarization each segment's
+language is re-checked on its own audio (`_recheck_segment_languages`).
+Speaker boundaries are finer than any probe and usually coincide with language
+changes. A segment is re-decoded when its own audio names a different language
+with at least 0.70 confidence and it is at least 2s long; below either, the
+timeline saw more audio and wins. A re-decode that comes back empty is
+discarded rather than blanking the line.
+
+The timeline is logged to stderr at the start of each run, because nothing
+downstream reveals whether the language was read correctly before decoding.
 
 The timeline then **steers the decode**: each span is transcribed separately
 with `language=` pinned to it. Two reasons, both observed as non-English

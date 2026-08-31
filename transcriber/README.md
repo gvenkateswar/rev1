@@ -354,6 +354,12 @@ A segfault leaves no Python traceback: the crash is below the interpreter, so
 there is nothing to catch and nothing to print. The stage log is the only
 record of how far it got.
 
+A `resource_tracker: There appear to be 1 leaked semaphore objects` warning
+often lands in the terminal a moment later, sometimes after the shell prompt
+has already come back. That is the dead process being cleaned up — a
+consequence of the crash, not a second fault — and it needs no fixing of its
+own. It stops once the run stops crashing.
+
 ### The process crashes with "Abort trap: 6" / a Python crash report
 
 If the crash report mentions `__kmp_abort_process` in `libiomp5.dylib`, or you

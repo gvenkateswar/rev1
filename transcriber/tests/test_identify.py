@@ -5,11 +5,17 @@ A wrong name attached to someone's words is worse than no name at all.
 """
 from __future__ import annotations
 
-import numpy as np
+import importlib
+import sys
 
+import numpy as np
+import pytest
+
+from transcriber import runtime
 from transcriber.diarize import Turn
 from transcriber.identify import (
-    DEFAULT_MIN_ENROLL_SECONDS, ClusterVoiceprint, apply_matches, match_speakers,
+    DEFAULT_MIN_ENROLL_SECONDS, ClusterVoiceprint, apply_matches,
+    extract_voiceprints, match_speakers,
 )
 from transcriber.speakerdb import Speaker, normalize
 
@@ -141,3 +147,50 @@ def test_apply_matches_with_nothing_matched_is_a_noop(rng):
     renamed, mapping = apply_matches(matches, turns)
     assert mapping == {}
     assert renamed[0].speaker == "Speaker 1"
+
+
+# --------------------------------------------------------------------------- #
+# Dependency reporting
+# --------------------------------------------------------------------------- #
+def _install_fake_resemblyzer(tmp_path, monkeypatch, body: str) -> None:
+    package = tmp_path / "resemblyzer"
+    package.mkdir()
+    (package / "__init__.py").write_text(body)
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.delitem(sys.modules, "resemblyzer", raising=False)
+    importlib.invalidate_caches()
+
+
+def test_a_broken_resemblyzer_is_not_reported_as_missing(tmp_path, monkeypatch):
+    """Regression: an installed Resemblyzer whose own imports fail.
+
+    The old guard caught the ModuleNotFoundError raised inside Resemblyzer and
+    told the user to `pip install resemblyzer` -- which they already had, so
+    the advice could not work and the real culprit was never named.
+    """
+    _install_fake_resemblyzer(
+        tmp_path, monkeypatch, "import definitely_not_a_real_module_xyz\n"
+    )
+
+    with pytest.raises(RuntimeError) as err:
+        extract_voiceprints("unused.wav", [Turn(0.0, 5.0, "Speaker 1")])
+
+    message = str(err.value)
+    assert "definitely_not_a_real_module_xyz" in message
+    assert "is not installed" not in message
+
+
+def test_a_missing_resemblyzer_still_says_how_to_install_it(monkeypatch):
+    def absent(name):
+        raise ModuleNotFoundError(f"No module named {name!r}", name=name)
+
+    monkeypatch.setattr(runtime.importlib, "import_module", absent)
+
+    with pytest.raises(RuntimeError) as err:
+        extract_voiceprints("unused.wav", [Turn(0.0, 5.0, "Speaker 1")])
+    assert "pip install resemblyzer" in str(err.value)
+
+
+def test_no_turns_needs_no_dependency():
+    """The import is paid for only when there is something to embed."""
+    assert extract_voiceprints("unused.wav", []) == []

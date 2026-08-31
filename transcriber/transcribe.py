@@ -14,6 +14,8 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
+from .runtime import require
+
 # (name, device, compute_type) -> WhisperModel
 _MODEL_CACHE: dict[tuple, object] = {}
 
@@ -74,12 +76,11 @@ def load_model(
     *model_name* is any Whisper size (tiny/base/small/medium/large-v3) or a
     distil-whisper repo id (e.g. "distil-large-v3") for extra speed.
     """
-    try:
-        from faster_whisper import WhisperModel
-    except ImportError as exc:  # pragma: no cover - dependency hint
-        raise RuntimeError(
-            "faster-whisper is not installed. Run: pip install faster-whisper"
-        ) from exc
+    WhisperModel = require(
+        "faster_whisper",
+        purpose="needed to transcribe audio",
+        install="pip install faster-whisper",
+    ).WhisperModel
 
     dev, ct = _auto_device(device, compute_type)
     key = (model_name, dev, ct)

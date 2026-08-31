@@ -114,7 +114,24 @@ silently reweighting.
 | `transcriber/cli.py` | identification flags; `speakers` subcommands |
 | `transcriber/gui.py` | name-a-speaker UI writing back to the store |
 | `transcriber/tests/` | **new** — unit tests for matching, spans, alignment |
-| `transcriber/runtime.py` | **new** — OpenMP guard; must import before any ML lib |
+| `transcriber/runtime.py` | **new** — OpenMP guard; must import before any ML lib; `require()` for optional deps |
+
+## Optional dependency errors
+
+faster-whisper, pyannote.audio, Resemblyzer and scikit-learn are all imported
+lazily, at the point the stage that needs them runs, so a user who never turns
+on diarization never has to install its dependencies.
+
+Those imports go through `runtime.require()`, never a bare
+`except ImportError`. `ModuleNotFoundError` subclasses `ImportError`, so a
+bare guard cannot tell "this package is missing" from "this package is present
+and something inside its import chain is broken", and reports both as absence.
+`require()` reads `ImportError.name`: it equals the requested module only in
+the genuine-absence case. Anything else names the module that actually failed,
+quotes the original exception, and says that reinstalling will not help.
+
+The original exception is always chained (`raise ... from exc`). The GUI shows
+only `str(exc)`, so it also prints the traceback to the terminal.
 
 ## Out of scope
 

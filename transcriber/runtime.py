@@ -16,6 +16,7 @@ first.
 """
 from __future__ import annotations
 
+import importlib
 import os
 import platform
 import subprocess
@@ -93,3 +94,48 @@ def environment_warnings() -> list[str]:
         )
 
     return notes
+
+
+def require(module: str, *, purpose: str, install: str):
+    """Import *module*, or raise a RuntimeError that names the real problem.
+
+    A plain ``except ImportError`` around an optional dependency is a trap:
+    ``ModuleNotFoundError`` subclasses ``ImportError``, so a failure *inside*
+    the dependency's own import chain (a broken transitive dependency) is
+    caught by the same handler and reported as "not installed". That sends
+    people to run an install command that reinstalls something already
+    present and cannot possibly help, while the actual failing module is
+    never named.
+
+    ``ImportError.name`` tells the two cases apart: it is the module that
+    could not be found, which is *module* itself only when *module* really is
+    absent.
+
+    :param purpose: why this pipeline needs it, e.g. "needed to recognise
+        speakers" -- shown so the message says what stopped working.
+    :param install: the command that fixes a genuine absence.
+    """
+    try:
+        return importlib.import_module(module)
+    except ImportError as exc:
+        raise RuntimeError(_import_error_message(module, purpose, install, exc)) from exc
+
+
+def _import_error_message(
+    module: str, purpose: str, install: str, exc: ImportError
+) -> str:
+    missing = getattr(exc, "name", None)
+    root = module.split(".")[0]
+
+    if missing is not None and missing in (module, root):
+        return f"{module} is not installed ({purpose}). Run: {install}"
+
+    blame = f"its dependency {missing}" if missing else "one of its imports"
+    return (
+        f"{module} is installed but failed to import ({purpose}): {blame} "
+        f"could not be loaded.\n"
+        f"  {type(exc).__name__}: {exc}\n"
+        f"Reinstalling {module} will not fix this -- the broken package is "
+        f"{missing or 'further down its dependency chain'}. "
+        f"Run `python -c \"import {module}\"` for the full traceback."
+    )

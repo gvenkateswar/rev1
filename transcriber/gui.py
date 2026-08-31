@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import traceback
 
 import streamlit as st
 
@@ -216,7 +217,13 @@ def _run(src, model, language, multilingual, backend, hf_token, num_speakers,
         )
     except Exception as exc:  # surface any backend/runtime error to the user
         bar.empty()
-        st.error(f"Failed: {exc}")
+        # Streamlit collapses single newlines, and these messages are
+        # multi-line on purpose; two trailing spaces make markdown keep them.
+        st.error("Failed: " + str(exc).replace("\n", "  \n"))
+        # The browser only ever shows str(exc). The chained cause -- which is
+        # where a dependency failure actually names itself -- is only in the
+        # traceback, so put that where the terminal can see it.
+        traceback.print_exc()
         return
 
     bar.empty()

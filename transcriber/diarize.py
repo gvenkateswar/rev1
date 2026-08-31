@@ -17,6 +17,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from .runtime import require
+
 
 @dataclass
 class Turn:
@@ -45,14 +47,14 @@ def diarize(
 def _diarize_pyannote(
     wav_path: str, num_speakers: int | None, hf_token: str | None
 ) -> list[Turn]:
-    try:
-        from pyannote.audio import Pipeline
-    except ImportError as exc:  # pragma: no cover
-        raise RuntimeError(
-            "pyannote.audio is not installed. Run: pip install pyannote.audio\n"
-            "Then accept the model license at "
-            "https://hf.co/pyannote/speaker-diarization-3.1 and pass a token."
-        ) from exc
+    Pipeline = require(
+        "pyannote.audio",
+        purpose="needed for the 'pyannote' diarization backend",
+        install=(
+            "pip install pyannote.audio, then accept the model license at "
+            "https://hf.co/pyannote/speaker-diarization-3.1 and pass a token"
+        ),
+    ).Pipeline
 
     if not hf_token:
         raise RuntimeError(
@@ -135,20 +137,24 @@ def _diarize_cluster(
     hop: float = 0.75,
     max_speakers: int = 8,
 ) -> list[Turn]:
-    try:
-        from resemblyzer import VoiceEncoder, preprocess_wav
-    except ImportError as exc:  # pragma: no cover
-        raise RuntimeError(
-            "Resemblyzer is not installed (needed for the offline 'cluster' "
-            "backend). Run: pip install resemblyzer"
-        ) from exc
-    try:
-        from sklearn.cluster import AgglomerativeClustering
-        from sklearn.metrics import silhouette_score
-    except ImportError as exc:  # pragma: no cover
-        raise RuntimeError(
-            "scikit-learn is not installed. Run: pip install scikit-learn"
-        ) from exc
+    resemblyzer = require(
+        "resemblyzer",
+        purpose="needed for the offline 'cluster' diarization backend",
+        install="pip install resemblyzer",
+    )
+    VoiceEncoder = resemblyzer.VoiceEncoder
+    preprocess_wav = resemblyzer.preprocess_wav
+
+    AgglomerativeClustering = require(
+        "sklearn.cluster",
+        purpose="needed to cluster speaker embeddings",
+        install="pip install scikit-learn",
+    ).AgglomerativeClustering
+    silhouette_score = require(
+        "sklearn.metrics",
+        purpose="needed to pick the number of speakers",
+        install="pip install scikit-learn",
+    ).silhouette_score
 
     wav = preprocess_wav(wav_path)            # 16 kHz float, VAD-trimmed
     encoder = VoiceEncoder()

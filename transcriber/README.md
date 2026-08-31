@@ -386,6 +386,33 @@ transcription": it drops overlapping speech turns, and this pipeline assigns
 each Whisper word to the turn covering it, which is ambiguous when two turns
 overlap.
 
+### "X is not installed" when you know it is
+
+Fixed. This was our bug, not yours.
+
+`ModuleNotFoundError` is a subclass of `ImportError`, so a guard written as
+`except ImportError` around `import resemblyzer` also fires when Resemblyzer
+imports fine but *one of its own dependencies* does not. The old message
+blamed the package you had and told you to reinstall it, which could never
+help.
+
+Every optional dependency now goes through one helper that reads
+`ImportError.name` to tell the two cases apart, and reports the module that
+actually failed:
+
+    resemblyzer is installed but failed to import (needed to recognise
+    speakers): its dependency webrtcvad could not be loaded.
+      ModuleNotFoundError: No module named 'webrtcvad'
+    Reinstalling resemblyzer will not fix this -- the broken package is
+    webrtcvad. Run `python -c "import resemblyzer"` for the full traceback.
+
+The browser only ever shows the message; the GUI now also prints the full
+chained traceback to the terminal it was launched from.
+
+If you hit this, run the one-liner it suggests. The traceback names the file
+and the line inside the dependency chain, which is what tells you whether to
+pin a version, install a missing package, or rebuild a wheel.
+
 ### Harmless warnings from pyannote
 
 `std(): degrees of freedom is <= 0` comes from pyannote's pooling layer on a

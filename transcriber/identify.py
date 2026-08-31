@@ -16,6 +16,7 @@ import numpy as np
 
 from . import audio as _audio
 from .diarize import Turn
+from .runtime import require
 from .speakerdb import Speaker, normalize
 
 # Resemblyzer cosine similarities: same speaker typically lands 0.75-0.95,
@@ -78,15 +79,13 @@ def extract_voiceprints(
     if not turns:
         return []
 
-    try:
-        from resemblyzer import VoiceEncoder
-    except ImportError as exc:  # pragma: no cover - dependency hint
-        raise RuntimeError(
-            "Resemblyzer is not installed (needed to recognise speakers). "
-            "Run: pip install resemblyzer"
-        ) from exc
+    resemblyzer = require(
+        "resemblyzer",
+        purpose="needed to recognise speakers",
+        install="pip install resemblyzer",
+    )
 
-    encoder = encoder or VoiceEncoder()
+    encoder = encoder or resemblyzer.VoiceEncoder()
     samples, sr = _audio.load_waveform(wav_path)
 
     by_speaker: dict[str, list[Turn]] = {}
@@ -121,6 +120,8 @@ def extract_voiceprints(
 
 def _embed(encoder, waveform: np.ndarray) -> np.ndarray | None:
     """Embed a 16 kHz mono waveform, or None if it carries no usable signal."""
+    # No import guard: extract_voiceprints resolved the package before it
+    # built the encoder it passes in here.
     from resemblyzer import preprocess_wav
 
     # preprocess_wav trims silence and normalises loudness; on a chunk that is

@@ -194,3 +194,80 @@ def test_unrecognised_result_raises_a_named_error():
 
     with pytest.raises(RuntimeError, match="Unexpected pyannote result type"):
         _as_annotation(object())
+
+
+# --------------------------------------------------------------------------- #
+# require(): telling "not installed" apart from "installed but broken"
+# --------------------------------------------------------------------------- #
+def test_require_returns_the_module():
+    assert runtime.require("json", purpose="p", install="i").dumps([1]) == "[1]"
+
+
+def test_a_genuinely_absent_module_says_install_it():
+    with pytest.raises(RuntimeError) as err:
+        runtime.require(
+            "no_such_module_xyz", purpose="needed to test", install="pip install xyz"
+        )
+    message = str(err.value)
+    assert "is not installed" in message
+    assert "pip install xyz" in message
+
+
+def test_an_absent_parent_is_reported_against_the_module_asked_for():
+    """`sklearn.cluster` missing because sklearn is missing is still absence."""
+    with pytest.raises(RuntimeError) as err:
+        runtime.require(
+            "no_such_module_xyz.sub", purpose="p", install="pip install xyz"
+        )
+    assert "is not installed" in str(err.value)
+
+
+def test_a_broken_dependency_is_not_reported_as_absence(monkeypatch):
+    """The regression: resemblyzer was installed, its dependency was not.
+
+    ModuleNotFoundError subclasses ImportError, so the old guard blamed the
+    package the user had and told them to reinstall it.
+    """
+    def explode(name):
+        raise ModuleNotFoundError("No module named 'webrtcvad'", name="webrtcvad")
+
+    monkeypatch.setattr(runtime.importlib, "import_module", explode)
+
+    with pytest.raises(RuntimeError) as err:
+        runtime.require(
+            "resemblyzer",
+            purpose="needed to recognise speakers",
+            install="pip install resemblyzer",
+        )
+    message = str(err.value)
+    assert "is not installed" not in message
+    assert "webrtcvad" in message
+    assert "Reinstalling resemblyzer will not fix this" in message
+    assert "ModuleNotFoundError" in message
+
+
+def test_a_broken_dependency_keeps_the_original_exception_chained(monkeypatch):
+    cause = ModuleNotFoundError("No module named 'numba'", name="numba")
+
+    def explode(name):
+        raise cause
+
+    monkeypatch.setattr(runtime.importlib, "import_module", explode)
+
+    with pytest.raises(RuntimeError) as err:
+        runtime.require("librosa", purpose="p", install="i")
+    assert err.value.__cause__ is cause
+
+
+def test_an_import_error_without_a_module_name_still_reports_the_cause(monkeypatch):
+    """`from x import y` where y is gone raises ImportError with no useful name."""
+    def explode(name):
+        raise ImportError("cannot import name 'binary_dilation'")
+
+    monkeypatch.setattr(runtime.importlib, "import_module", explode)
+
+    with pytest.raises(RuntimeError) as err:
+        runtime.require("resemblyzer", purpose="p", install="i")
+    message = str(err.value)
+    assert "is not installed" not in message
+    assert "cannot import name 'binary_dilation'" in message

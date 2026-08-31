@@ -386,6 +386,35 @@ transcription": it drops overlapping speech turns, and this pipeline assigns
 each Whisper word to the turn covering it, which is ambiguous when two turns
 overlap.
 
+### "No module named 'pkg_resources'" from Resemblyzer
+
+Fix:
+
+```bash
+pip install "setuptools<82"
+```
+
+`pip install setuptools` on its own does **not** work. Chain:
+
+1. Resemblyzer's `audio.py` does `import webrtcvad`.
+2. webrtcvad 2.0.10's module does `import pkg_resources`, only to read its
+   own version string.
+3. `pkg_resources` ships with setuptools -- which venvs stopped creating by
+   default on Python 3.12, and which **removed `pkg_resources` in 82.0.0**.
+   81.0.0 is the last release that has it, so an unpinned install gets a
+   version without it.
+
+`transcriber/requirements.txt` pins the cap, so a fresh
+`pip install -r transcriber/requirements.txt` is already correct; this only
+bites a venv built before the pin, or one where Resemblyzer was installed by
+hand.
+
+The `webrtcvad-wheels` fork fixes the root cause (it reads its version with
+`importlib.metadata`) and ships prebuilt wheels, but it installs the same
+`webrtcvad.py` and `_webrtcvad.so` as the `webrtcvad` that Resemblyzer
+depends on, so pip installs both and install order decides which one wins.
+Not worth the coin flip.
+
 ### "X is not installed" when you know it is
 
 Fixed. This was our bug, not yours.

@@ -18,6 +18,19 @@ torch>=2.1.0
 resemblyzer>=0.1.1            # speaker embeddings
 scikit-learn>=1.2.0           # clustering + silhouette auto speaker count
 
+# Resemblyzer imports webrtcvad, and webrtcvad 2.0.10's module does
+# `import pkg_resources` just to read its own version. pkg_resources ships
+# with setuptools, which venvs on Python 3.12+ no longer create by default,
+# and setuptools removed pkg_resources entirely in 82.0.0 -- so plain
+# `pip install setuptools` gets 84 and does not help. 81.0.0 is the last
+# release that has it.
+#
+# Drop this cap once webrtcvad stops importing pkg_resources (the
+# webrtcvad-wheels fork already uses importlib.metadata, but it installs the
+# same webrtcvad.py and _webrtcvad.so as the webrtcvad that Resemblyzer
+# depends on, so pip would install both and let install order decide).
+setuptools<82                 # provides pkg_resources for webrtcvad
+
 # Diarization backend: pyannote (optional, best quality, needs an HF token).
 # Uncomment to enable:
 # pyannote.audio>=3.1.0

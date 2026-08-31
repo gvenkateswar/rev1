@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from transcriber.language import (
     LanguageSpan, _absorb_short_spans, _probes_to_spans, _require_confirmation,
-    language_for, summarize,
+    describe_spans, language_for, summarize,
 )
 
 
@@ -165,3 +165,13 @@ def test_a_confident_run_is_accepted_as_before():
               probe(10, 20, "en", 0.9), probe(15, 25, "hi")]
     assert [p[2] for p in _require_confirmation(probes, 2)] == \
         ["hi", "en", "en", "en"]
+
+
+# --- describe_spans -------------------------------------------------------- #
+def test_describe_spans_reads_as_a_timeline():
+    spans = [LanguageSpan(0, 45.4, "hi", 0.97), LanguageSpan(45.4, 60, "en", 0.88)]
+    assert describe_spans(spans) == "hi 0-45s (0.97), en 45-60s (0.88)"
+
+
+def test_describe_spans_on_an_empty_timeline():
+    assert describe_spans([]) == ""

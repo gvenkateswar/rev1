@@ -17,16 +17,20 @@ import numpy as np
 
 from . import audio as _audio
 
-# Whisper's detector pads short input up to its 30s window, so a probe may be
-# shorter than that window without being invalid -- and it has to be. A
-# 30-second probe cannot see a six-second question in another language: the
-# surrounding speech outvotes it inside every window it appears in, and the
-# switch is invisible however the probes are spaced. Ten seconds is short
-# enough for one conversational turn to dominate its own probe.
-WINDOW_SECONDS = 10.0
+# Whisper's own detection window. Using the same size means each probe sees
+# exactly what a decode window would see.
+#
+# Shortening this to 10s was tried, to resolve turns too brief for a 30s probe
+# to notice. It made transcription markedly worse and was reverted. Spans do
+# not only label the audio, they are the units the decode runs on: more spans
+# means shorter slices decoded in isolation, and Whisper needs context. A
+# recording that decoded cleanly as one Hindi stretch came back as fragments.
+# Language resolution and decode chunking are the same knob here, and decode
+# quality is worth more than a boundary a few seconds sharper.
+WINDOW_SECONDS = 30.0
 
 # Overlap so a switch that lands mid-window is caught by the next probe.
-HOP_SECONDS = 5.0
+HOP_SECONDS = 15.0
 
 # Spans shorter than this are dropped as residue after smoothing.
 MIN_SPAN_SECONDS = 3.0
@@ -37,9 +41,10 @@ MIN_SPAN_SECONDS = 3.0
 MIN_CONSECUTIVE_PROBES = 2
 
 # ...unless the detector is this sure. Confirmation exists to reject guesses,
-# and a probe this confident is not one. Without this exemption a switch
-# shorter than two hops -- one speaker's short turn -- is unreachable at any
-# window size, because it can never occupy two probes.
+# and a probe this confident is not one. Without the exemption a switch
+# shorter than two hops can never occupy two probes and is unreachable. At a
+# 30s window a lone probe this confident means half a minute of confidently
+# different language, which is a real switch and not a loanword.
 CONFIDENT_ENOUGH_ALONE = 0.85
 
 # Below this confidence the detector is guessing; we carry the previous
@@ -67,12 +72,12 @@ def detect_language_timeline(
     window: float = WINDOW_SECONDS,
     hop: float = HOP_SECONDS,
     min_span: float = MIN_SPAN_SECONDS,
-    max_windows: int = 720,
+    max_windows: int = 240,
 ) -> list[LanguageSpan]:
     """Probe *wav_path* on a sliding window and return language spans.
 
     *model* is a loaded ``faster_whisper.WhisperModel``. *max_windows* caps the
-    work on very long files (720 windows at a 5s hop covers an hour).
+    work on very long files (240 windows at a 15s hop covers an hour).
     """
     samples, sr = _audio.load_waveform(wav_path)
     duration = len(samples) / float(sr)
@@ -253,3 +258,16 @@ def summarize(spans: list[LanguageSpan]) -> dict[str, float]:
             span.end - span.start
         )
     return dict(sorted(totals.items(), key=lambda kv: -kv[1]))
+
+
+def describe_spans(spans: list[LanguageSpan]) -> str:
+    """One-line summary of a timeline, for the stage log.
+
+    e.g. "hi 0-45s (0.97), en 45-60s (0.88)". When a transcript comes out
+    wrong this says whether the language was read correctly before the decode
+    ever ran, which is otherwise invisible.
+    """
+    return ", ".join(
+        f"{s.language} {s.start:.0f}-{s.end:.0f}s ({s.confidence:.2f})"
+        for s in spans
+    )

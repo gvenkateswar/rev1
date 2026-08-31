@@ -178,12 +178,20 @@ would just reprint the line. All four output formats carry them: `txt`, `json`,
 
 ### How it works
 
-The language timeline comes first: overlapping 10s probes, 5s apart. A switch
+The language timeline comes first: overlapping 30s probes, 15s apart. A switch
 is accepted once **two consecutive probes agree**, *or* on a single probe the
-detector is very sure of (≥0.85) — because a six-second question cannot
-occupy two probes at any window size, and a short turn in another language is
-exactly what this feature is for. Confirmation is there to reject guesses, and
-a probe that confident is not one.
+detector is very sure of (≥0.85) — confirmation is there to reject guesses,
+and a probe that confident is not one.
+
+The timeline is printed to the terminal as the run starts:
+
+```
+transcriber: languages: hi 0-45s (0.97), en 45-60s (0.88)
+```
+
+Worth reading when a transcript looks wrong. It says whether the language was
+read correctly *before* the decode ran, which otherwise cannot be seen from
+the output at all.
 
 Each span is then decoded **with its language pinned**. This is the part that
 keeps Hindi in Devanagari. Two things otherwise push Whisper into English:
@@ -567,6 +575,27 @@ previous result is now cleared when a run starts.
 To make it faster: use the `cluster` backend (seconds rather than minutes, at
 some accuracy cost), pass `--speakers N` when you know the count (it skips the
 search over 2..8 speakers), or run on a CUDA GPU.
+
+### Known limits on mixed speech
+
+Two things this cannot currently do, both Whisper limits rather than settings:
+
+**A language switch inside one sentence.** "आप इस्ताग्राम पे... but, पैसे कहां
+से आते हैं?" is decoded as one language throughout — the English words come
+out spelled in the other script. Whisper picks one language per decode window
+and has no notion of switching mid-sentence.
+
+**A short turn at a boundary.** A six-second question before a long answer in
+another language sits inside one 30-second detection probe and is outvoted by
+what surrounds it. Shortening the probes to see it was tried and made
+transcription worse: spans are the units the decode runs on, so more spans
+means shorter slices decoded without context. Decode quality is worth more
+than a sharper boundary. The per-segment re-check recovers such a turn when
+diarization happens to split it out; when the turn shares a segment with the
+other language, it does not.
+
+Where the second one matters, `--language` on a single-language file, or
+splitting the recording, both work.
 
 ### Non-English speech comes out written in English
 

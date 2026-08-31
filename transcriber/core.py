@@ -23,8 +23,8 @@ from typing import Callable
 from . import audio as _audio
 from .diarize import Turn, diarize
 from .language import (
-    LanguageSpan, detect_language_timeline, detect_one_language,
-    language_for,
+    LanguageSpan, describe_spans, detect_language_timeline,
+    detect_one_language, language_for,
 )
 from .language import summarize as _summarize_languages
 from .transcribe import (
@@ -215,6 +215,10 @@ def transcribe_file(
             progress("Detecting languages", 0.10)
             with _timed(timings, "language"):
                 spans = detect_language_timeline(wav_path, model)
+            # The spans decide both what each stretch is labelled and how the
+            # decode is chunked, so when the transcript looks wrong this is
+            # the first thing worth seeing. It is one short line.
+            _log("languages: " + (describe_spans(spans) or "none detected"))
 
         progress("Transcribing", 0.15)
         with _timed(timings, "transcribe"):

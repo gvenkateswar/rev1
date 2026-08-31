@@ -114,6 +114,7 @@ silently reweighting.
 | `transcriber/cli.py` | identification flags; `speakers` subcommands |
 | `transcriber/gui.py` | name-a-speaker UI writing back to the store |
 | `transcriber/tests/` | **new** — unit tests for matching, spans, alignment |
+| `transcriber/runtime.py` | **new** — OpenMP guard; must import before any ML lib |
 
 ## Out of scope
 
@@ -125,6 +126,10 @@ silently reweighting.
 - Replacing the diarization backends.
 
 ## Verification
+
+On macOS, ctranslate2 and torch each bundle `libiomp5`; the second to load
+aborts the process. `runtime.py` sets `KMP_DUPLICATE_LIB_OK` at package import,
+before either can load. Keep that import first in `__init__.py`.
 
 Pure-logic tests (no ML deps, no audio) must pass:
 

@@ -266,6 +266,64 @@ predicted and which channel is driving the result:
 > The text emotion model is English. For other languages, lean on audio
 > (`--emotion-source audio`) or raise `--emotion-audio-weight`.
 
+## Troubleshooting
+
+### The process crashes with "Abort trap: 6" / a Python crash report
+
+If the crash report mentions `__kmp_abort_process` in `libiomp5.dylib`, or you
+see this on the terminal:
+
+```
+OMP: Error #15: Initializing libiomp5.dylib, but found libiomp5.dylib already
+initialized.
+```
+
+then two copies of the Intel OpenMP runtime were loaded into one process:
+faster-whisper (through ctranslate2) and torch each bundle their own. This
+pipeline needs both libraries, so both copies load, and the second one aborts
+the process. It is not catchable -- `abort()` produces a crash report, not a
+traceback.
+
+**This is handled automatically.** `transcriber/runtime.py` sets
+`KMP_DUPLICATE_LIB_OK=TRUE` when the package is imported, before either library
+can load. If you still hit it, something imported `torch` *before*
+`transcriber` -- import `transcriber` first, or export the variable in your
+shell:
+
+```sh
+export KMP_DUPLICATE_LIB_OK=TRUE
+```
+
+Set `TRANSCRIBER_NO_OMP_FIX=1` to disable the workaround (useful only when
+diagnosing a different problem).
+
+### macOS on Apple Silicon: use a native arm64 Python
+
+If `python3 -c "import platform; print(platform.machine())"` prints `x86_64` on
+an M-series Mac, you are running under Rosetta. Two consequences: everything is
+several times slower than it needs to be, and the x86 wheels are what drag in
+the duplicate OpenMP runtimes above. The CLI and GUI both warn when they detect
+this.
+
+Fix it with a native interpreter and a fresh virtualenv:
+
+```sh
+# Install an arm64 Python (python.org universal2 installer, or Homebrew)
+brew install python@3.12
+
+python3.12 -c "import platform; print(platform.machine())"   # -> arm64
+python3.12 -m venv .venv && source .venv/bin/activate
+pip install -r transcriber/requirements.txt
+```
+
+Native arm64 also lets faster-whisper and torch use the Apple accelerators,
+which is the single biggest speedup available on these machines.
+
+### ffmpeg not found
+
+`ffmpeg` is a system dependency, not a pip package:
+`brew install ffmpeg` / `sudo apt install ffmpeg` / `choco install ffmpeg`.
+
 ## Performance
 
 The pipeline is tuned for turnaround time:

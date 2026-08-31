@@ -14,6 +14,7 @@ import time
 
 from .core import transcribe_file
 from .output import render, to_summary
+from .runtime import environment_warnings
 
 
 def _progress(stage: str, frac: float) -> None:
@@ -85,6 +86,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    for note in environment_warnings():
+        sys.stderr.write(f"Note: {note}\n")
     try:
         result = transcribe_file(
             args.input,

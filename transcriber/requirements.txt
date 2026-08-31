@@ -28,6 +28,12 @@ scikit-learn>=1.2.0           # clustering + silhouette auto speaker count
 #
 # System dependency (not pip-installable): ffmpeg must be on PATH.
 #
+# macOS note: ctranslate2 (faster-whisper) and torch each bundle their own copy
+# of libiomp5, which aborts the process when both load. transcriber/runtime.py
+# sets KMP_DUPLICATE_LIB_OK before either imports. On Apple Silicon, install a
+# native arm64 Python -- Rosetta x86 wheels are slow and make this worse.
+# See the Troubleshooting section of transcriber/README.md.
+#
 # Speed tips: with a CUDA GPU, faster-whisper and the emotion models switch to
 # float16 automatically. Use --model distil-large-v3 for the fastest accurate
 # transcription, or a smaller size (tiny/base) on CPU.

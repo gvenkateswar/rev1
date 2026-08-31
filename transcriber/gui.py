@@ -16,7 +16,11 @@ import streamlit as st
 # `streamlit run transcriber/gui.py` executes this file as a top-level script
 # (no package context), so relative imports would fail. Fall back to absolute
 # imports after putting the repo root on sys.path.
+#
+# Either path runs transcriber/__init__.py, which sets the OpenMP flag before
+# torch or ctranslate2 can load. Keep that import ahead of anything heavier.
 try:
+    from .runtime import environment_warnings
     from .core import transcribe_file
     from .emotion import _EMOJI
     from .identify import DEFAULT_MIN_ENROLL_SECONDS
@@ -24,6 +28,7 @@ try:
     from .speakerdb import SpeakerStore, default_db_path
 except ImportError:
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from transcriber.runtime import environment_warnings
     from transcriber.core import transcribe_file
     from transcriber.emotion import _EMOJI
     from transcriber.identify import DEFAULT_MIN_ENROLL_SECONDS
@@ -56,6 +61,9 @@ def main() -> None:
         "Transcribe audio/video, tell speakers apart, and read each segment's "
         "emotion — fused from voice tone *and* what was said."
     )
+
+    for note in environment_warnings():
+        st.warning(note)
 
     with st.sidebar:
         st.header("Settings")

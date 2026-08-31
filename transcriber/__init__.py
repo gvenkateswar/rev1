@@ -14,8 +14,14 @@ someone once makes them auto-tagged in every later transcript.
 """
 from __future__ import annotations
 
-from .core import TranscriptSegment, TranscriptResult, transcribe_file
-from .speakerdb import Speaker, SpeakerStore
+# Must run before torch or ctranslate2 load -- they bundle conflicting copies of
+# the OpenMP runtime that abort the process on macOS. See runtime.py.
+from .runtime import configure_openmp, environment_warnings
+
+configure_openmp()
+
+from .core import TranscriptSegment, TranscriptResult, transcribe_file  # noqa: E402
+from .speakerdb import Speaker, SpeakerStore  # noqa: E402
 
 __all__ = [
     "TranscriptSegment",
@@ -23,5 +29,7 @@ __all__ = [
     "transcribe_file",
     "Speaker",
     "SpeakerStore",
+    "configure_openmp",
+    "environment_warnings",
 ]
-__version__ = "0.2.0"
+__version__ = "0.2.1"

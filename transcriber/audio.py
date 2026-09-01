@@ -27,13 +27,19 @@ def check_ffmpeg() -> None:
 
 
 def extract_audio(
-    src_path: str, out_path: str | None = None, filters: str | None = None
+    src_path: str,
+    out_path: str | None = None,
+    filters: str | None = None,
+    start: float | None = None,
+    duration: float | None = None,
 ) -> str:
     """Decode any audio/video file to 16 kHz mono WAV and return its path.
 
     If *out_path* is None a temp file is created (caller owns cleanup).
     *filters* is an optional ffmpeg audio-filter chain (``-af``), e.g. a
-    denoiser for a hissy phone recording.
+    denoiser for a hissy phone recording. *start*/*duration* cut a section
+    (seconds); the seek happens on the input side, so cutting five minutes
+    out of a two-hour recording does not decode the two hours.
     """
     check_ffmpeg()
     if out_path is None:
@@ -41,8 +47,13 @@ def extract_audio(
         fd.close()
         out_path = fd.name
 
-    cmd = [
-        "ffmpeg", "-y", "-i", str(src_path),
+    cmd = ["ffmpeg", "-y"]
+    if start and start > 0:
+        cmd += ["-ss", f"{start:.3f}"]
+    if duration and duration > 0:
+        cmd += ["-t", f"{duration:.3f}"]
+    cmd += [
+        "-i", str(src_path),
         "-ac", "1",                 # mono
         "-ar", str(SAMPLE_RATE),    # 16 kHz
         "-vn",                      # drop any video stream

@@ -81,7 +81,7 @@ def track_pitch(
     f0_min: float = F0_MIN,
     f0_max: float = F0_MAX,
     threshold: float = YIN_THRESHOLD,
-    min_confidence: float = 0.55,
+    min_confidence: float = 0.45,
 ) -> PitchTrack:
     """Run YIN over *samples* and return a :class:`PitchTrack`.
 

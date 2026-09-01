@@ -11,6 +11,7 @@ import sys
 import tempfile
 import time
 
+import numpy as np
 import streamlit as st
 
 # `streamlit run music_lesson/gui.py` executes this file as a top-level script
@@ -158,6 +159,74 @@ def _sidebar() -> dict:
     }
 
 
+def _load_preview(path: str):
+    """Envelope + duration for the waveform view, cached per file.
+
+    Decodes the file once (seconds, not minutes) so the person can see where
+    the lesson's sections are and audition settings on a slice instead of
+    committing an hour to a full pass.
+    """
+    key = f"preview::{path}::{os.path.getmtime(path)}"
+    if st.session_state.get("preview_key") == key:
+        return st.session_state["preview"]
+
+    from transcriber import audio as _audio
+
+    wav = _audio.extract_audio(path)
+    try:
+        samples, rate = _audio.load_waveform(wav)
+    finally:
+        try:
+            os.unlink(wav)
+        except OSError:
+            pass
+    duration = len(samples) / rate
+    # ~1500 columns of peak amplitude: enough to see structure, cheap to draw.
+    columns = max(1, len(samples) // 1500)
+    trimmed = samples[: (len(samples) // columns) * columns]
+    envelope = np.abs(trimmed).reshape(-1, columns).max(axis=1)
+    preview = {"duration": duration, "envelope": envelope}
+    st.session_state["preview_key"] = key
+    st.session_state["preview"] = preview
+    return preview
+
+
+def _section_picker(source: str) -> tuple[float, float] | None:
+    """Waveform + range slider; returns (start, end) or None for the whole file."""
+    with st.expander("Preview & pick a section", expanded=False):
+        st.audio(source)
+        try:
+            with st.spinner("Decoding waveform…"):
+                preview = _load_preview(source)
+        except Exception as exc:
+            st.warning(f"Could not decode a preview: {exc}")
+            return None
+        duration = preview["duration"]
+        envelope = preview["envelope"]
+        st.area_chart(
+            {
+                "minutes": np.linspace(0, duration / 60, len(envelope)),
+                "level": envelope,
+            },
+            x="minutes", y="level", height=120,
+        )
+        start, end = st.slider(
+            "Section (seconds)", 0.0, float(round(duration, 1)),
+            (0.0, float(round(duration, 1))), step=1.0,
+            help="Drag the ends in to transcribe just that slice — the fast "
+                 "way to audition settings (Sa, singing sensitivity, model) "
+                 "before a full run. Timestamps in the output stay true to "
+                 "the full recording.",
+        )
+        st.caption(
+            f"Selected {_fmt_ts(start)} – {_fmt_ts(end)} "
+            f"({_fmt_ts(end - start)} of {_fmt_ts(duration)})"
+        )
+        if start > 0.0 or end < duration - 0.5:
+            return (float(start), float(end))
+    return None
+
+
 def _pick_input() -> str | None:
     tab_path, tab_upload = st.tabs(["Local file path", "Upload"])
     with tab_path:
@@ -249,8 +318,13 @@ def main() -> None:
 
     settings = _sidebar()
     source = _pick_input()
+    clip = _section_picker(source) if source else None
 
-    if st.button("Transcribe lesson", type="primary", disabled=source is None):
+    label = (
+        f"Transcribe {_fmt_ts(clip[1] - clip[0])} section" if clip
+        else "Transcribe lesson"
+    )
+    if st.button(label, type="primary", disabled=source is None):
         tonic = None
         if settings["tonic_text"]:
             try:
@@ -280,6 +354,7 @@ def main() -> None:
                 fix_vocabulary=settings["fix_vocabulary"],
                 keep_sung_text=settings["keep_sung_text"],
                 denoise=settings["denoise"],
+                clip=clip,
                 sung_threshold=settings["sung_threshold"],
                 beam_size=settings["beam_size"],
                 notation=settings["notation"],

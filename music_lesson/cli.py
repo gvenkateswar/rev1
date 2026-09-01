@@ -27,6 +27,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("input", help="Path to an audio or video recording.")
     p.add_argument("-o", "--output", help="Write result here (default: stdout).")
+    p.add_argument("--start", default=None, metavar="TIME",
+                   help="Transcribe from here, as mm:ss or seconds "
+                        "(e.g. 12:30). Combine with --end to audition a "
+                        "section before committing to a full run.")
+    p.add_argument("--end", default=None, metavar="TIME",
+                   help="Stop here (mm:ss or seconds).")
     p.add_argument("-f", "--format", default="md",
                    choices=["md", "txt", "json", "srt"],
                    help="md = practice sheet (default), txt = transcript, "
@@ -102,8 +108,33 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def parse_timespec(text: str) -> float:
+    """``"12:30"`` or ``"1:02:03"`` or plain seconds -> seconds."""
+    parts = text.strip().split(":")
+    if not 1 <= len(parts) <= 3 or any(not p for p in parts):
+        raise ValueError(f"Cannot parse time {text!r} (try 12:30 or 750)")
+    try:
+        numbers = [float(p) for p in parts]
+    except ValueError as exc:
+        raise ValueError(f"Cannot parse time {text!r} (try 12:30 or 750)") from exc
+    seconds = 0.0
+    for number in numbers:
+        seconds = seconds * 60 + number
+    return seconds
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+
+    clip = None
+    if args.start or args.end:
+        try:
+            start = parse_timespec(args.start) if args.start else 0.0
+            end = parse_timespec(args.end) if args.end else float("inf")
+        except ValueError as exc:
+            sys.stderr.write(f"Error: {exc}\n")
+            return 2
+        clip = (start, end)
 
     tonic = None
     if args.tonic:
@@ -136,6 +167,7 @@ def main(argv: list[str] | None = None) -> int:
             sung_threshold=args.sung_threshold,
             beam_size=args.beam_size,
             denoise=args.denoise,
+            clip=clip,
             notation=args.notation,
             raga_hints=[
                 name.strip()

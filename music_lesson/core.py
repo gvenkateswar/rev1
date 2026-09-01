@@ -162,12 +162,16 @@ def transcribe_lesson(
     sung_threshold: float = 0.50,
     beam_size: int = 5,
     denoise: bool = False,
+    clip: tuple[float, float] | None = None,
     notation: str = _swara.BHATKHANDE,
     raga_hints: list[str] | None = None,
     progress: ProgressCb | None = None,
 ) -> LessonResult:
     """Run the whole pipeline on *src_path*.
 
+    *clip* transcribes just (start, end) seconds of the recording — the way to
+    audition settings on two minutes instead of committing an hour to a full
+    pass. All timestamps in the result stay in the recording's own timeline.
     *tonic* overrides Sa detection (in Hz) — worth using, since you know your
     own Sa and the detector only guesses. *raga_hints* are raga names you
     expect in the lesson: they prime the decoder and are scored against the
@@ -193,7 +197,10 @@ def transcribe_lesson(
         # denoiser smears exactly the pitch movement (meend, gamak) this tool
         # exists to read, which is why it is off by default.
         filters = "highpass=f=60,afftdn=nf=-25" if denoise else None
-        wav_path = _audio.extract_audio(src_path, filters=filters)
+        clip_start, clip_duration = _resolve_clip(clip)
+        wav_path = _audio.extract_audio(
+            src_path, filters=filters, start=clip_start, duration=clip_duration
+        )
 
     try:
         progress("Tracking pitch", 0.10)
@@ -279,6 +286,8 @@ def transcribe_lesson(
             _swara.swara_weights([n for s in segments if s.is_sung for n in s.notes]),
             hints=raga_hints,
         )
+        if clip_start:
+            _shift_times(segments, regions, clip_start)
         speakers = _ordered_speakers(segments)
         timings["total"] = sum(v for k, v in timings.items() if k != "total")
         progress("Done", 1.0)
@@ -315,6 +324,45 @@ def _resolve_tonic(track: PitchTrack, override: float | None) -> TonicEstimate:
     # throwaway pass against a fixed reference gives the histogram its notes.
     preliminary = _swara.segment_notes(track, _swara._HIST_REF_HZ)
     return _swara.detect_tonic(track, preliminary)
+
+
+def _resolve_clip(
+    clip: tuple[float, float] | None
+) -> tuple[float, float | None]:
+    """(start, duration) for the extractor, validated."""
+    if not clip:
+        return 0.0, None
+    import math
+
+    start, end = float(clip[0]), float(clip[1])
+    if end <= start:
+        raise ValueError(
+            f"Empty clip: start {start:.1f}s is not before end {end:.1f}s"
+        )
+    start = max(0.0, start)
+    duration = (end - start) if math.isfinite(end) else None
+    return start, duration
+
+
+def _shift_times(
+    segments: list[LessonSegment], regions: list[Region], offset: float
+) -> None:
+    """Move every timestamp back onto the full recording's timeline.
+
+    Analysis ran on a cut that starts at *offset*, but the person reading the
+    practice sheet will scrub the original file, so 0:00-in-the-clip must read
+    as the clip's real position. Glides hold note *indexes*, not times, so
+    they need no shift.
+    """
+    for segment in segments:
+        segment.start += offset
+        segment.end += offset
+        for note in segment.notes:
+            note.start += offset
+            note.end += offset
+    for region in regions:
+        region.start += offset
+        region.end += offset
 
 
 def _resolve_languages(

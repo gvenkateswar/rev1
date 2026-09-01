@@ -113,7 +113,10 @@ def transcribe_speech(
 
     kwargs: dict = {
         "language": language,
-        "word_timestamps": True,
+        # No word timestamps: nothing downstream reads them (speaker roles
+        # use whole-segment overlap), and the alignment pass costs a
+        # noticeable slice of the decode on CPU.
+        "word_timestamps": False,
         "beam_size": beam_size,
         "hotwords": hotwords,
         # Kept alongside hotwords purely as a fallback for faster-whisper
@@ -260,7 +263,7 @@ def _redecode_off_list(
         seg_iter, _info = model.transcribe(
             wav_path,
             language=target,
-            word_timestamps=True,
+            word_timestamps=False,
             beam_size=beam_size,
             hotwords=hotwords_devanagari if target == "hi" else None,
             condition_on_previous_text=False,

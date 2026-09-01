@@ -11,6 +11,7 @@ process, this makes every run after the first skip model loading entirely.
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 
 # (name, device, compute_type) -> WhisperModel
@@ -79,7 +80,13 @@ def load_model(
     dev, ct = _auto_device(device, compute_type)
     key = (model_name, dev, ct)
     if key not in _MODEL_CACHE:
-        _MODEL_CACHE[key] = WhisperModel(model_name, device=dev, compute_type=ct)
+        # CTranslate2's default is 4 intra-op threads regardless of the
+        # machine; on an 8-12 core laptop that leaves most of the CPU idle
+        # during the longest stage of the whole pipeline.
+        threads = max(4, (os.cpu_count() or 4))
+        _MODEL_CACHE[key] = WhisperModel(
+            model_name, device=dev, compute_type=ct, cpu_threads=threads
+        )
     return _MODEL_CACHE[key]
 
 

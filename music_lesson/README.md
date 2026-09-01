@@ -129,8 +129,20 @@ still look like a hang:
   a core if it is decoding. If it is at 0% for minutes with the model already
   downloaded, something is genuinely wrong.
 
-To go faster: `--beam-size 1` (roughly 1.5-2x), `--no-speakers` (skips
-diarization entirely), and a smaller model. On Apple silicon, plain CPU
+Measured on a real ~20-minute lesson, the decode dominates because sung
+bursts are short and interleaved with talk — after clip-merging, Whisper still
+sees most of the file. Three changes claw time back without touching quality:
+word-level timestamps are off (nothing in this pipeline read them, and the
+alignment pass was a real slice of the decode), the decoder now uses all CPU
+cores (CTranslate2's default is 4 threads regardless of machine), and the
+**section picker** exists precisely so you audition settings on two minutes
+instead of committing an hour: expand "Preview & pick a section" in the GUI
+(waveform + range slider + player), or `--start 12:30 --end 15:00` on the CLI.
+Timestamps in the output stay true to the full recording.
+
+To go faster still: `--beam-size 1` (roughly 1.5-2x), `--no-speakers`, and a
+smaller model. Selecting a single language in the picker also skips per-window
+detection and the off-list re-decode pass. On Apple silicon, plain CPU
 inference is already what faster-whisper uses; there is no MPS path.
 
 ## What comes out
@@ -166,6 +178,7 @@ inference is already what faster-whisper uses; there is no MPS path.
 | Flag | Meaning | Default |
 |------|---------|---------|
 | `--tonic` | Your Sa: `C#3`, `D3`, `138.6` | detect it |
+| `--start` / `--end` | Transcribe a section only (mm:ss or seconds) | whole file |
 | `--raga NAME` | A raag you expect (repeatable); scored against the notes | — |
 | `--notation` | `bhatkhande` (komal underline, octave dots, `M'`) or `ascii` (`.S r M`) | `bhatkhande` |
 | `--model` | Whisper size: tiny/base/small/medium/large-v3 | `small` |
@@ -337,7 +350,7 @@ JSON export and counted in the run's notices, never silently deleted.
 python3 -m unittest discover -s tests -v
 ```
 
-89 tests, no model downloads and no network: everything runs against
+93 tests, no model downloads and no network: everything runs against
 synthesized audio whose correct answer is known by construction — a phrase sung
 at a known Sa must come back as the sargam that was synthesized, speech must
 not be labelled as singing, and the whole pipeline is exercised end to end with

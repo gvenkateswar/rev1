@@ -24,7 +24,7 @@ ways:
 | What Whisper does to a lesson | What this does instead |
 |---|---|
 | Hallucinates sentences over alaap — it is a speech model, and singing is not silence, so it invents words to fill it | Classifies sung stretches from pitch first and only decodes the spoken ones |
-| Throws away the actual musical content: the notes | Writes every sung phrase as sargam (`N R G m D N S'`) against your Sa, with the cents each swara was held off equal temperament |
+| Throws away the actual musical content: the notes | Writes every sung phrase as sargam against your Sa in Bhatkhande notation (komal underlined, octave dots, `M'` for teevra Ma), with the cents each swara was held off equal temperament — and when a phrase has a steady pulse, lays it on a matra grid with vibhag bars and sustain dashes, like a notebook |
 | Picks one language for the file, so a Hindi/English sentence comes out half-wrong | Re-detects the language per window, and romanizes the Devanagari so you can read it while singing |
 | Has barely heard the vocabulary: "bandish" → "band dish", "teentaal" → "tea total", "Raag Yaman" → "raga man" | Injects the domain glossary into *every* decoding window (`hotwords`, not `initial_prompt` — that one only conditions the first 30 seconds), then repairs what still came out wrong, auditably |
 
@@ -91,6 +91,13 @@ python3 -m music_lesson lesson.m4a --tonic C#3 --beam-size 1 --no-speakers
 guessing. Everything musical downstream — every swara name, the scale, the raag
 cross-check — is relative to Sa, so this one flag matters more than the model
 size.
+
+**Name the raag if you know it** (`--raga Kirwani`, or the searchable picker in
+the GUI sidebar — repeatable). Your pick primes the transcription and is scored
+against the sung notes; a confident fit leads the scale summary. This matters
+doubly for scales outside the ten thaats — Kirwani, Charukeshi, Ahir Bhairav —
+which the thaat matcher alone can only misfile under the nearest thaat. A pick
+that does *not* fit is reported too: that symptom usually means Sa is off.
 
 ## Use it — GUI
 
@@ -159,6 +166,8 @@ inference is already what faster-whisper uses; there is no MPS path.
 | Flag | Meaning | Default |
 |------|---------|---------|
 | `--tonic` | Your Sa: `C#3`, `D3`, `138.6` | detect it |
+| `--raga NAME` | A raag you expect (repeatable); scored against the notes | — |
+| `--notation` | `bhatkhande` (komal underline, octave dots, `M'`) or `ascii` (`.S r M`) | `bhatkhande` |
 | `--model` | Whisper size: tiny/base/small/medium/large-v3 | `small` |
 | `--beam-size` | Whisper beam width; 1 is ~1.5-2x faster | `5` |
 | `--language` | Force `hi` or `en` | detect per window |
@@ -229,6 +238,36 @@ sheet cross-references against the notes.
   (`~/.cache/huggingface`) is shared, so switching Pythons re-downloads
   nothing.
 
+## Notation, rhythm and spelling conventions
+
+The display follows the conventions of the companion handwritten-notes
+project (its accumulated correction rules ride along as the spec):
+
+- **Swaras** — Bhatkhande: komal is the letter underlined (`R̲ G̲ D̲ N̲`), taar
+  saptak a dot above (`Ṡ Ṙ Ġ Ṁ Ṗ Ḋ Ṅ`), mandra a dot below (`Ṣ Ṛ P̣ Ḍ Ṇ`),
+  teevra Ma is `M'`, and marks stack for komal-in-register (`Ġ̲`). Sa and Pa
+  can never render komal — the semitone model cannot express one, matching
+  the rule that any komal S/P is a transcription error.
+- **Rhythm** — a sung phrase whose note onsets lock onto a common pulse
+  (vector-strength test) is laid on a matra grid: one cell per matra, `—` for
+  a sustained or empty matra, doublets sharing a cell, vibhag bars from the
+  tala's pattern when exactly one tala was named out loud (Tīntāl 4+4+4+4,
+  Jhaptāl 2+3+2+3, Rūpak 3+2+2, …). An alaap gets no grid — it is unmetered,
+  and drawing bars on it would be inventing rhythm. Sam is never claimed:
+  locating beat one needs the theka, which is not analyzed.
+- **Spellings** — raag, taal and term names display in IAST (Tīntāl, Ālāp,
+  Mālkauns, Kirvāṇī), the same standard the notes corpus normalized to.
+- **Script** — a code-switched window that Whisper decodes as Urdu comes out
+  in Nastaliq; those stretches are automatically re-decoded with the language
+  pinned to Hindi so they read in Devanagari (with the Roman companion line
+  under them). Bengali stays in Bengali script — that one is genuine.
+
+Two decoder failure modes seen on real lessons are filtered: a segment that
+repeats one token endlessly ("aah" × 70), and the vocabulary prompt echoed
+back verbatim (a run of terms in exactly the prompt's order — no human
+recitation reproduces that). Dropped segments are kept under `dropped` in the
+JSON export and counted in the run's notices, never silently deleted.
+
 ## Known limits — read this before you trust it
 
 - **Sa detection can land on the wrong scale degree** on a recording with
@@ -265,7 +304,7 @@ sheet cross-references against the notes.
 python3 -m unittest discover -s tests -v
 ```
 
-47 tests, no model downloads and no network: everything runs against
+72 tests, no model downloads and no network: everything runs against
 synthesized audio whose correct answer is known by construction — a phrase sung
 at a known Sa must come back as the sargam that was synthesized, speech must
 not be labelled as singing, and the whole pipeline is exercised end to end with
@@ -279,7 +318,8 @@ music_lesson/
   swara.py           # tonic detection, note segmentation, swara naming
   segmentation.py    # sung / spoken / drone / silent
   raga.py            # thaat and raag candidates from a swara set
-  lexicon.py         # Hindustani vocabulary, Whisper prompt, repairs
+  lexicon.py         # Hindustani vocabulary, Whisper prompt, repairs, IAST
+  rhythm.py          # pulse detection, matra grids, tala table
   translit.py        # Devanagari to readable Roman
   transcribe.py      # Whisper wrapper: domain prompt, per-window language
   core.py            # pipeline orchestration

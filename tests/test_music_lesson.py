@@ -164,13 +164,21 @@ class SwaraSegmentationTests(unittest.TestCase):
 
     def test_komal_and_teevra_swaras_are_named(self):
         audio = sing([0, 1, 3, 6, 8, 10])            # r g M d n
-        track = track_pitch(audio, SR)
-        self.assertEqual(sargam_line(segment_notes(track, SA)), "S r g M d n")
+        notes = segment_notes(track_pitch(audio, SR), SA)
+        # Bhatkhande (default): komal underlined, teevra Ma as M-apostrophe.
+        komal = "\u0332"
+        self.assertEqual(
+            sargam_line(notes),
+            f"S R{komal} G{komal} M' D{komal} N{komal}",
+        )
+        self.assertEqual(sargam_line(notes, style="ascii"), "S r g M d n")
 
     def test_octave_registers_are_marked(self):
         audio = sing([-12, 0, 12])
-        track = track_pitch(audio, SR)
-        self.assertEqual(sargam_line(segment_notes(track, SA)), ".S S S'")
+        notes = segment_notes(track_pitch(audio, SR), SA)
+        # Bhatkhande: precomposed dot-below / dot-above forms.
+        self.assertEqual(sargam_line(notes), "\u1e62 S \u1e60")
+        self.assertEqual(sargam_line(notes, style="ascii"), ".S S S'")
 
     def test_swara_weights_total_the_sung_time(self):
         audio = sing([0, 4, 7], note_s=0.5)
@@ -647,6 +655,166 @@ class EnvironmentSummaryTests(unittest.TestCase):
         summary = self._summary("darwin", "x86_64", None)
         self.assertNotIn("native", summary)
         self.assertNotIn("Rosetta", summary)
+
+
+
+
+class NotationTests(unittest.TestCase):
+    """Bhatkhande rendering follows the handwritten-notes correction rules."""
+
+    def test_marks_match_the_correction_rules(self):
+        from music_lesson.swara import swara_label
+
+        komal, above, below = "\u0332", "\u0307", "\u0323"
+        # komal = underline; tara = precomposed dot above (U+1E56 is tara P);
+        # mandra = dot below (no precomposed mandra P — P + combining mark);
+        # teevra Ma = M'; komal-in-register stacks both marks.
+        self.assertEqual(swara_label(1, 0), "R" + komal)
+        self.assertEqual(swara_label(0, 1), "\u1e60")
+        self.assertEqual(swara_label(7, 1), "\u1e56")
+        self.assertEqual(swara_label(7, -1), "P" + below)
+        self.assertEqual(swara_label(0, -1), "\u1e62")
+        self.assertEqual(swara_label(6, 0), "M'")
+        self.assertEqual(swara_label(3, 1), "G" + above + komal)
+        # Komal letters always use combining marks (never precomposed), so
+        # the komal underline and the octave dot stack on the same base.
+        self.assertEqual(swara_label(10, -1), "N" + below + komal)
+
+    def test_sa_and_pa_never_render_komal(self):
+        # The rules call any komal S or P a transcription error; the semitone
+        # model cannot even express one — semitones 0 and 7 are S and P.
+        from music_lesson.swara import swara_label
+
+        self.assertNotIn("\u0332", swara_label(0, 0))
+        self.assertNotIn("\u0332", swara_label(7, 0))
+
+
+class RhythmTests(unittest.TestCase):
+    def _metered_notes(self, period=0.5, n=16):
+        from music_lesson.swara import Note
+
+        seq = [0, 2, 4, 5, 7, 9, 11, 0, 11, 9, 7, 5, 4, 2, 0, 2][:n]
+        return [
+            Note(10.0 + i * period, 10.0 + i * period + period * 0.85,
+                 sw, 0, sw * 100.0, 0.0, 0.9)
+            for i, sw in enumerate(seq)
+        ]
+
+    def test_a_steady_phrase_locks_onto_its_pulse(self):
+        from music_lesson.rhythm import detect_pulse
+
+        pulse = detect_pulse(self._metered_notes(period=0.5))
+        self.assertIsNotNone(pulse)
+        self.assertAlmostEqual(pulse.period, 0.5, delta=0.02)
+        self.assertGreater(pulse.confidence, 0.9)
+
+    def test_an_alaap_gets_no_pulse(self):
+        from music_lesson.rhythm import detect_pulse
+        from music_lesson.swara import Note
+
+        rng = np.random.default_rng(2)
+        t, notes = 0.0, []
+        for sw in [0, 2, 3, 2, 0, 10, 0, 2, 3, 5, 3, 2]:
+            notes.append(Note(t, t + rng.uniform(0.3, 2.0), sw, 0,
+                              sw * 100.0, 0.0, 0.9))
+            t += rng.uniform(0.35, 2.5)
+        self.assertIsNone(detect_pulse(notes))
+
+    def test_grid_has_one_cell_per_matra_with_vibhag_bars(self):
+        from music_lesson.rhythm import detect_pulse, to_matra_grid
+
+        notes = self._metered_notes()
+        rows = to_matra_grid(notes, detect_pulse(notes), tala="Teentaal",
+                             style="ascii")
+        self.assertEqual(len(rows), 1)
+        cells = [c for c in rows[0].split(" ") if c != "|"]
+        self.assertEqual(len(cells), 16)             # Teentaal = 16 matras
+        self.assertEqual(rows[0].count("|"), 5)      # 4 vibhags = 5 bars
+
+    def test_a_held_note_sustains_with_dashes(self):
+        from music_lesson.rhythm import SUSTAIN, Pulse, to_matra_grid
+        from music_lesson.swara import Note
+
+        pulse = Pulse(period=0.5, offset=0.0, confidence=1.0)
+        notes = [
+            Note(0.0, 2.0, 0, 0, 0.0, 0.0, 0.9),     # S held 4 matras
+            Note(2.0, 2.4, 7, 0, 700.0, 0.0, 0.9),
+        ]
+        row = to_matra_grid(notes, pulse, style="ascii")[0]
+        cells = [c for c in row.split(" ") if c != "|"]
+        self.assertEqual(cells[:5], ["S", SUSTAIN, SUSTAIN, SUSTAIN, "P"])
+
+
+class RagaHintTests(unittest.TestCase):
+    # The real case this exists for: a Kirwani lesson (S R g M P d N) that
+    # the thaat matcher could only call "Asavari, 78%" — Kirwani's scale is
+    # not one of the ten thaats.
+    KIRWANI_WEIGHTS = {0: 12.0, 2: 5.0, 3: 7.0, 5: 4.0, 7: 9.0, 8: 4.0, 11: 5.0}
+
+    def test_kirwani_is_matched_exactly_without_any_hint(self):
+        guess = raga.identify_scale(self.KIRWANI_WEIGHTS)
+        self.assertIn("Kirwani", guess.exact_ragas)
+
+    def test_a_hint_is_scored_and_a_good_fit_leads_the_summary(self):
+        guess = raga.identify_scale(
+            self.KIRWANI_WEIGHTS, hints=["Kirwani", "Asavari"]
+        )
+        fits = dict(guess.hint_fits)
+        self.assertGreater(fits["Kirwani"], 0.95)
+        self.assertLess(fits["Asavari"], fits["Kirwani"])
+        self.assertIn("your hint Kirwani", guess.summary())
+
+    def test_a_bad_hint_is_reported_not_hidden(self):
+        guess = raga.identify_scale(self.KIRWANI_WEIGHTS, hints=["Bhupali"])
+        self.assertIn("fits only", guess.summary())
+
+    def test_unknown_hint_names_are_ignored(self):
+        guess = raga.identify_scale(self.KIRWANI_WEIGHTS, hints=["Nonsense"])
+        self.assertEqual(guess.hint_fits, ())
+
+    def test_the_picker_list_is_comprehensive_and_sorted(self):
+        names = raga.all_raga_names()
+        self.assertGreater(len(names), 60)
+        self.assertEqual(names, sorted(names))
+        self.assertIn("Kirwani", names)
+
+
+class DecoderJunkTests(unittest.TestCase):
+    HOTWORDS = "Kirwani, raag, bandish, sargam, alaap, taan, meend, gamak"
+
+    def _reason(self, text):
+        from music_lesson.core import _junk_reason
+
+        tokens = [t.strip().lower() for t in self.HOTWORDS.split(",")]
+        return _junk_reason(text, tokens)
+
+    def test_a_repetition_loop_is_junk(self):
+        self.assertEqual(self._reason("aah, " * 40), "repetition loop")
+
+    def test_the_prompt_echoed_back_in_order_is_junk(self):
+        echo = "raag, bandish, sargam, alaap, taan, meend"
+        self.assertEqual(self._reason(echo), "vocabulary prompt echoed back")
+
+    def test_the_same_words_in_a_different_order_are_kept(self):
+        # A guru genuinely using these words will not reproduce our list's
+        # exact order — order is what makes the drop safe.
+        self.assertIsNone(self._reason("meend, taan, alaap, sargam, bandish, raag"))
+
+    def test_ordinary_teaching_speech_is_kept(self):
+        self.assertIsNone(
+            self._reason("Ab bandish gao, sam pe aana, meend ke saath.")
+        )
+
+
+class IastDisplayTests(unittest.TestCase):
+    def test_known_names_get_their_iast_spelling(self):
+        self.assertEqual(lexicon.iast_display("teentaal"), "Tīntāl")
+        self.assertEqual(lexicon.iast_display("alaap"), "Ālāp")
+        self.assertEqual(lexicon.iast_display("Malkauns"), "Mālkauns")
+        self.assertEqual(lexicon.iast_display("Kirwani"), "Kirvāṇī")
+
+    def test_unknown_names_pass_through(self):
+        self.assertEqual(lexicon.iast_display("Zilaph"), "Zilaph")
 
 
 

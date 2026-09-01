@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 
-from . import lexicon
+from . import lexicon, rhythm
 from .core import ATTEMPT, DEMONSTRATION, LessonResult, LessonSegment
 
 _KIND_LABEL = {
@@ -99,12 +99,16 @@ def _summary_block(result: LessonResult) -> list[str]:
 
     named = result.mentions.get("ragas", [])
     if named:
-        lines.append(f"- **Raags named out loud:** {', '.join(named)}")
+        display = ", ".join(lexicon.iast_display(n) for n in named)
+        lines.append(f"- **Raags named out loud:** {display}")
         agreement = _scale_agreement(result)
         if agreement:
             lines.append(f"- **Cross-check:** {agreement}")
     if result.mentions.get("talas"):
-        lines.append(f"- **Taals named:** {', '.join(result.mentions['talas'])}")
+        display = ", ".join(
+            lexicon.iast_display(t) for t in result.mentions["talas"]
+        )
+        lines.append(f"- **Taals named:** {display}")
     if total > 0:
         lines.append(
             f"- **Time:** {_fmt_ts(result.sung_seconds)} sung, "
@@ -147,6 +151,7 @@ def _demonstration_block(result: LessonResult) -> list[str]:
     if not demos:
         return []
     lines = ["## Demonstrations to copy", ""]
+    tala = _mentioned_tala(result)
     for segment in demos:
         who = f"{segment.speaker} · " if segment.speaker else ""
         lines.append(
@@ -156,8 +161,24 @@ def _demonstration_block(result: LessonResult) -> list[str]:
         detail = _shruti_note(segment)
         if detail:
             lines.append(f"  - {detail}")
+        # A phrase with a steady pulse gets the notebook treatment: one cell
+        # per matra, sustain dashes, vibhag bars. An alaap gets none, because
+        # laying an unmetered line on a grid would be inventing rhythm.
+        pulse = rhythm.detect_pulse(segment.notes)
+        if pulse is not None:
+            lines.append(f"  - {rhythm.describe(pulse, tala)}")
+            for row in rhythm.to_matra_grid(
+                segment.notes, pulse, tala, style=result.notation
+            ):
+                lines.append(f"    `{row}`")
     lines.append("")
     return lines
+
+
+def _mentioned_tala(result: LessonResult) -> str | None:
+    """The tala to group matra grids by — only if exactly one was named."""
+    named = [t for t in result.mentions.get("talas", []) if t in rhythm.TALAS]
+    return named[0] if len(named) == 1 else None
 
 
 def _shruti_note(segment: LessonSegment, threshold: float = 20.0) -> str:
@@ -215,7 +236,9 @@ def _glossary_block(result: LessonResult) -> list[str]:
         return []
     lines = ["## Terms used in this lesson", ""]
     for term in sorted(terms):
-        lines.append(f"- **{term}** — {lexicon.gloss_for(term)}")
+        lines.append(
+            f"- **{lexicon.iast_display(term)}** — {lexicon.gloss_for(term)}"
+        )
     lines.append("")
     return lines
 

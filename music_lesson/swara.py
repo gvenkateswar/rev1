@@ -24,6 +24,67 @@ import numpy as np
 
 from .pitch import PitchTrack, cents_to_hz, hz_to_cents, median_filter
 
+# Two display notations for the same (swara, octave) facts.
+#
+# BHATKHANDE matches the conventions of the user's handwritten-notes corpus
+# (see the correction rules that project accumulated): komal is the letter
+# underlined (combining low line), taar saptak is a dot above (precomposed
+# forms where Unicode has them), mandra saptak is a dot below, and teevra Ma
+# is M with an apostrophe. Shuddha letters are plain S R G M P D N.
+#
+# ASCII is the compact fallback: lowercase = komal, M = teevra Ma,
+# .S = mandra, S' = taar.
+BHATKHANDE = "bhatkhande"
+ASCII = "ascii"
+
+_KOMAL_LINE = "\u0332"      # combining low line (underline)
+_TARA_DOT = "\u0307"        # combining dot above
+_MANDRA_DOT = "\u0323"      # combining dot below
+
+# Precomposed dot-above / dot-below letters, used where Unicode has them so
+# the marks render identically everywhere. Note U+1E56 is TARA P by that
+# corpus's convention, and no precomposed mandra P exists (rule: use P + dot).
+_PRECOMPOSED_TARA = {
+    "S": "\u1e60", "R": "\u1e58", "G": "\u0120", "M": "\u1e40",
+    "P": "\u1e56", "D": "\u1e0a", "N": "\u1e44",
+}
+_PRECOMPOSED_MANDRA = {"S": "\u1e62", "R": "\u1e5a", "D": "\u1e0c", "N": "\u1e46"}
+
+# Per semitone above Sa: (letter, is_komal, is_teevra).
+_BHATKHANDE_BASE = [
+    ("S", False, False), ("R", True, False), ("R", False, False),
+    ("G", True, False), ("G", False, False), ("M", False, False),
+    ("M", False, True), ("P", False, False), ("D", True, False),
+    ("D", False, False), ("N", True, False), ("N", False, False),
+]
+
+
+def swara_label(swara: int, octave: int, style: str = BHATKHANDE) -> str:
+    """Render one swara+octave in the requested notation."""
+    if style == ASCII:
+        base = SWARA_SHORT[swara]
+        if octave < 0:
+            return "." * (-octave) + base
+        return base + "'" * octave
+
+    letter, komal, teevra = _BHATKHANDE_BASE[swara]
+    if octave == 1 and not komal and letter in _PRECOMPOSED_TARA:
+        out = _PRECOMPOSED_TARA[letter]
+    elif octave == -1 and not komal and letter in _PRECOMPOSED_MANDRA:
+        out = _PRECOMPOSED_MANDRA[letter]
+    elif octave > 0:
+        out = letter + _TARA_DOT * octave
+    elif octave < 0:
+        out = letter + _MANDRA_DOT * (-octave)
+    else:
+        out = letter
+    if komal:
+        out += _KOMAL_LINE
+    if teevra:
+        out += "'"
+    return out
+
+
 # Swara names in Bhatkhande roman shorthand: lowercase = komal, uppercase =
 # shuddha, M = teevra Ma. Index is semitones above Sa.
 SWARA_SHORT = ["S", "r", "R", "g", "G", "m", "M", "P", "d", "D", "n", "N"]
@@ -67,11 +128,11 @@ class Note:
 
     @property
     def name(self) -> str:
-        """Short name with register: `.S` mandra, `S` madhya, `S'` taar."""
-        base = SWARA_SHORT[self.swara]
-        if self.octave < 0:
-            return "." * (-self.octave) + base
-        return base + "'" * self.octave
+        """Short ASCII name with register: `.S` mandra, `S` madhya, `S'` taar."""
+        return swara_label(self.swara, self.octave, ASCII)
+
+    def label(self, style: str = BHATKHANDE) -> str:
+        return swara_label(self.swara, self.octave, style)
 
     @property
     def full_name(self) -> str:
@@ -83,6 +144,7 @@ class Note:
             "start": round(self.start, 3),
             "end": round(self.end, 3),
             "swara": self.name,
+            "swara_bhatkhande": swara_label(self.swara, self.octave),
             "swara_full": self.full_name,
             "cents": round(self.cents, 1),
             "deviation_cents": round(self.deviation, 1),
@@ -360,11 +422,13 @@ def _merge_repeated(notes: list[Note], gap: float = 0.06) -> list[Note]:
     return merged
 
 
-def sargam_line(notes: list[Note], max_notes: int = 64) -> str:
-    """Render notes as a readable sargam phrase, e.g. ``N R G m D N S'``."""
+def sargam_line(
+    notes: list[Note], max_notes: int = 64, style: str = BHATKHANDE
+) -> str:
+    """Render notes as a readable sargam phrase, e.g. ``N\u0332 R G M' D Ṡ``."""
     if not notes:
         return ""
-    names = [n.name for n in notes[:max_notes]]
+    names = [n.label(style) for n in notes[:max_notes]]
     tail = " …" if len(notes) > max_notes else ""
     return " ".join(names) + tail
 

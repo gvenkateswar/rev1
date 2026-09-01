@@ -97,6 +97,8 @@ class LessonResult:
     source: str
     timings: dict[str, float] = field(default_factory=dict)
     notices: list[str] = field(default_factory=list)   # how the decode ran
+    notation: str = _swara.BHATKHANDE
+    dropped: list[dict] = field(default_factory=list)  # junk the decoder emitted
 
     @property
     def sung_seconds(self) -> float:
@@ -118,6 +120,8 @@ class LessonResult:
             "spoken_seconds": round(self.spoken_seconds, 1),
             "timings": {k: round(v, 3) for k, v in self.timings.items()},
             "notices": self.notices,
+            "notation": self.notation,
+            "dropped": self.dropped,
             "segments": [s.to_dict() for s in self.segments],
         }
 
@@ -151,12 +155,16 @@ def transcribe_lesson(
     keep_sung_text: bool = False,
     sung_threshold: float = 0.50,
     beam_size: int = 5,
+    notation: str = _swara.BHATKHANDE,
+    raga_hints: list[str] | None = None,
     progress: ProgressCb | None = None,
 ) -> LessonResult:
     """Run the whole pipeline on *src_path*.
 
     *tonic* overrides Sa detection (in Hz) — worth using, since you know your
-    own Sa and the detector only guesses. *keep_sung_text* keeps whatever
+    own Sa and the detector only guesses. *raga_hints* are raga names you
+    expect in the lesson: they prime the decoder and are scored against the
+    sung notes, and a confident fit leads the scale summary. *keep_sung_text* keeps whatever
     Whisper produced over singing, which is normally hallucination but is
     occasionally a bandish lyric worth reading.
     """
@@ -185,14 +193,31 @@ def transcribe_lesson(
                 track, notes, tonic_estimate.hz, sung_threshold=sung_threshold
             )
 
+        prompt_terms = list(raga_hints or []) + list(extra_terms or [])
         with _timed(timings, "transcribe"):
             speech = _run_whisper(
-                wav_path, regions, whisper_model, language, extra_terms,
+                wav_path, regions, whisper_model, language, prompt_terms,
                 beam_size, progress,
             )
         speech_segments = speech.segments
         detected_language = speech.language
         notices = _transcription_notices(speech)
+        if speech.rescripted:
+            notices.append(
+                f"{speech.rescripted} passage(s) came out in Urdu/Nastaliq "
+                f"script and were re-decoded as Hindi so they read in "
+                f"Devanagari."
+            )
+        speech_segments, junk = _drop_decoder_junk(
+            speech_segments, lexicon.hotwords(prompt_terms)
+        )
+        if junk:
+            notices.append(
+                f"Dropped {len(junk)} spoken segment(s) as decoder junk — "
+                f"a repetition loop, or the vocabulary prompt echoed back "
+                f"verbatim. They are preserved under 'dropped' in the JSON "
+                f"export."
+            )
         from .runtime import openmp_workaround_applied
 
         if openmp_workaround_applied():
@@ -214,7 +239,7 @@ def transcribe_lesson(
 
         progress("Assembling the lesson", 0.90)
         segments = _build_segments(
-            speech_segments, regions, notes, turns, keep_sung_text
+            speech_segments, regions, notes, turns, keep_sung_text, notation
         )
         _assign_roles(segments, turns, guru_speaker)
         if fix_vocabulary:
@@ -225,7 +250,8 @@ def transcribe_lesson(
             " ".join(s.text for s in segments if s.text)
         )
         scale = _raga.identify_scale(
-            _swara.swara_weights([n for s in segments if s.is_sung for n in s.notes])
+            _swara.swara_weights([n for s in segments if s.is_sung for n in s.notes]),
+            hints=raga_hints,
         )
         speakers = _ordered_speakers(segments)
         timings["total"] = sum(v for k, v in timings.items() if k != "total")
@@ -242,6 +268,8 @@ def transcribe_lesson(
             source=src_path,
             timings=timings,
             notices=notices,
+            notation=notation,
+            dropped=junk,
         )
     finally:
         try:
@@ -367,6 +395,8 @@ def _build_segments(
     notes: list[Note],
     turns,
     keep_sung_text: bool,
+    notation: str = _swara.BHATKHANDE,
+    raga_hints: list[str] | None = None,
 ) -> list[LessonSegment]:
     """Interleave transcribed speech with sung stretches, in time order."""
     segments: list[LessonSegment] = []
@@ -402,7 +432,8 @@ def _build_segments(
             LessonSegment(
                 start=region_notes[0].start, end=region_notes[-1].end,
                 kind=DEMONSTRATION,
-                sargam=_swara.sargam_line(region_notes), notes=region_notes,
+                sargam=_swara.sargam_line(region_notes, style=notation),
+                notes=region_notes,
             )
         )
 
@@ -424,6 +455,58 @@ def _strip_edge_blips(notes: list[Note], min_edge: float = 0.15) -> list[Note]:
     while trimmed and trimmed[-1].duration < min_edge:
         trimmed.pop()
     return trimmed
+
+
+def _drop_decoder_junk(
+    speech_segments, hotwords_text: str
+) -> tuple[list, list[dict]]:
+    """Remove segments that are the decoder talking to itself, not the guru.
+
+    Two failure shapes show up on real lessons. Over ambiguous audio the
+    decoder can copy its own vocabulary prompt into the output — the giveaway
+    is a run of terms in exactly the order the hotword list gives them, which
+    no human recitation would reproduce. And on long steady sounds it can loop
+    one token indefinitely ("aah" seventy times). Both are dropped, kept in
+    the result for audit, and counted in the notices — silently deleting
+    speech would be worse than either failure.
+    """
+    hotword_tokens = [t.strip().lower() for t in hotwords_text.split(",") if t.strip()]
+    kept, dropped = [], []
+    for seg in speech_segments:
+        reason = _junk_reason(seg.text, hotword_tokens)
+        if reason:
+            dropped.append(
+                {"start": round(seg.start, 2), "end": round(seg.end, 2),
+                 "text": seg.text, "reason": reason}
+            )
+        else:
+            kept.append(seg)
+    return kept, dropped
+
+
+def _junk_reason(text: str, hotword_tokens: list[str]) -> str | None:
+    tokens = [t.strip(".,!?…").lower() for t in text.split()]
+    tokens = [t for t in tokens if t]
+    if not tokens:
+        return "empty"
+
+    run, longest = 1, 1
+    for a, b in zip(tokens, tokens[1:]):
+        run = run + 1 if a == b else 1
+        longest = max(longest, run)
+    if longest >= 6:
+        return "repetition loop"
+
+    # Hotword echo: >=5 tokens matching a contiguous, in-order slice of the
+    # prompt list. A guru genuinely naming raags will not reproduce our list's
+    # exact order, so order is what makes this safe to drop.
+    if len(hotword_tokens) >= 5:
+        for start in range(len(tokens) - 4):
+            window = tokens[start:start + 5]
+            for h in range(len(hotword_tokens) - 4):
+                if window == hotword_tokens[h:h + 5]:
+                    return "vocabulary prompt echoed back"
+    return None
 
 
 def _segment_language(seg) -> str:

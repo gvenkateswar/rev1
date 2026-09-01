@@ -37,6 +37,17 @@ def build_parser() -> argparse.ArgumentParser:
                        help="Your Sa, as a note or a frequency: 'C#3', 'D3', "
                             "'138.6'. Default: detect it. Setting it is more "
                             "reliable than any detector — you know your Sa.")
+    music.add_argument("--raga", action="append", dest="ragas", default=[],
+                       metavar="NAME",
+                       help="A raga you expect in this lesson (repeatable, or "
+                            "comma-separated). Primes the decoder and is "
+                            "scored against the sung notes — 'I know this was "
+                            "Kirwani' beats any detector.")
+    music.add_argument("--notation", default="bhatkhande",
+                       choices=["bhatkhande", "ascii"],
+                       help="Sargam display: 'bhatkhande' uses komal "
+                            "underlines, octave dots and M' for teevra Ma "
+                            "(default); 'ascii' uses lowercase komal, .S / S'.")
     music.add_argument("--sung-threshold", type=float, default=0.50,
                        help="How readily a stretch counts as singing, 0..1 "
                             "(default: 0.50). Raise it if slow, deliberate "
@@ -109,6 +120,12 @@ def main(argv: list[str] | None = None) -> int:
             keep_sung_text=args.keep_sung_text,
             sung_threshold=args.sung_threshold,
             beam_size=args.beam_size,
+            notation=args.notation,
+            raga_hints=[
+                name.strip()
+                for chunk in args.ragas for name in chunk.split(",")
+                if name.strip()
+            ],
             progress=_progress,
         )
     except (RuntimeError, FileNotFoundError, ValueError) as exc:

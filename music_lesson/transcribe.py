@@ -49,6 +49,7 @@ class SpeechResult:
     speech_seconds: float          # audio actually handed to the decoder
     clips: int                     # how many windows that was split across
     dropped_options: list[str]     # kwargs this faster-whisper did not support
+    rescripted: int = 0            # Urdu-script passages re-decoded as Hindi
 
 
 def transcribe_speech(
@@ -121,13 +122,98 @@ def transcribe_speech(
         if progress and total > 0:
             progress(min(_speech_elapsed(float(seg.end), clip_spans) / total, 1.0))
 
+    rescripted = 0
+    if language is None and "clip_timestamps" not in dropped:
+        segments, rescripted = _redecode_arabic_script_as_hindi(
+            model, wav_path, segments, hotwords, beam_size
+        )
+
     return SpeechResult(
         segments=segments,
         language=str(info.language or ""),
         speech_seconds=total,
         clips=len(clip_spans) if clip_spans else 1,
         dropped_options=dropped,
+        rescripted=rescripted,
     )
+
+
+# Languages Whisper writes in Arabic-derived script. Urdu is the one that
+# actually shows up: spoken Hindi and Urdu are the same language, so the
+# per-window detector flips between them freely — and then writes the Hindi
+# your guru spoke in Nastaliq, which is not the script a Devanagari-reading
+# student wants (and the romanizer only reads Devanagari).
+_ARABIC_SCRIPT_LANGS = frozenset({"ur", "ar", "fa", "ps", "sd", "ug"})
+
+
+def _has_arabic_script(text: str) -> bool:
+    return any(
+        "\u0600" <= ch <= "\u06ff" or "\u0750" <= ch <= "\u077f"
+        for ch in text
+    )
+
+
+def _redecode_arabic_script_as_hindi(
+    model, wav_path: str, segments: list[SpeechSegment],
+    hotwords: str | None, beam_size: int,
+) -> tuple[list[SpeechSegment], int]:
+    """Re-decode the windows that came out in Nastaliq, forced to Hindi.
+
+    Same audio, same model, language pinned to "hi": the decode lands in
+    Devanagari instead. Costs one extra encoder pass per affected stretch —
+    cheap, because only the flagged spans are clipped, and worth it because
+    the alternative is transliterating vowel-less Nastaliq, which cannot be
+    done well.
+    """
+    flagged = [
+        seg for seg in segments
+        if seg.language in _ARABIC_SCRIPT_LANGS or _has_arabic_script(seg.text)
+    ]
+    if not flagged:
+        return segments, 0
+
+    spans: list[tuple[float, float]] = []
+    for seg in flagged:
+        start, end = max(0.0, seg.start - 0.2), seg.end + 0.2
+        if spans and start <= spans[-1][1]:
+            spans[-1] = (spans[-1][0], max(spans[-1][1], end))
+        else:
+            spans.append((start, end))
+
+    try:
+        seg_iter, _info = model.transcribe(
+            wav_path,
+            language="hi",
+            word_timestamps=True,
+            beam_size=beam_size,
+            hotwords=hotwords,
+            condition_on_previous_text=False,
+            no_speech_threshold=0.6,
+            clip_timestamps=_format_clips(spans),
+        )
+        redecoded = [
+            SpeechSegment(
+                start=float(seg.start), end=float(seg.end),
+                text=seg.text.strip(),
+                words=[
+                    Word(start=float(w.start), end=float(w.end), text=w.word)
+                    for w in (seg.words or [])
+                    if w.start is not None and w.end is not None
+                ],
+                language="hi",
+                avg_logprob=float(getattr(seg, "avg_logprob", 0.0) or 0.0),
+                no_speech_prob=float(getattr(seg, "no_speech_prob", 0.0) or 0.0),
+            )
+            for seg in seg_iter
+            if seg.text.strip()
+        ]
+    except TypeError:
+        return segments, 0          # a signature this old was already reported
+
+    flagged_ids = {id(seg) for seg in flagged}
+    merged = [seg for seg in segments if id(seg) not in flagged_ids] + redecoded
+    merged.sort(key=lambda seg: seg.start)
+    return merged, len(flagged)
 
 
 def _format_clips(spans: list[tuple[float, float]]) -> str:

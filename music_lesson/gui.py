@@ -18,12 +18,14 @@ import streamlit as st
 try:
     from .core import ATTEMPT, transcribe_lesson
     from .output import render, to_practice_sheet
+    from .raga import all_raga_names
     from .runtime import environment_summary
     from .swara import parse_tonic
 except ImportError:
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from music_lesson.core import ATTEMPT, transcribe_lesson
     from music_lesson.output import render, to_practice_sheet
+    from music_lesson.raga import all_raga_names
     from music_lesson.runtime import environment_summary
     from music_lesson.swara import parse_tonic
 
@@ -83,6 +85,21 @@ def _sidebar() -> dict:
         )
 
         st.subheader("Music")
+        raga_hints = st.multiselect(
+            "Raags you expect in this lesson", all_raga_names(),
+            help="Type to search. Primes the transcription with the names and "
+                 "scores each pick against the sung notes — 'I know this was "
+                 "Kirwani' beats any detector, and a pick that does NOT fit "
+                 "usually means the tonic is off.",
+        )
+        notation = st.radio(
+            "Sargam notation",
+            ["Bhatkhande  (S R\u0332 G\u0332 M\u2019 \u1e60 \u1e62)",
+             "ASCII  (S r g M S' .S)"],
+            horizontal=True,
+            help="Bhatkhande matches your handwritten-notes conventions: "
+                 "komal underlined, octave dots, M\u2019 for teevra Ma.",
+        )
         sung_threshold = st.slider(
             "Singing sensitivity", 0.30, 0.75, 0.50, 0.05,
             help="Lower catches quiet humming; higher stops slow, deliberate "
@@ -109,6 +126,8 @@ def _sidebar() -> dict:
 
     return {
         "tonic_text": tonic_text.strip(),
+        "raga_hints": raga_hints,
+        "notation": "ascii" if notation.startswith("ASCII") else "bhatkhande",
         "model": model,
         "language": None if language.startswith("auto") else language,
         "beam_size": beam_size,
@@ -237,6 +256,8 @@ def main() -> None:
                 keep_sung_text=settings["keep_sung_text"],
                 sung_threshold=settings["sung_threshold"],
                 beam_size=settings["beam_size"],
+                notation=settings["notation"],
+                raga_hints=settings["raga_hints"],
                 progress=progress,
             )
         except (RuntimeError, FileNotFoundError, ValueError) as exc:

@@ -220,13 +220,16 @@ def hotwords(extra_terms: list[str] | None = None, limit: int = 44) -> str:
     go first: a raga name you typed in matters more than the fortieth entry of
     a generic term list.
     """
+    # Deliberately short, and deliberately no raag-name list: on ambiguous
+    # audio the decoder parrots the prompt back into the transcript, and a
+    # leaked "Malkauns, Kafi, Khamaj, Bageshri…" line is worse than Whisper
+    # spelling a raag name badly (the repair pass fixes spellings anyway).
+    # The caller's own terms go first — truncation drops from the end.
     core = [
         "raag", "bandish", "sargam", "alaap", "taan", "meend", "gamak",
         "sthayi", "antara", "vilambit", "drut", "teentaal", "ektaal", "laya",
         "komal", "teevra", "aroha", "avaroha", "pakad", "riyaz", "tanpura",
         "swara", "sam", "matra", "khayal", "thumri", "tihai", "gharana",
-        "Yaman", "Bhairav", "Bhairavi", "Bhupali", "Malkauns", "Kafi",
-        "Khamaj", "Bageshri", "Bihag", "Todi", "Marwa", "Des", "Darbari",
     ]
     words = [t for t in (extra_terms or []) if t] + core
     return ", ".join(words[:limit])
@@ -243,6 +246,51 @@ def correct_text(text: str) -> tuple[str, list[Correction]]:
     working = _normalize_sargam_runs(working, corrections)
     working = _fuzzy_repair(working, corrections)
     return working, corrections
+
+
+# Display spellings in IAST, matching the standard the user's handwritten
+# notes corpus settled on (Rāga not Raag, Tīntāl not Teental, Ālāp not Alaap).
+# Detection stays on the plain ASCII keys — these are for what the reader sees.
+IAST: dict[str, str] = {
+    # terms
+    "raag": "Rāga", "raga": "Rāga", "thaat": "Ṭhāṭ", "swara": "Svara",
+    "shruti": "Śruti", "sargam": "Sargam", "aroha": "Ārohaṇ",
+    "avaroha": "Avarohaṇ", "pakad": "Pakaḍ", "vadi": "Vādī",
+    "samvadi": "Saṁvādī", "teevra": "Tīvra", "shuddha": "Śuddha",
+    "alaap": "Ālāp", "jod": "Joḍ", "vistaar": "Vistār", "nyas": "Nyās",
+    "bandish": "Bandiś", "cheez": "Cīz", "sthayi": "Sthāyī",
+    "antara": "Antarā", "mukhda": "Mukhḍā", "khayal": "Khayāl",
+    "thumri": "Ṭhumrī", "tarana": "Tarānā", "meend": "Mīṇḍ",
+    "kan": "Kaṇ", "murki": "Murkī", "khatka": "Khaṭkā",
+    "andolan": "Āndolan", "taan": "Tān", "palta": "Palṭā",
+    "alankar": "Alaṅkār", "riyaz": "Riyāz", "khali": "Khālī",
+    "matra": "Mātrā", "vibhag": "Vibhāg", "theka": "Ṭhekā",
+    "avartan": "Āvartan", "tihai": "Tihāī", "dugun": "Dviguṇa",
+    "gharana": "Gharānā", "bhaav": "Bhāv",
+    # talas
+    "teentaal": "Tīntāl", "ektaal": "Ektāl", "jhaptaal": "Jhaptāl",
+    "rupak": "Rūpak", "keherwa": "Kaharvā", "dadra": "Dādrā",
+    "dhamar": "Dhamār", "chautaal": "Cautāl", "deepchandi": "Dīpcandī",
+    "jhoomra": "Jhūmrā", "tilwada": "Tilvāḍā", "sooltaal": "Sūltāl",
+    # ragas (only where IAST differs from the plain spelling)
+    "kafi": "Kāfī", "todi": "Toḍī", "malkauns": "Mālkauns",
+    "asavari": "Āsāvarī", "bhupali": "Bhūpālī", "bhairavi": "Bhairavī",
+    "marwa": "Mārvā", "bihag": "Bihāg", "bhimpalasi": "Bhīmpalāsī",
+    "patdeep": "Paṭdīp", "des": "Deś", "durga": "Durgā",
+    "khamaj": "Khamāj", "bageshri": "Bāgeśrī", "jaunpuri": "Jaunpurī",
+    "darbari kanada": "Darbārī Kānaḍā", "adana": "Aḍānā",
+    "hamsadhwani": "Haṁsadhvani", "kalyan": "Kalyāṇ", "multani": "Multānī",
+    "puriya": "Puriyā", "kirwani": "Kirvāṇī", "charukeshi": "Cārukeśī",
+    "shree": "Śrī", "basant": "Basant", "lalit": "Lalit",
+    "vrindavani sarang": "Vṛndāvanī Sāraṅg", "shuddha sarang": "Śuddha Sāraṅg",
+    "madhuvanti": "Madhuvantī", "jaijaiwanti": "Jaijaivantī",
+    "miyan ki malhar": "Miyāṅ kī Malhār", "gaud malhar": "Gauḍ Malhār",
+}
+
+
+def iast_display(name: str) -> str:
+    """The IAST spelling of *name*, or *name* itself if we have none."""
+    return IAST.get(name.strip().lower(), name)
 
 
 def gloss_for(term: str) -> str | None:

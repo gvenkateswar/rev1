@@ -43,24 +43,27 @@ all — it is plain NumPy in `pitch.py`.
 
 ## Use it — command line
 
+On macOS use `python3` — the python.org install does not create a `python`
+alias, so plain `python` is "command not found".
+
 Comments go on their own line below — an interactive `zsh` does not treat a
 trailing `#` as a comment and will pass it to the program as an argument.
 
 ```sh
 # from the repo root; writes a practice sheet to stdout
-python -m music_lesson lesson.m4a
+python3 -m music_lesson lesson.m4a
 
 # tell it your Sa
-python -m music_lesson lesson.m4a --tonic C#3
+python3 -m music_lesson lesson.m4a --tonic C#3
 
 # subtitles with sargam
-python -m music_lesson lesson.m4a -f srt -o lesson.srt
+python3 -m music_lesson lesson.m4a -f srt -o lesson.srt
 
 # everything, including every note
-python -m music_lesson lesson.m4a -f json -o lesson.json
+python3 -m music_lesson lesson.m4a -f json -o lesson.json
 
 # fastest useful first pass on a long lesson
-python -m music_lesson lesson.m4a --tonic C#3 --beam-size 1 --no-speakers
+python3 -m music_lesson lesson.m4a --tonic C#3 --beam-size 1 --no-speakers
 ```
 
 **Set `--tonic`.** You know what your tanpura is tuned to; the detector is
@@ -186,6 +189,18 @@ classes will separate them. What separates them is phrase shape — and the
 guru saying the name out loud, which `lexicon.py` catches and the practice
 sheet cross-references against the notes.
 
+## macOS notes
+
+- **"OMP: Error #15 … libiomp5.dylib already initialized" / `zsh: abort`** —
+  two native wheels (CTranslate2 and torch) each bundle their own OpenMP
+  runtime, and loading both into one process aborts it. Fixed twice over as of
+  this version: the transcription path no longer imports torch at all, and
+  when diarization legitimately loads it, the package sets Intel's documented
+  escape hatch (`KMP_DUPLICATE_LIB_OK=TRUE`) before either library
+  initializes, noting it in the run's output. Export the variable yourself
+  (either value) and your setting wins. `--no-speakers` avoids torch entirely.
+- **`zsh: command not found: python`** — use `python3`.
+
 ## Known limits — read this before you trust it
 
 - **Sa detection can land on the wrong scale degree** on a recording with
@@ -219,7 +234,7 @@ sheet cross-references against the notes.
 ## Tests
 
 ```sh
-python -m unittest discover -s tests -v
+python3 -m unittest discover -s tests -v
 ```
 
 47 tests, no model downloads and no network: everything runs against

@@ -193,6 +193,15 @@ def transcribe_lesson(
         speech_segments = speech.segments
         detected_language = speech.language
         notices = _transcription_notices(speech)
+        from .runtime import openmp_workaround_applied
+
+        if openmp_workaround_applied():
+            notices.append(
+                "macOS: allowed two OpenMP runtimes to coexist "
+                "(KMP_DUPLICATE_LIB_OK=TRUE) so faster-whisper and torch can "
+                "share the process; without it the app aborts with OMP Error "
+                "#15. Running with --no-speakers avoids loading torch at all."
+            )
 
         turns = []
         if diarize_speakers:

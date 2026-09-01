@@ -16,7 +16,7 @@ This repo holds three independent tools:
 Tests for the music-lesson tool run with no model downloads and no network:
 
 ```sh
-python -m unittest discover -s tests -v
+python3 -m unittest discover -s tests -v
 ```
 
 ---

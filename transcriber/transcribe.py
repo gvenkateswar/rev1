@@ -35,17 +35,28 @@ class RawSegment:
 def _auto_device(
     device: str | None, compute_type: str | None
 ) -> tuple[str, str]:
-    """Pick (device, compute_type): CUDA+float16 if available, else CPU+int8."""
-    if device is None:
-        try:
-            import torch
+    """Pick (device, compute_type): CUDA+float16 if available, else CPU+int8.
 
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-        except ImportError:
-            device = "cpu"
+    CUDA is detected by asking CTranslate2, never by importing torch: torch's
+    wheel bundles its own OpenMP runtime, and loading it into the same process
+    as CTranslate2's copy aborts outright on macOS ("OMP: Error #15").
+    faster-whisper runs on CTranslate2, so CTranslate2's answer is also the
+    only one that matters here.
+    """
+    if device is None:
+        device = "cuda" if _cuda_available() else "cpu"
     if compute_type is None:
         compute_type = "float16" if device == "cuda" else "int8"
     return device, compute_type
+
+
+def _cuda_available() -> bool:
+    try:
+        import ctranslate2
+
+        return ctranslate2.get_cuda_device_count() > 0
+    except Exception:  # no ctranslate2, or a build without CUDA support
+        return False
 
 
 def load_model(

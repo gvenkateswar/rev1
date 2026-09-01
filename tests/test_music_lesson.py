@@ -564,5 +564,37 @@ class DecodingCostTests(unittest.TestCase):
 
 
 
+
+class RuntimeGuardTests(unittest.TestCase):
+    """The macOS duplicate-OpenMP escape hatch (see music_lesson/runtime.py)."""
+
+    def _call(self, platform, env):
+        from unittest import mock
+
+        from music_lesson import runtime
+
+        with mock.patch.object(runtime.sys, "platform", platform), \
+             mock.patch.object(runtime.os, "environ", env), \
+             mock.patch.object(runtime, "_applied", False):
+            runtime.ensure_single_openmp()
+            return env, runtime.openmp_workaround_applied()
+
+    def test_on_macos_the_escape_hatch_is_set(self):
+        env, applied = self._call("darwin", {})
+        self.assertEqual(env.get("KMP_DUPLICATE_LIB_OK"), "TRUE")
+        self.assertTrue(applied)
+
+    def test_an_explicit_user_setting_is_never_overwritten(self):
+        env, applied = self._call("darwin", {"KMP_DUPLICATE_LIB_OK": "FALSE"})
+        self.assertEqual(env["KMP_DUPLICATE_LIB_OK"], "FALSE")
+        self.assertFalse(applied)
+
+    def test_other_platforms_are_left_alone(self):
+        env, applied = self._call("linux", {})
+        self.assertNotIn("KMP_DUPLICATE_LIB_OK", env)
+        self.assertFalse(applied)
+
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

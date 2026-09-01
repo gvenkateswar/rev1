@@ -14,7 +14,13 @@ this package (or the pure-DSP modules `pitch`, `swara`, `raga`, `translit`,
 """
 from __future__ import annotations
 
-from .core import (
+from .runtime import ensure_single_openmp
+
+# Before anything that could pull in torch or ctranslate2: see runtime.py for
+# why loading both on macOS otherwise aborts the process.
+ensure_single_openmp()
+
+from .core import (  # noqa: E402
     ATTEMPT,
     DEMONSTRATION,
     INSTRUCTION,

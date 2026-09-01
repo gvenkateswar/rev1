@@ -52,6 +52,11 @@ def build_parser() -> argparse.ArgumentParser:
                        help="How readily a stretch counts as singing, 0..1 "
                             "(default: 0.50). Raise it if slow, deliberate "
                             "speech is being read as demonstration.")
+    music.add_argument("--denoise", action="store_true",
+                       help="Run a mild high-pass + spectral denoiser before "
+                            "analysis. Try it on hissy phone recordings; "
+                            "compare a few minutes with and without, since "
+                            "heavy processing can smear meend and gamak.")
     music.add_argument("--keep-sung-text", action="store_true",
                        help="Keep Whisper's output over singing. Off by "
                             "default because it is nearly always invented — "
@@ -130,6 +135,7 @@ def main(argv: list[str] | None = None) -> int:
             keep_sung_text=args.keep_sung_text,
             sung_threshold=args.sung_threshold,
             beam_size=args.beam_size,
+            denoise=args.denoise,
             notation=args.notation,
             raga_hints=[
                 name.strip()

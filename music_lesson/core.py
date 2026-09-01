@@ -21,6 +21,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Callable
 
+import numpy as np
+
 from transcriber import audio as _audio
 
 from . import lexicon, raga as _raga, segmentation, swara as _swara, translit
@@ -52,6 +54,7 @@ class LessonSegment:
     language: str = ""              # hi | en | mixed
     sargam: str = ""                # sung phrase in swara notation
     notes: list[Note] = field(default_factory=list)
+    glides: list[_swara.Glide] = field(default_factory=list)   # meends
     raw_text: str = ""              # what Whisper said before repair
     corrections: list[lexicon.Correction] = field(default_factory=list)
 
@@ -73,6 +76,8 @@ class LessonSegment:
         if self.is_sung:
             data["sargam"] = self.sargam
             data["notes"] = [n.to_dict() for n in self.notes]
+            if self.glides:
+                data["meends"] = [g.to_dict() for g in self.glides]
         else:
             data["text"] = self.text
             data["language"] = self.language
@@ -156,6 +161,7 @@ def transcribe_lesson(
     keep_sung_text: bool = False,
     sung_threshold: float = 0.50,
     beam_size: int = 5,
+    denoise: bool = False,
     notation: str = _swara.BHATKHANDE,
     raga_hints: list[str] | None = None,
     progress: ProgressCb | None = None,
@@ -180,7 +186,14 @@ def transcribe_lesson(
 
     progress("Extracting audio", 0.03)
     with _timed(timings, "extract"):
-        wav_path = _audio.extract_audio(src_path)
+        # The optional cleanup targets what actually hurts this pipeline: a
+        # high-pass under the vocal range takes out rumble and handling noise
+        # that bias the energy features, and a mild spectral denoiser lifts
+        # hiss that costs Whisper words. Deliberately mild — an aggressive
+        # denoiser smears exactly the pitch movement (meend, gamak) this tool
+        # exists to read, which is why it is off by default.
+        filters = "highpass=f=60,afftdn=nf=-25" if denoise else None
+        wav_path = _audio.extract_audio(src_path, filters=filters)
 
     try:
         progress("Tracking pitch", 0.10)
@@ -251,7 +264,8 @@ def transcribe_lesson(
 
         progress("Assembling the lesson", 0.90)
         segments = _build_segments(
-            speech_segments, regions, notes, turns, keep_sung_text, notation
+            speech_segments, regions, notes, turns, keep_sung_text, notation,
+            track, tonic_estimate.hz,
         )
         _assign_roles(segments, turns, guru_speaker)
         if fix_vocabulary:
@@ -433,7 +447,8 @@ def _build_segments(
     turns,
     keep_sung_text: bool,
     notation: str = _swara.BHATKHANDE,
-    raga_hints: list[str] | None = None,
+    track: PitchTrack | None = None,
+    tonic_hz: float = 0.0,
 ) -> list[LessonSegment]:
     """Interleave transcribed speech with sung stretches, in time order."""
     segments: list[LessonSegment] = []
@@ -465,12 +480,19 @@ def _build_segments(
         region_notes = _strip_edge_blips(region_notes)
         if not region_notes:
             continue
+        glides = (
+            _swara.detect_glides(track, tonic_hz, region_notes)
+            if track is not None else []
+        )
         segments.append(
             LessonSegment(
                 start=region_notes[0].start, end=region_notes[-1].end,
                 kind=DEMONSTRATION,
-                sargam=_swara.sargam_line(region_notes, style=notation),
+                sargam=_swara.sargam_line(
+                    region_notes, style=notation, glides=glides
+                ),
                 notes=region_notes,
+                glides=glides,
             )
         )
 
@@ -482,14 +504,19 @@ def _strip_edge_blips(notes: list[Note], min_edge: float = 0.15) -> list[Note]:
     """Drop the very short notes at each end of a sung phrase.
 
     Where speech meets singing the tracker emits a sliver as the pitch settles.
-    In the middle of a phrase a sliver is a real note — a fast taan is made of
-    them — but at the edge it is the transition, and it turns a readable sargam
-    line into one that starts on a swara nobody sang.
+    In the middle of a phrase a sliver is a real note — and in a taan *every*
+    note is one, which is why the threshold adapts: the edge only sheds notes
+    clearly shorter than the phrase's own typical note, so a taan whose notes
+    all run 0.11s keeps them all instead of being eaten from both ends.
     """
+    if not notes:
+        return []
+    typical = float(np.median([n.duration for n in notes]))
+    threshold = min(min_edge, 0.6 * typical)
     trimmed = list(notes)
-    while trimmed and trimmed[0].duration < min_edge:
+    while trimmed and trimmed[0].duration < threshold:
         trimmed.pop(0)
-    while trimmed and trimmed[-1].duration < min_edge:
+    while trimmed and trimmed[-1].duration < threshold:
         trimmed.pop()
     return trimmed
 

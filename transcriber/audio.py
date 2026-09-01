@@ -9,7 +9,6 @@ from __future__ import annotations
 import shutil
 import subprocess
 import tempfile
-from pathlib import Path
 
 import numpy as np
 
@@ -27,10 +26,14 @@ def check_ffmpeg() -> None:
         )
 
 
-def extract_audio(src_path: str, out_path: str | None = None) -> str:
+def extract_audio(
+    src_path: str, out_path: str | None = None, filters: str | None = None
+) -> str:
     """Decode any audio/video file to 16 kHz mono WAV and return its path.
 
     If *out_path* is None a temp file is created (caller owns cleanup).
+    *filters* is an optional ffmpeg audio-filter chain (``-af``), e.g. a
+    denoiser for a hissy phone recording.
     """
     check_ffmpeg()
     if out_path is None:
@@ -44,8 +47,10 @@ def extract_audio(src_path: str, out_path: str | None = None) -> str:
         "-ar", str(SAMPLE_RATE),    # 16 kHz
         "-vn",                      # drop any video stream
         "-acodec", "pcm_s16le",
-        str(out_path),
     ]
+    if filters:
+        cmd += ["-af", filters]
+    cmd.append(str(out_path))
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0:
         raise RuntimeError(

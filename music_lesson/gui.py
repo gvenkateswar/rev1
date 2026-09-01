@@ -116,6 +116,12 @@ def _sidebar() -> dict:
             help="Lower catches quiet humming; higher stops slow, deliberate "
                  "speech from being read as a demonstration.",
         )
+        denoise = st.checkbox(
+            "Denoise first", value=False,
+            help="Mild high-pass + spectral denoiser before analysis. Try on "
+                 "hissy phone recordings; heavy processing can smear meend "
+                 "and gamak, so compare with and without.",
+        )
         keep_sung_text = st.checkbox(
             "Keep Whisper's words over singing", value=False,
             help="Usually hallucination — turn on to catch bandish lyrics.",
@@ -145,6 +151,7 @@ def _sidebar() -> dict:
         "fix_vocabulary": fix_vocabulary,
         "extra_terms": [t.strip() for t in extra_terms.split(",") if t.strip()],
         "sung_threshold": sung_threshold,
+        "denoise": denoise,
         "keep_sung_text": keep_sung_text,
         "diarize": diarize,
         "num_speakers": int(num_speakers) or None,
@@ -272,6 +279,7 @@ def main() -> None:
                 extra_terms=settings["extra_terms"],
                 fix_vocabulary=settings["fix_vocabulary"],
                 keep_sung_text=settings["keep_sung_text"],
+                denoise=settings["denoise"],
                 sung_threshold=settings["sung_threshold"],
                 beam_size=settings["beam_size"],
                 notation=settings["notation"],

@@ -173,15 +173,81 @@ def _classify_window(
     else:
         alignment = 0.0
 
-    score = (
+    hold_score = (
         0.50 * held_fraction + 0.20 * sustain
         + 0.15 * voiced_score + 0.15 * alignment
     )
+    # The voiced-run evidence needs more context than one window: a taan's
+    # unbroken voicing spans seconds, and a one-second window can only ever
+    # see one second of it.
+    wide = track.slice(start - 1.0, end + 1.0)
+    run_score = _melodic_run_score(sub, wide, notes, start, end, span)
+    score = max(hold_score, run_score)
     if score >= sung_threshold:
-        if _is_drone(held, sub, track):
+        # Only a *held* window can be the drone; a fast run never is.
+        if hold_score >= run_score and _is_drone(held, sub, track):
             return DRONE, score
         return SUNG, score
     return SPOKEN, score
+
+
+def _melodic_run_score(
+    sub: PitchTrack, wide: PitchTrack, notes: list[Note],
+    start: float, end: float, span: float,
+) -> float:
+    """Recognize taans: fast melodic runs with no sustained note anywhere.
+
+    The held-note path misses them completely — a taan at eight notes a second
+    holds nothing — so this path keys on what a taan does that speech cannot.
+    Sargam and aakar taans are sung on voiced sounds throughout (ga, re, ni,
+    da, ma — every consonant voiced), so the voice runs unbroken for seconds,
+    while speech breaks voicing at every unvoiced stop; and the run's short
+    notes still land on the swara grid, where speech syllables land anywhere.
+    The gate multiplies rather than adds: a long voiced run alone (a fluent
+    sentence) must not pass without the grid evidence.
+    """
+    longest_voiced = _longest_voiced_run(wide)
+    run_gate = float(np.clip((longest_voiced - 0.6) / 0.9, 0.0, 1.0))
+    if run_gate <= 0.0:
+        return 0.0
+
+    inside = [n for n in notes if n.overlap_seconds(start, end) > 0]
+    if not inside:
+        return 0.0
+    coverage = min(
+        sum(n.overlap_seconds(start, end) for n in inside) / span, 1.0
+    )
+    mean_deviation = float(np.mean([abs(n.deviation) for n in inside]))
+    alignment = float(np.clip(1.0 - mean_deviation / 40.0, 0.0, 1.0))
+
+    # Interval structure: a taan moves in clear scale steps (a semitone to a
+    # fourth per note), while a wandering voice drifts in sub-semitone
+    # increments and a leap past a fifth between adjacent short notes is a
+    # tracking artifact, not a melody. Without enough consecutive pairs there
+    # is no run to speak of, whatever the other features say.
+    pairs = [
+        (a, b) for a, b in zip(inside, inside[1:]) if b.start - a.end < 0.3
+    ]
+    if len(pairs) < 3:
+        return 0.0
+    steps = [abs(b.cents - a.cents) for a, b in pairs]
+    step_fraction = float(np.mean([70.0 <= d <= 500.0 for d in steps]))
+
+    raw = float(np.clip(
+        0.4 * coverage + 0.35 * alignment + 0.4 * step_fraction, 0.0, 1.0
+    ))
+    if step_fraction < 0.4:
+        raw *= 0.5
+    return run_gate * raw
+
+
+def _longest_voiced_run(sub: PitchTrack) -> float:
+    """Longest unbroken stretch of voiced frames, in seconds."""
+    longest = current = 0
+    for voiced in sub.voiced:
+        current = current + 1 if voiced else 0
+        longest = max(longest, current)
+    return longest * sub.hop_s
 
 
 def _is_drone(

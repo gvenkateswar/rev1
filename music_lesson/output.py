@@ -164,6 +164,9 @@ def _demonstration_block(result: LessonResult) -> list[str]:
         detail = _shruti_note(segment)
         if detail:
             lines.append(f"  - {detail}")
+        meends = _meend_note(segment)
+        if meends:
+            lines.append(f"  - {meends}")
         # A phrase with a steady pulse gets the notebook treatment: one cell
         # per matra, sustain dashes, vibhag bars. An alaap gets none, because
         # laying an unmetered line on a grid would be inventing rhythm.
@@ -204,6 +207,24 @@ def _shruti_note(segment: LessonSegment, threshold: float = 20.0) -> str:
         for n in sorted(interesting, key=lambda n: -n.duration)[:3]
     ]
     return "held off equal temperament: " + ", ".join(parts)
+
+
+def _meend_note(segment: LessonSegment) -> str:
+    """Name each meend: which swaras it connects and how long it takes.
+
+    Rendered separately from the sargam line (where it is just a tilde)
+    because the glide is often the whole point of the demonstration.
+    """
+    if not segment.glides:
+        return ""
+    parts = []
+    for glide in segment.glides:
+        if glide.index + 1 >= len(segment.notes):
+            continue
+        a = segment.notes[glide.index]
+        b = segment.notes[glide.index + 1]
+        parts.append(f"{a.full_name} → {b.full_name} ({glide.duration:.1f}s)")
+    return "meend: " + ", ".join(parts) if parts else ""
 
 
 def _drill_block(result: LessonResult, gap: float = 6.0) -> list[str]:

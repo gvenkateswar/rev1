@@ -23,7 +23,7 @@ ways:
 
 | What Whisper does to a lesson | What this does instead |
 |---|---|
-| Hallucinates sentences over alaap — it is a speech model, and singing is not silence, so it invents words to fill it | Classifies sung stretches from pitch first and only decodes the spoken ones |
+| Hallucinates sentences over alaap — it is a speech model, and singing is not silence, so it invents words to fill it | Classifies sung stretches from pitch first — sustained singing by its held notes, **taans by their unbroken voicing and scale-step motion** — and only decodes the spoken ones |
 | Throws away the actual musical content: the notes | Writes every sung phrase as sargam against your Sa in Bhatkhande notation (komal underlined, octave dots, `M'` for teevra Ma), with the cents each swara was held off equal temperament — and when a phrase has a steady pulse, lays it on a matra grid with vibhag bars and sustain dashes, like a notebook |
 | Picks one language for the file, so a Hindi/English sentence comes out half-wrong | Re-detects the language per window **within an allow-list you control** (default Hindi/English/Bengali) — a window the detector tags as Tibetan, Urdu or Greek is re-decoded pinned to Hindi with a Devanagari prompt, so Hindi comes out in Devanagari, with a Roman companion line so you can read it while singing |
 | Has barely heard the vocabulary: "bandish" → "band dish", "teentaal" → "tea total", "Raag Yaman" → "raga man" | Injects the domain glossary into *every* decoding window (`hotwords`, not `initial_prompt` — that one only conditions the first 30 seconds), then repairs what still came out wrong, auditably |
@@ -175,6 +175,7 @@ inference is already what faster-whisper uses; there is no MPS path.
 | `--term WORD` | Extra vocabulary to prime the decoder (repeatable) | — |
 | `--sung-threshold` | How readily a stretch counts as singing, 0..1 | `0.50` |
 | `--keep-sung-text` | Keep Whisper's words over singing (bandish lyrics) | off |
+| `--denoise` | Mild high-pass + spectral denoiser before analysis | off |
 | `--no-vocabulary-fix` | Skip the Hindustani vocabulary repair | off |
 | `--no-speakers` | Skip diarization (faster, no Guru/Student labels) | off |
 | `--guru LABEL` | Which raw speaker is the guru, e.g. `'Speaker 2'` | whoever talks most |
@@ -257,6 +258,18 @@ entirely and is the fastest option.
 The display follows the conventions of the companion handwritten-notes
 project (its accumulated correction rules ride along as the spec):
 
+- **Taans** — a fast run holds nothing, so it needs its own evidence: sargam
+  and aakar syllables are voiced throughout (ga, re, ni, da, ma — every
+  consonant voiced), so the voice runs unbroken for seconds where speech
+  breaks at every unvoiced stop; the run's short notes still land on the
+  swara grid; and it moves in clear scale steps where a wandering voice
+  drifts in sub-semitone increments. All three must agree before a stretch
+  counts as a taan.
+- **Meend** — the frames between two held notes are checked for continuous,
+  voiced travel that spans a real interval and heads where it lands; a
+  detected glide renders as a tilde in the sargam (`S~G R`) and is named
+  under the demonstration ("meend: Sa → Ga (0.4s)"). Note-joins inside a
+  taan are articulation, not ornament, and stay unmarked.
 - **Swaras** — Bhatkhande: komal is the letter underlined (`R̲ G̲ D̲ N̲`), taar
   saptak a dot above (`Ṡ Ṙ Ġ Ṁ Ṗ Ḋ Ṅ`), mandra a dot below (`Ṣ Ṛ P̣ Ḍ Ṇ`),
   teevra Ma is `M'`, and marks stack for komal-in-register (`Ġ̲`). Sa and Pa
@@ -308,6 +321,12 @@ JSON export and counted in the run's notices, never silently deleted.
 - **Tala is not detected.** Sam, matra and laya are picked up only when
   somebody says them. Detecting the cycle from tabla would be a real addition
   and is not here.
+- **Noise reduction is opt-in, not automatic.** The pitch tracker is fairly
+  robust to broadband noise, so hiss mostly costs Whisper words, not swaras.
+  `--denoise` (or the GUI checkbox) runs a mild high-pass plus spectral
+  denoiser first — worth trying on a hissy phone recording, but compare a few
+  minutes with and without: heavy processing smears exactly the meend and
+  gamak this tool exists to read.
 - **Two voices, singing, is hard for diarization.** Resemblyzer embeds a sung
   voice poorly; if the guru/student labels look wrong, use `--guru 'Speaker 2'`
   or `--no-speakers`.
@@ -318,7 +337,7 @@ JSON export and counted in the run's notices, never silently deleted.
 python3 -m unittest discover -s tests -v
 ```
 
-81 tests, no model downloads and no network: everything runs against
+89 tests, no model downloads and no network: everything runs against
 synthesized audio whose correct answer is known by construction — a phrase sung
 at a known Sa must come back as the sargam that was synthesized, speech must
 not be labelled as singing, and the whole pipeline is exercised end to end with

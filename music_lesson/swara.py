@@ -422,15 +422,90 @@ def _merge_repeated(notes: list[Note], gap: float = 0.06) -> list[Note]:
     return merged
 
 
+@dataclass
+class Glide:
+    """A meend: continuous pitch travel connecting two held notes.
+
+    The note segmenter drops the frames between two stable runs because they
+    are inside no stability band — but for this music those frames are not
+    debris, they are the ornament. A glide is claimed only when the travel is
+    voiced nearly throughout, spans a real interval, and moves toward where it
+    lands: the difference between a meend and a breath before a new phrase.
+    """
+
+    index: int          # connects notes[index] -> notes[index + 1]
+    cents: float        # signed span of the travel
+    duration: float
+
+    def to_dict(self) -> dict:
+        return {
+            "after_note": self.index,
+            "cents": round(self.cents, 1),
+            "duration": round(self.duration, 3),
+        }
+
+
+def detect_glides(
+    track: PitchTrack,
+    tonic_hz: float,
+    notes: list[Note],
+    min_span_cents: float = 120.0,
+    min_duration: float = 0.08,
+    max_duration: float = 1.0,
+) -> list[Glide]:
+    """Find the meends between consecutive notes of one phrase.
+
+    The duration window matters at both ends: under *min_duration* the travel
+    is just how one note ends and the next begins (a taan is made of those),
+    and over *max_duration* the voice let go and started again.
+    """
+    glides: list[Glide] = []
+    if tonic_hz <= 0:
+        return glides
+    for index in range(len(notes) - 1):
+        first, second = notes[index], notes[index + 1]
+        gap = second.start - first.end
+        if not (min_duration <= gap <= max_duration):
+            continue
+        interval = second.cents - first.cents
+        if abs(interval) < min_span_cents:
+            continue
+        between = track.slice(first.end, second.start)
+        if len(between) < 3 or float(between.voiced.mean()) < 0.7:
+            continue
+        cents = hz_to_cents(between.f0, tonic_hz)
+        values = cents[~np.isnan(cents)]
+        if len(values) < 3:
+            continue
+        travelled = float(values[-1] - values[0])
+        # The travel must head where it lands, and cover most of the interval.
+        if travelled * interval <= 0 or abs(travelled) < 0.5 * abs(interval):
+            continue
+        glides.append(Glide(index=index, cents=interval, duration=gap))
+    return glides
+
+
 def sargam_line(
-    notes: list[Note], max_notes: int = 64, style: str = BHATKHANDE
+    notes: list[Note],
+    max_notes: int = 64,
+    style: str = BHATKHANDE,
+    glides: list["Glide"] | None = None,
 ) -> str:
-    """Render notes as a readable sargam phrase, e.g. ``N\u0332 R G M' D Ṡ``."""
+    """Render notes as a readable sargam phrase, e.g. ``N\u0332 R G M' D Ṡ``.
+
+    A meend renders as a tilde joining the two notes it connects: ``S~G R``
+    is a glide from Sa up to Ga, then Re articulated afresh.
+    """
     if not notes:
         return ""
-    names = [n.label(style) for n in notes[:max_notes]]
+    joined = {g.index for g in (glides or [])}
+    parts: list[str] = []
+    for i, note in enumerate(notes[:max_notes]):
+        parts.append(note.label(style))
+        if i < len(notes) - 1:
+            parts.append("~" if i in joined else " ")
     tail = " …" if len(notes) > max_notes else ""
-    return " ".join(names) + tail
+    return "".join(parts) + tail
 
 
 def swara_weights(notes: list[Note]) -> dict[int, float]:

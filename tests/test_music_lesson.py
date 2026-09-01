@@ -932,5 +932,158 @@ class TimingDisplayTests(unittest.TestCase):
 
 
 
+
+def taan(semitones: list[int], note_s: float = 0.13, glide: float = 0.025,
+         amplitude: float = 0.3, tonic: float = SA) -> np.ndarray:
+    """A fast melodic run: short notes joined by tiny glides, one breath.
+
+    This is the singing the held-note features miss entirely — nothing is
+    sustained, the voice never stops — and it is most of what a taan-heavy
+    lesson contains.
+    """
+    freqs = []
+    for i, semitone in enumerate(semitones):
+        freq = tonic * 2 ** (semitone / 12)
+        freqs.append(np.full(int((note_s - glide) * SR), freq))
+        if i + 1 < len(semitones):
+            nxt = tonic * 2 ** (semitones[i + 1] / 12)
+            freqs.append(np.geomspace(freq, nxt, int(glide * SR)))
+    phase = np.cumsum(2 * np.pi * np.concatenate(freqs) / SR)
+    return _harmonic(phase, amplitude)
+
+
+TAAN_RUN = [0, 2, 3, 5, 7, 8, 11, 12, 11, 8, 7, 5, 3, 2, 0, -1,
+            0, 2, 3, 5, 7, 8, 11, 12, 11, 8, 7, 5, 3, 2, 0, 0]
+
+
+class TaanTests(unittest.TestCase):
+    """Fast runs are singing, even though they hold nothing."""
+
+    def test_a_taan_is_classified_sung_not_spoken(self):
+        for seed in (3, 11, 42):
+            with self.subTest(seed=seed):
+                rng = np.random.default_rng(seed)
+                parts = [speak(6.0, rng), taan(TAAN_RUN), speak(4.0, rng)]
+                audio = np.concatenate(parts)
+                audio = audio + tanpura(len(audio))
+                boundaries = np.cumsum([0.0] + [len(p) / SR for p in parts])
+
+                track = track_pitch(audio, SR)
+                regions = classify_regions(track, segment_notes(track, SA), SA)
+
+                self.assertEqual([r.kind for r in regions],
+                                 [SPOKEN, SUNG, SPOKEN])
+                self.assertAlmostEqual(regions[1].start, boundaries[1], delta=0.7)
+                self.assertAlmostEqual(regions[1].end, boundaries[2], delta=0.7)
+
+    def test_the_taan_notes_come_back_as_sargam(self):
+        audio = taan(TAAN_RUN)
+        track = track_pitch(audio + tanpura(len(audio)), SR)
+        notes = segment_notes(track, SA)
+        # Nearly every note of the run survives, in order.
+        self.assertGreaterEqual(len(notes), 0.85 * len(TAAN_RUN))
+        line = sargam_line(notes, style="ascii")
+        self.assertIn("R g m P d N S'", line)      # the Kirwani ascent
+
+    def test_edge_stripping_adapts_and_does_not_eat_the_taan(self):
+        from music_lesson.core import _strip_edge_blips
+
+        audio = taan(TAAN_RUN)
+        track = track_pitch(audio + tanpura(len(audio)), SR)
+        notes = segment_notes(track, SA)
+        kept = _strip_edge_blips(notes)
+        # Every note is ~0.11s; a fixed 0.15s edge rule would delete them all.
+        self.assertGreaterEqual(len(kept), len(notes) - 2)
+
+    def test_unbroken_voicing_alone_never_fires_the_run_path(self):
+        # The adversarial case for the voiced-run feature: seconds of unbroken
+        # voicing whose pitch drifts without stepping like a melody. The run
+        # path specifically must stay silent on it — voicing alone is not a
+        # taan. (The hold path may still score a slow siren's genuinely held
+        # pitches; that judgement predates the run path and is not under test.)
+        from music_lesson.segmentation import _melodic_run_score
+
+        t = np.arange(int(4.0 * SR)) / SR
+        wander = 143.0 * (
+            1 + 0.15 * np.sin(2 * np.pi * 0.31 * t)
+            + 0.09 * np.sin(2 * np.pi * 0.73 * t + 1.1)
+        )
+        audio = _harmonic(np.cumsum(2 * np.pi * wander / SR), 0.3)
+        track = track_pitch(audio, SR)
+        notes = segment_notes(track, SA)
+        for start in (0.5, 1.5, 2.5):
+            sub = track.slice(start, start + 1.0)
+            wide = track.slice(start - 1.0, start + 2.0)
+            score = _melodic_run_score(sub, wide, notes, start, start + 1.0, 1.0)
+            self.assertLess(score, 0.5, f"run path fired at {start}s")
+
+
+
+
+class MeendTests(unittest.TestCase):
+    def _audio_with_meend(self):
+        f_s, f_g, f_r = SA, SA * 2 ** (4 / 12), SA * 2 ** (2 / 12)
+        segs = [
+            np.full(int(0.6 * SR), f_s),
+            np.geomspace(f_s, f_g, int(0.35 * SR)),   # the meend
+            np.full(int(0.6 * SR), f_g),
+            np.zeros(int(0.15 * SR)),                 # a breath: not a meend
+            np.full(int(0.5 * SR), f_r),
+        ]
+        freq = np.concatenate(segs)
+        voiced = freq > 0
+        phase = np.cumsum(2 * np.pi * np.where(voiced, freq, 1) / SR)
+        return np.where(voiced, _harmonic(phase, 0.3), 0.0)
+
+    def test_a_glide_is_detected_and_a_breath_is_not(self):
+        from music_lesson.swara import detect_glides
+
+        audio = self._audio_with_meend()
+        track = track_pitch(audio + tanpura(len(audio)), SR)
+        notes = segment_notes(track, SA)
+        glides = detect_glides(track, SA, notes)
+
+        self.assertEqual(len(glides), 1)
+        self.assertEqual(glides[0].index, 0)          # S -> G, not G -> R
+        self.assertAlmostEqual(glides[0].cents, 400.0, delta=60.0)
+
+    def test_the_sargam_line_joins_glided_notes_with_a_tilde(self):
+        from music_lesson.swara import detect_glides
+
+        audio = self._audio_with_meend()
+        track = track_pitch(audio + tanpura(len(audio)), SR)
+        notes = segment_notes(track, SA)
+        glides = detect_glides(track, SA, notes)
+
+        self.assertEqual(
+            sargam_line(notes, style="ascii", glides=glides), "S~G R"
+        )
+
+    def test_taan_transitions_are_too_quick_to_count_as_meend(self):
+        from music_lesson.swara import detect_glides
+
+        audio = taan(TAAN_RUN)
+        track = track_pitch(audio + tanpura(len(audio)), SR)
+        notes = segment_notes(track, SA)
+        # 25ms note-joins are articulation, not ornament.
+        self.assertEqual(detect_glides(track, SA, notes), [])
+
+    def test_meends_reach_the_practice_sheet(self):
+        from music_lesson.core import DEMONSTRATION, LessonSegment
+        from music_lesson.output import _meend_note
+        from music_lesson.swara import Glide, Note
+
+        segment = LessonSegment(
+            0.0, 2.0, DEMONSTRATION,
+            notes=[Note(0.0, 0.6, 0, 0, 0.0, 0.0, 0.9),
+                   Note(0.95, 1.55, 4, 0, 400.0, 0.0, 0.9)],
+            glides=[Glide(index=0, cents=400.0, duration=0.35)],
+        )
+        note = _meend_note(segment)
+        self.assertIn("Sa", note)
+        self.assertIn("Ga", note)
+
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

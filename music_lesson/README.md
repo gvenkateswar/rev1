@@ -140,6 +140,15 @@ instead of committing an hour: expand "Preview & pick a section" in the GUI
 (waveform + range slider + player), or `--start 12:30 --end 15:00` on the CLI.
 Timestamps in the output stay true to the full recording.
 
+One cost is invisible and was the worst offender on real lesson audio:
+Whisper's retry ladder. Any window whose output scores "low quality" is
+silently re-decoded at up to six rising temperatures — and on this material
+(music bleed, accented code-switched Hindi) most windows score low, so the
+decode quietly ran several times over, landing at ~4x slower than realtime.
+The ladder is now one retry rung, kept only for the failure it genuinely
+fixes (repetition loops); "the model is unsure" no longer means "decode it
+all again".
+
 To go faster still: `--beam-size 1` (roughly 1.5-2x), `--no-speakers`, and a
 smaller model. Selecting a single language in the picker also skips per-window
 detection and the off-list re-decode pass. On Apple silicon, plain CPU

@@ -126,6 +126,16 @@ def transcribe_speech(
         # with the segmenter in front, because a tanpura is not silence.
         "condition_on_previous_text": False,
         "no_speech_threshold": 0.6,
+        # Tame the retry ladder. By default every window whose output scores
+        # below quality thresholds is silently re-decoded at up to six rising
+        # temperatures — and on lesson audio (music bleed, accented
+        # code-switched Hindi) most windows score "low quality", so the whole
+        # decode quietly runs several times over. One retry rung stays for the
+        # case it genuinely fixes (compression-ratio catches repetition
+        # loops); the near-disabled logprob trigger stops "the model is
+        # unsure" from meaning "decode it all again".
+        "temperature": [0.0, 0.6],
+        "log_prob_threshold": -2.0,
     }
     if multilingual and language is None:
         kwargs["multilingual"] = True
@@ -268,6 +278,8 @@ def _redecode_off_list(
             hotwords=hotwords_devanagari if target == "hi" else None,
             condition_on_previous_text=False,
             no_speech_threshold=0.6,
+            temperature=[0.0, 0.6],
+            log_prob_threshold=-2.0,
             clip_timestamps=_format_clips(spans),
         )
         redecoded = [
@@ -356,7 +368,8 @@ def _call_with_supported_kwargs(model, wav_path: str, kwargs: dict):
 
 def _unsupported_kwarg(message: str, kwargs: dict) -> str | None:
     for name in ("multilingual", "hotwords", "clip_timestamps",
-                 "initial_prompt", "vad_filter"):
+                 "initial_prompt", "vad_filter", "temperature",
+                 "log_prob_threshold"):
         if name in kwargs and name in message:
             return name
     return None

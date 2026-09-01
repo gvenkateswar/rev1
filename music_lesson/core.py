@@ -240,6 +240,17 @@ def transcribe_lesson(
                 f"re-decoded as '{target}'. If one of those languages was "
                 f"real, add it to the language list and re-run."
             )
+        decode_ratio = (
+            timings.get("transcribe", 0.0) / speech.speech_seconds
+            if speech.speech_seconds else 0.0
+        )
+        if decode_ratio > 2.0:
+            notices.append(
+                f"The decode ran at {decode_ratio:.1f}x slower than realtime "
+                f"— more than this model should cost. Check the sidebar says "
+                f"arm64 native (a Rosetta Python is 2-4x slower), close other "
+                f"heavy apps, and try beam width 1 for drafts."
+            )
         speech_segments, junk = _drop_decoder_junk(
             speech_segments, lexicon.hotwords(prompt_terms)
         )

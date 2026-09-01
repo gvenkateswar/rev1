@@ -1137,5 +1137,36 @@ class SectionClipTests(unittest.TestCase):
 
 
 
+
+class DecodeCostTests(unittest.TestCase):
+    def test_the_retry_ladder_is_tamed(self):
+        # Default faster-whisper retries every "low quality" window at up to
+        # six temperatures; on lesson audio most windows are "low quality",
+        # so the ladder must be short and the logprob trigger nearly off.
+        from unittest import mock
+
+        from music_lesson.transcribe import transcribe_speech
+
+        model = mock.Mock()
+        info = mock.Mock(); info.language = "hi"; info.duration = 10.0
+        model.transcribe.return_value = (iter([]), info)
+        transcribe_speech("/tmp/none.wav", model=model, language="hi")
+
+        kwargs = model.transcribe.call_args.kwargs
+        self.assertEqual(kwargs["temperature"], [0.0, 0.6])
+        self.assertEqual(kwargs["log_prob_threshold"], -2.0)
+        self.assertFalse(kwargs["word_timestamps"])
+
+    def test_an_abnormally_slow_decode_is_called_out(self):
+        result = PipelineIntegrationTests(
+            "test_lesson_is_assembled_in_order_with_both_kinds_of_segment"
+        )._run(tonic=SA)
+        # The stubbed decode is instant, so no slowness notice should appear.
+        self.assertFalse(
+            any("slower than realtime" in n for n in result.notices)
+        )
+
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

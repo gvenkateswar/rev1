@@ -25,7 +25,7 @@ ways:
 |---|---|
 | Hallucinates sentences over alaap — it is a speech model, and singing is not silence, so it invents words to fill it | Classifies sung stretches from pitch first and only decodes the spoken ones |
 | Throws away the actual musical content: the notes | Writes every sung phrase as sargam against your Sa in Bhatkhande notation (komal underlined, octave dots, `M'` for teevra Ma), with the cents each swara was held off equal temperament — and when a phrase has a steady pulse, lays it on a matra grid with vibhag bars and sustain dashes, like a notebook |
-| Picks one language for the file, so a Hindi/English sentence comes out half-wrong | Re-detects the language per window, and romanizes the Devanagari so you can read it while singing |
+| Picks one language for the file, so a Hindi/English sentence comes out half-wrong | Re-detects the language per window **within an allow-list you control** (default Hindi/English/Bengali) — a window the detector tags as Tibetan, Urdu or Greek is re-decoded pinned to Hindi with a Devanagari prompt, so Hindi comes out in Devanagari, with a Roman companion line so you can read it while singing |
 | Has barely heard the vocabulary: "bandish" → "band dish", "teentaal" → "tea total", "Raag Yaman" → "raga man" | Injects the domain glossary into *every* decoding window (`hotwords`, not `initial_prompt` — that one only conditions the first 30 seconds), then repairs what still came out wrong, auditably |
 
 ## Install
@@ -170,7 +170,8 @@ inference is already what faster-whisper uses; there is no MPS path.
 | `--notation` | `bhatkhande` (komal underline, octave dots, `M'`) or `ascii` (`.S r M`) | `bhatkhande` |
 | `--model` | Whisper size: tiny/base/small/medium/large-v3 | `small` |
 | `--beam-size` | Whisper beam width; 1 is ~1.5-2x faster | `5` |
-| `--language` | Force `hi` or `en` | detect per window |
+| `--language` | Force ONE language everywhere | — |
+| `--languages` | Allow-list for detection, e.g. `te,en` for Carnatic | `hi,en,bn` |
 | `--term WORD` | Extra vocabulary to prime the decoder (repeatable) | — |
 | `--sung-threshold` | How readily a stretch counts as singing, 0..1 | `0.50` |
 | `--keep-sung-text` | Keep Whisper's words over singing (bandish lyrics) | off |
@@ -238,6 +239,19 @@ sheet cross-references against the notes.
   (`~/.cache/huggingface`) is shared, so switching Pythons re-downloads
   nothing.
 
+## Languages
+
+Per-window detection runs inside an allow-list (GUI: "Languages in the
+recording"; CLI: `--languages`). Default is Hindi + English + Bengali; the
+full picker covers the main Indo-Aryan and Dravidian languages, so a Carnatic
+lesson taught in Telugu or Tamil is `te,en` or `ta,en`. Any window detected
+outside the list — or written in a script outside it — is re-decoded pinned
+to the first non-English language on the list. The Hindi re-decode is
+prompted **in Devanagari**: hotwords bias script as well as vocabulary, and a
+Hindi decode prompted with Latin text answers in romanized Hindi, which is
+exactly the bug this fixes. Selecting a single language skips detection
+entirely and is the fastest option.
+
 ## Notation, rhythm and spelling conventions
 
 The display follows the conventions of the companion handwritten-notes
@@ -304,7 +318,7 @@ JSON export and counted in the run's notices, never silently deleted.
 python3 -m unittest discover -s tests -v
 ```
 
-72 tests, no model downloads and no network: everything runs against
+81 tests, no model downloads and no network: everything runs against
 synthesized audio whose correct answer is known by construction — a phrase sung
 at a known Sa must come back as the sargam that was synthesized, speech must
 not be labelled as singing, and the whole pipeline is exercised end to end with

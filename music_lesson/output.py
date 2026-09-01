@@ -86,6 +86,9 @@ def to_practice_sheet(result: LessonResult) -> str:
     out.extend(_drill_block(result))
     out.extend(_glossary_block(result))
     out.extend(_transcript_block(result))
+    timing = format_timings(result.timings)
+    if timing:
+        out.extend(["", f"*Processing: {timing}.*"])
     return "\n".join(out) + "\n"
 
 
@@ -252,11 +255,28 @@ def _transcript_block(result: LessonResult) -> list[str]:
             label = "sings back" if segment.kind == ATTEMPT else "sings"
             lines.append(f"**{stamp}** {who} *{label}* — `{segment.sargam}`")
         else:
-            lines.append(f"**{stamp}** {who}: {segment.text}")
+            head = f"**{stamp}** {who}:" if who else f"**{stamp}**"
+            lines.append(f"{head} {segment.text}")
             if segment.roman:
                 lines.append(f"> {segment.roman}")
         lines.append("")
     return lines
+
+
+def format_timings(timings: dict[str, float]) -> str:
+    """One line: total first, then every stage that took meaningful time."""
+    if not timings:
+        return ""
+    total = timings.get("total", sum(v for k, v in timings.items() if k != "total"))
+    stages = [
+        f"{name} {_fmt_ts(seconds)}"
+        for name, seconds in timings.items()
+        if name != "total" and seconds >= 0.5
+    ]
+    line = f"ran in {_fmt_ts(total)}"
+    if stages:
+        line += " (" + " · ".join(stages) + ")"
+    return line
 
 
 def render(result: LessonResult, fmt: str) -> str:

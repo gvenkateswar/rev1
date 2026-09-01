@@ -62,8 +62,14 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Whisper size: tiny/base/small/medium/large-v3 "
                              "(default: small — 'base' mangles Hindi).")
     speech.add_argument("--language", default=None,
-                        help="Force a language (hi/en). Default: detect per "
-                             "window, which is what code-switching needs.")
+                        help="Force ONE language everywhere (hi/en/ta/...). "
+                             "Default: detect per window within --languages.")
+    speech.add_argument("--languages", default=None, metavar="CODES",
+                        help="Comma-separated allow-list for per-window "
+                             "detection (default: hi,en,bn). Windows detected "
+                             "outside it are re-decoded as the first "
+                             "non-English entry — e.g. 'te,en' for a Carnatic "
+                             "lesson taught in Telugu.")
     speech.add_argument("--term", action="append", dest="terms", default=[],
                         metavar="WORD",
                         help="Extra vocabulary to prime the decoder with — a "
@@ -109,6 +115,10 @@ def main(argv: list[str] | None = None) -> int:
             args.input,
             whisper_model=args.model,
             language=args.language,
+            languages=(
+                [c for c in args.languages.split(",") if c.strip()]
+                if args.languages else None
+            ),
             tonic=tonic,
             diarize_speakers=not args.no_speakers,
             num_speakers=args.speakers,
@@ -142,13 +152,11 @@ def main(argv: list[str] | None = None) -> int:
             f"the tonic. Re-run with --tonic if it looks wrong.\n"
         )
 
-    if result.timings:
-        parts = " ".join(
-            f"{k}={v:.1f}s" for k, v in result.timings.items() if k != "total"
-        )
-        sys.stderr.write(
-            f"Timing: {parts}  (total {result.timings.get('total', 0):.1f}s)\n"
-        )
+    from .output import format_timings
+
+    timing = format_timings(result.timings)
+    if timing:
+        sys.stderr.write(timing.capitalize() + "\n")
 
     text = render(result, args.format)
     if args.output:

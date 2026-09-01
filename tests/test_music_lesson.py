@@ -818,5 +818,119 @@ class IastDisplayTests(unittest.TestCase):
 
 
 
+
+class LanguageGatingTests(unittest.TestCase):
+    """The allow-list that keeps a Hindi lesson out of Tibetan and Nastaliq."""
+
+    def test_scripts_follow_the_allowed_languages(self):
+        from music_lesson.transcribe import _script_acceptable
+
+        hi_en = ("hi", "en")
+        # Junk shapes taken from a real run: Tibetan marks, CJK, Cyrillic,
+        # polytonic Greek — none of them acceptable under hi+en.
+        for junk in ("\u0f71\u0f78\u0f75\u0f75\u0f52", "\u7e3c\u51ac hello",
+                     ", mitya, \u043a\u043e\u0440, mitha"):
+            self.assertFalse(_script_acceptable(junk, hi_en), junk)
+        self.assertTrue(_script_acceptable("\u0930\u093e\u0917 sing it", hi_en))
+        self.assertTrue(_script_acceptable("plain english", hi_en))
+        # Bengali is fine exactly when Bengali is allowed.
+        bengali = "\u09ac\u09be\u0982\u09b2\u09be"
+        self.assertTrue(_script_acceptable(bengali, ("hi", "en", "bn")))
+        self.assertFalse(_script_acceptable(bengali, hi_en))
+
+    def test_off_list_windows_are_redecoded_as_the_primary(self):
+        from unittest import mock
+
+        from music_lesson.transcribe import SpeechSegment, _redecode_off_list
+
+        segments = [
+            SpeechSegment(0.0, 2.0, "plain english", language="en"),
+            SpeechSegment(3.0, 5.0, "\u0f71\u0f78\u0f75", language="bo"),
+            SpeechSegment(6.0, 8.0, "\u062f\u0644 \u062c\u0627\u0646\u06cc",
+                          language="ur"),
+        ]
+        replacement = mock.Mock()
+        replacement.start, replacement.end = 3.0, 8.0
+        replacement.text = "\u0926\u093f\u0932 \u091c\u093e\u0928\u0940"
+        replacement.words = []
+        replacement.avg_logprob = replacement.no_speech_prob = 0.0
+        model = mock.Mock()
+        model.transcribe.return_value = (iter([replacement]), mock.Mock())
+
+        merged, count, foreign = _redecode_off_list(
+            model, "/tmp/none.wav", segments, ("hi", "en"), "\u0930\u093e\u0917", 5
+        )
+        self.assertEqual(count, 2)
+        self.assertEqual(foreign, ["bo", "ur"])
+        self.assertEqual(model.transcribe.call_args.kwargs["language"], "hi")
+        # The Devanagari prompt goes with the Hindi decode, never the Latin one.
+        self.assertEqual(model.transcribe.call_args.kwargs["hotwords"], "\u0930\u093e\u0917")
+        self.assertEqual([seg.language for seg in merged], ["en", "hi"])
+
+    def test_nothing_flagged_means_no_second_decode(self):
+        from unittest import mock
+
+        from music_lesson.transcribe import SpeechSegment, _redecode_off_list
+
+        model = mock.Mock()
+        merged, count, foreign = _redecode_off_list(
+            model, "/tmp/none.wav",
+            [SpeechSegment(0.0, 2.0, "sab theek hai", language="hi")],
+            ("hi", "en"), None, 5,
+        )
+        self.assertEqual(count, 0)
+        model.transcribe.assert_not_called()
+
+    def test_one_language_anywhere_means_force_it(self):
+        from music_lesson.core import _resolve_languages
+        from music_lesson.transcribe import DEFAULT_ALLOWED_LANGUAGES
+
+        self.assertEqual(_resolve_languages("ta", None), ("ta", ("ta",)))
+        self.assertEqual(_resolve_languages(None, ["hi"]), ("hi", ("hi",)))
+        forced, allowed = _resolve_languages(None, ["te", "en"])
+        self.assertIsNone(forced)
+        self.assertEqual(allowed, ("te", "en"))
+        self.assertEqual(_resolve_languages(None, None),
+                         (None, DEFAULT_ALLOWED_LANGUAGES))
+
+    def test_primary_language_is_the_first_non_english(self):
+        from music_lesson.transcribe import primary_language
+
+        self.assertEqual(primary_language(("hi", "en", "bn")), "hi")
+        self.assertEqual(primary_language(("en", "ta")), "ta")
+        self.assertEqual(primary_language(("en",)), "en")
+
+    def test_devanagari_hotwords_are_actually_devanagari(self):
+        from music_lesson.translit import devanagari_ratio
+
+        self.assertGreater(devanagari_ratio(lexicon.hotwords_devanagari()), 0.95)
+
+
+class TimingDisplayTests(unittest.TestCase):
+    def test_total_leads_and_trivial_stages_are_dropped(self):
+        from music_lesson.output import format_timings
+
+        line = format_timings({
+            "extract": 3.0, "pitch": 41.0, "tonic": 0.2,
+            "transcribe": 754.0, "total": 798.2,
+        })
+        self.assertTrue(line.startswith("ran in 13:18"))
+        self.assertIn("transcribe 12:34", line)
+        self.assertIn("pitch 0:41", line)
+        self.assertNotIn("tonic", line)          # 0.2s is noise, not signal
+
+    def test_empty_timings_render_nothing(self):
+        from music_lesson.output import format_timings
+
+        self.assertEqual(format_timings({}), "")
+
+    def test_the_practice_sheet_carries_the_processing_footer(self):
+        from music_lesson.output import to_practice_sheet
+
+        result = RenderingTests()._result()
+        self.assertIn("Processing: ran in 0:12", to_practice_sheet(result))
+
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

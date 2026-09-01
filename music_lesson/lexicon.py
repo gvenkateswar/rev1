@@ -235,6 +235,21 @@ def hotwords(extra_terms: list[str] | None = None, limit: int = 44) -> str:
     return ", ".join(words[:limit])
 
 
+def hotwords_devanagari() -> str:
+    """The core glossary in Devanagari, for decodes pinned to Hindi.
+
+    Hotwords bias script as well as vocabulary: prompt a Hindi decode with
+    Latin text and Whisper happily answers in romanized Hindi. A re-decode
+    whose entire purpose is producing Devanagari therefore needs its prompt
+    *in* Devanagari.
+    """
+    return (
+        "राग, बंदिश, सरगम, आलाप, तान, मींड, गमक, स्थायी, अंतरा, "
+        "विलंबित, द्रुत, तीनताल, एकताल, लय, कोमल, तीव्र, आरोह, अवरोह, "
+        "पकड़, रियाज़, तानपूरा, स्वर, सम, मात्रा, ख़याल, ठुमरी, तिहाई, घराना"
+    )
+
+
 def correct_text(text: str) -> tuple[str, list[Correction]]:
     """Repair domain vocabulary in *text*; return the text and what changed."""
     if not text.strip():

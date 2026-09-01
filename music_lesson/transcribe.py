@@ -49,7 +49,46 @@ class SpeechResult:
     speech_seconds: float          # audio actually handed to the decoder
     clips: int                     # how many windows that was split across
     dropped_options: list[str]     # kwargs this faster-whisper did not support
-    rescripted: int = 0            # Urdu-script passages re-decoded as Hindi
+    rescripted: int = 0            # off-list windows re-decoded as the primary
+    foreign_languages: list[str] = field(default_factory=list)   # tags seen off-list
+
+
+# The language picker: display name -> Whisper language code. The main
+# South Asian languages (Indo-Aryan and Dravidian), because a lesson archive
+# can hold Hindustani taalim in Hindi/English one day and Carnatic teaching in
+# Telugu or Tamil the next.
+SOUTH_ASIAN_LANGUAGES: dict[str, str] = {
+    "Hindi": "hi", "English": "en", "Bengali": "bn", "Sanskrit": "sa",
+    "Punjabi": "pa", "Marathi": "mr", "Gujarati": "gu",
+    "Urdu (kept in Nastaliq)": "ur", "Tamil": "ta", "Telugu": "te",
+    "Kannada": "kn", "Malayalam": "ml", "Nepali": "ne", "Odia": "or",
+    "Assamese": "as", "Sinhala": "si",
+}
+
+# What a lesson recording is allowed to be unless told otherwise. Left free,
+# Whisper's per-window detector on accented, code-switched audio with singing
+# bleeding through picks Tibetan, Vietnamese or Greek for entire windows and
+# decodes them in those scripts. Note "ur" is absent: spoken Urdu IS the Hindi
+# the guru is speaking, and leaving it off the list is what routes those
+# windows to a Devanagari re-decode.
+DEFAULT_ALLOWED_LANGUAGES: tuple[str, ...] = ("hi", "en", "bn")
+
+# Which Unicode letter ranges each language's text should sit in. Latin is
+# always acceptable (English, and romanized asides inside any language).
+_SCRIPT_RANGES: dict[str, tuple[tuple[int, int], ...]] = {
+    "hi": ((0x0900, 0x097F),), "mr": ((0x0900, 0x097F),),
+    "sa": ((0x0900, 0x097F),), "ne": ((0x0900, 0x097F),),
+    "bn": ((0x0980, 0x09FF),), "as": ((0x0980, 0x09FF),),
+    "pa": ((0x0A00, 0x0A7F),), "gu": ((0x0A80, 0x0AFF),),
+    "or": ((0x0B00, 0x0B7F),), "ta": ((0x0B80, 0x0BFF),),
+    "te": ((0x0C00, 0x0C7F),), "kn": ((0x0C80, 0x0CFF),),
+    "ml": ((0x0D00, 0x0D7F),), "si": ((0x0D80, 0x0DFF),),
+    "ur": ((0x0600, 0x06FF), (0x0750, 0x077F)),
+    "en": (),
+}
+
+_LATIN_RANGES = ((0x0041, 0x024F), (0x1E00, 0x1EFF))
+
 
 
 def transcribe_speech(
@@ -60,6 +99,8 @@ def transcribe_speech(
     initial_prompt: str | None = None,
     clip_spans: list[tuple[float, float]] | None = None,
     multilingual: bool = True,
+    allowed_languages: tuple[str, ...] = DEFAULT_ALLOWED_LANGUAGES,
+    hotwords_devanagari: str | None = None,
     beam_size: int = 5,
     progress: Callable[[float], None] | None = None,
     model=None,
@@ -122,10 +163,11 @@ def transcribe_speech(
         if progress and total > 0:
             progress(min(_speech_elapsed(float(seg.end), clip_spans) / total, 1.0))
 
-    rescripted = 0
+    rescripted, foreign = 0, []
     if language is None and "clip_timestamps" not in dropped:
-        segments, rescripted = _redecode_arabic_script_as_hindi(
-            model, wav_path, segments, hotwords, beam_size
+        segments, rescripted, foreign = _redecode_off_list(
+            model, wav_path, segments, tuple(allowed_languages),
+            hotwords_devanagari, beam_size,
         )
 
     return SpeechResult(
@@ -135,45 +177,79 @@ def transcribe_speech(
         clips=len(clip_spans) if clip_spans else 1,
         dropped_options=dropped,
         rescripted=rescripted,
+        foreign_languages=foreign,
     )
 
 
-# Languages Whisper writes in Arabic-derived script. Urdu is the one that
-# actually shows up: spoken Hindi and Urdu are the same language, so the
-# per-window detector flips between them freely — and then writes the Hindi
-# your guru spoke in Nastaliq, which is not the script a Devanagari-reading
-# student wants (and the romanizer only reads Devanagari).
-_ARABIC_SCRIPT_LANGS = frozenset({"ur", "ar", "fa", "ps", "sd", "ug"})
+def primary_language(allowed: tuple[str, ...]) -> str:
+    """The language off-list windows are re-decoded as: the first non-English."""
+    for code in allowed:
+        if code != "en":
+            return code
+    return "en"
 
 
-def _has_arabic_script(text: str) -> bool:
-    return any(
-        "\u0600" <= ch <= "\u06ff" or "\u0750" <= ch <= "\u077f"
-        for ch in text
-    )
+def _letter_in_ranges(ch: str, ranges) -> bool:
+    point = ord(ch)
+    return any(low <= point <= high for low, high in ranges)
 
 
-def _redecode_arabic_script_as_hindi(
-    model, wav_path: str, segments: list[SpeechSegment],
-    hotwords: str | None, beam_size: int,
-) -> tuple[list[SpeechSegment], int]:
-    """Re-decode the windows that came out in Nastaliq, forced to Hindi.
+def _script_acceptable(text: str, allowed: tuple[str, ...]) -> bool:
+    """True if the text sits in the scripts the allowed languages imply.
 
-    Same audio, same model, language pinned to "hi": the decode lands in
-    Devanagari instead. Costs one extra encoder pass per affected stretch —
-    cheap, because only the flagged spans are clipped, and worth it because
-    the alternative is transliterating vowel-less Nastaliq, which cannot be
-    done well.
+    Counted over characters, not just letters: Whisper's junk output includes
+    symbol blocks (Tibetan marks, box-drawing, U+FFFD) that ``isalpha`` never
+    sees, and a window made of nothing but those must fail this check.
+    """
+    ok_ranges = list(_LATIN_RANGES)
+    for code in allowed:
+        ok_ranges.extend(_SCRIPT_RANGES.get(code, ()))
+
+    good = bad = 0
+    for ch in text:
+        if ch.isascii() or _letter_in_ranges(ch, ok_ranges):
+            if ch.isalpha():
+                good += 1
+        elif ord(ch) >= 0x0370 and not ch.isspace():
+            bad += 1                # Greek and beyond: some other script's glyph
+    if bad == 0:
+        return True
+    return bad / max(good + bad, 1) < 0.2
+
+
+def _redecode_off_list(
+    model,
+    wav_path: str,
+    segments: list[SpeechSegment],
+    allowed: tuple[str, ...],
+    hotwords_devanagari: str | None,
+    beam_size: int,
+) -> tuple[list[SpeechSegment], int, list[str]]:
+    """Re-decode windows whose language or script fell outside the list.
+
+    Two things flag a window: a language tag not in *allowed* (the detector
+    picked Tibetan for a Hindi sentence), or text whose letters sit outside
+    the allowed scripts (junk glyphs under an allowed tag). Flagged spans are
+    decoded again with the language pinned to the primary allowed language.
+
+    The re-decode's own prompt matters more than it looks: hotwords bias not
+    just vocabulary but *script* — a Devanagari decode prompted with Latin
+    text tends to answer in Latin. So the Hindi pass gets Devanagari hotwords,
+    and other languages get none rather than a wrong-script prompt.
     """
     flagged = [
         seg for seg in segments
-        if seg.language in _ARABIC_SCRIPT_LANGS or _has_arabic_script(seg.text)
+        if seg.language not in allowed
+        or not _script_acceptable(seg.text, allowed)
     ]
     if not flagged:
-        return segments, 0
+        return segments, 0, []
+
+    foreign = sorted({seg.language for seg in flagged if seg.language})
+    target = primary_language(allowed)
 
     spans: list[tuple[float, float]] = []
-    for seg in flagged:
+    for seg in sorted(flagged, key=lambda s: s.start):
         start, end = max(0.0, seg.start - 0.2), seg.end + 0.2
         if spans and start <= spans[-1][1]:
             spans[-1] = (spans[-1][0], max(spans[-1][1], end))
@@ -183,10 +259,10 @@ def _redecode_arabic_script_as_hindi(
     try:
         seg_iter, _info = model.transcribe(
             wav_path,
-            language="hi",
+            language=target,
             word_timestamps=True,
             beam_size=beam_size,
-            hotwords=hotwords,
+            hotwords=hotwords_devanagari if target == "hi" else None,
             condition_on_previous_text=False,
             no_speech_threshold=0.6,
             clip_timestamps=_format_clips(spans),
@@ -200,7 +276,7 @@ def _redecode_arabic_script_as_hindi(
                     for w in (seg.words or [])
                     if w.start is not None and w.end is not None
                 ],
-                language="hi",
+                language=target,
                 avg_logprob=float(getattr(seg, "avg_logprob", 0.0) or 0.0),
                 no_speech_prob=float(getattr(seg, "no_speech_prob", 0.0) or 0.0),
             )
@@ -208,12 +284,12 @@ def _redecode_arabic_script_as_hindi(
             if seg.text.strip()
         ]
     except TypeError:
-        return segments, 0          # a signature this old was already reported
+        return segments, 0, []      # a signature this old was already reported
 
     flagged_ids = {id(seg) for seg in flagged}
     merged = [seg for seg in segments if id(seg) not in flagged_ids] + redecoded
     merged.sort(key=lambda seg: seg.start)
-    return merged, len(flagged)
+    return merged, len(flagged), foreign
 
 
 def _format_clips(spans: list[tuple[float, float]]) -> str:

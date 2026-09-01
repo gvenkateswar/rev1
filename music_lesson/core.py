@@ -144,6 +144,7 @@ def transcribe_lesson(
     *,
     whisper_model: str = "small",
     language: str | None = None,
+    languages: list[str] | None = None,
     tonic: float | None = None,
     diarize_speakers: bool = True,
     num_speakers: int | None = None,
@@ -164,7 +165,12 @@ def transcribe_lesson(
     *tonic* overrides Sa detection (in Hz) — worth using, since you know your
     own Sa and the detector only guesses. *raga_hints* are raga names you
     expect in the lesson: they prime the decoder and are scored against the
-    sung notes, and a confident fit leads the scale summary. *keep_sung_text* keeps whatever
+    sung notes, and a confident fit leads the scale summary. *languages* is
+    the allow-list of what the recording can be (Whisper codes; default
+    hi/en/bn): any window the detector tags outside it — or writes in a script
+    outside it — is re-decoded pinned to the first non-English entry, which is
+    how spoken Hindi stops coming out in Nastaliq, Tibetan or Greek. Passing
+    exactly one language skips detection and forces it everywhere. *keep_sung_text* keeps whatever
     Whisper produced over singing, which is normally hallucination but is
     occasionally a bandish lyric worth reading.
     """
@@ -194,19 +200,25 @@ def transcribe_lesson(
             )
 
         prompt_terms = list(raga_hints or []) + list(extra_terms or [])
+        forced, allowed = _resolve_languages(language, languages)
         with _timed(timings, "transcribe"):
             speech = _run_whisper(
-                wav_path, regions, whisper_model, language, prompt_terms,
-                beam_size, progress,
+                wav_path, regions, whisper_model, forced, allowed,
+                prompt_terms, beam_size, progress,
             )
         speech_segments = speech.segments
         detected_language = speech.language
         notices = _transcription_notices(speech)
         if speech.rescripted:
+            from .transcribe import primary_language
+
+            seen = ", ".join(speech.foreign_languages) or "unknown"
+            target = primary_language(allowed)
             notices.append(
-                f"{speech.rescripted} passage(s) came out in Urdu/Nastaliq "
-                f"script and were re-decoded as Hindi so they read in "
-                f"Devanagari."
+                f"{speech.rescripted} window(s) came out in languages or "
+                f"scripts outside your list (detector saw: {seen}) and were "
+                f"re-decoded as '{target}'. If one of those languages was "
+                f"real, add it to the language list and re-run."
             )
         speech_segments, junk = _drop_decoder_junk(
             speech_segments, lexicon.hotwords(prompt_terms)
@@ -291,11 +303,34 @@ def _resolve_tonic(track: PitchTrack, override: float | None) -> TonicEstimate:
     return _swara.detect_tonic(track, preliminary)
 
 
+def _resolve_languages(
+    language: str | None, languages: list[str] | None
+) -> tuple[str | None, tuple[str, ...]]:
+    """(forced single language, allow-list) from the two ways of asking.
+
+    One language named anywhere means force it — detection has nothing left
+    to decide and skipping it is faster. Otherwise the list constrains the
+    per-window detector via the off-list re-decode.
+    """
+    from .transcribe import DEFAULT_ALLOWED_LANGUAGES
+
+    if language:
+        return language, (language,)
+    if languages:
+        cleaned = tuple(dict.fromkeys(c.strip().lower() for c in languages if c.strip()))
+        if len(cleaned) == 1:
+            return cleaned[0], cleaned
+        if cleaned:
+            return None, cleaned
+    return None, DEFAULT_ALLOWED_LANGUAGES
+
+
 def _run_whisper(
     wav_path: str,
     regions: list[Region],
     model_name: str,
     language: str | None,
+    allowed_languages: tuple[str, ...],
     extra_terms: list[str] | None,
     beam_size: int,
     progress: ProgressCb,
@@ -327,6 +362,8 @@ def _run_whisper(
         hotwords=lexicon.hotwords(extra_terms),
         initial_prompt=lexicon.whisper_prompt(extra_terms),
         clip_spans=spans or None,
+        allowed_languages=allowed_languages,
+        hotwords_devanagari=lexicon.hotwords_devanagari(),
         beam_size=beam_size,
         progress=on_progress,
     )

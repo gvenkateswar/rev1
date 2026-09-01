@@ -44,11 +44,11 @@ TALAS: dict[str, tuple[int, list[int]]] = {
 
 SUSTAIN = "—"                # their notation: attack + held matras (N — — —)
 
-_MIN_ONSETS = 6
+_MIN_ONSETS = 8
 _MIN_SPAN = 2.5              # seconds of phrase before a pulse claim
 _PERIOD_LOW = 0.18           # 333 BPM: faster than any matra worth writing
 _PERIOD_HIGH = 1.25          # 48 BPM: ati-vilambit territory
-_CONFIDENCE_FLOOR = 0.70     # below this, the phrase is treated as unmetered
+_CONFIDENCE_FLOOR = 0.75     # below this, the phrase is treated as unmetered
 
 
 @dataclass

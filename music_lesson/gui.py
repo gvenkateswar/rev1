@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import time
 
 import streamlit as st
 
@@ -18,16 +19,20 @@ import streamlit as st
 try:
     from .core import ATTEMPT, transcribe_lesson
     from .output import render, to_practice_sheet
+    from .output import format_timings
     from .raga import all_raga_names
     from .runtime import environment_summary
     from .swara import parse_tonic
+    from .transcribe import SOUTH_ASIAN_LANGUAGES
 except ImportError:
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from music_lesson.core import ATTEMPT, transcribe_lesson
     from music_lesson.output import render, to_practice_sheet
+    from music_lesson.output import format_timings
     from music_lesson.raga import all_raga_names
     from music_lesson.runtime import environment_summary
     from music_lesson.swara import parse_tonic
+    from music_lesson.transcribe import SOUTH_ASIAN_LANGUAGES
 
 _SPEAKER_COLORS = ["#b45309", "#1d4ed8", "#059669", "#7c3aed", "#db2777"]
 
@@ -62,10 +67,16 @@ def _sidebar() -> dict:
             help="'small' is the floor for Hindi. 'medium' is noticeably "
                  "better on code-switching if you can wait.",
         )
-        language = st.selectbox(
-            "Language", ["auto (code-switching)", "hi", "en"], index=0,
-            help="Auto re-detects per window, which is what a Hindi/English "
-                 "lesson needs.",
+        language_names = st.multiselect(
+            "Languages in the recording",
+            list(SOUTH_ASIAN_LANGUAGES),
+            default=["Hindi", "English"],
+            help="The allow-list for per-window language detection. A window "
+                 "detected outside it (or written in another script) is "
+                 "re-decoded as the first non-English pick — that is what "
+                 "keeps Hindi in Devanagari instead of Nastaliq or worse. "
+                 "For a Carnatic lesson pick Telugu/Tamil/Kannada + English. "
+                 "Picking exactly one language forces it everywhere.",
         )
         beam_size = st.select_slider(
             "Decoding beam width", options=[1, 2, 3, 5], value=5,
@@ -129,7 +140,7 @@ def _sidebar() -> dict:
         "raga_hints": raga_hints,
         "notation": "ascii" if notation.startswith("ASCII") else "bhatkhande",
         "model": model,
-        "language": None if language.startswith("auto") else language,
+        "languages": [SOUTH_ASIAN_LANGUAGES[n] for n in language_names],
         "beam_size": beam_size,
         "fix_vocabulary": fix_vocabulary,
         "extra_terms": [t.strip() for t in extra_terms.split(",") if t.strip()],
@@ -167,6 +178,9 @@ def _pick_input() -> str | None:
 
 
 def _show_summary(result) -> None:
+    timing = format_timings(result.timings)
+    if timing:
+        st.caption(timing.capitalize())
     for notice in result.notices:
         st.info(notice)
 
@@ -239,15 +253,19 @@ def main() -> None:
                 return
 
         bar = st.progress(0.0, text="Starting…")
+        started = time.monotonic()
 
         def progress(stage: str, frac: float) -> None:
-            bar.progress(min(frac, 1.0), text=stage)
+            minutes, seconds = divmod(int(time.monotonic() - started), 60)
+            bar.progress(
+                min(frac, 1.0), text=f"{stage}  ·  {minutes:d}:{seconds:02d} elapsed"
+            )
 
         try:
             result = transcribe_lesson(
                 source,
                 whisper_model=settings["model"],
-                language=settings["language"],
+                languages=settings["languages"],
                 tonic=tonic,
                 diarize_speakers=settings["diarize"],
                 num_speakers=settings["num_speakers"],

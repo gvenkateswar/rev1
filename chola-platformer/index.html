@@ -1,0 +1,1083 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chola: Tides of Bronze</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Marcellus&family=Marcellus+SC&display=swap">
+<style>
+  :root{
+    --gold:#F2B441; --gold-dim:#C89B6A; --bronze:#8C5A2B; --crimson:#B33A2B;
+    --ink:#140E0B; --ink2:#1E1410; --parchment:#EFE3CC;
+  }
+  html,body{height:100%;}
+  body{
+    margin:0; background:var(--ink); color:var(--parchment);
+    font-family:'Marcellus', Georgia, serif; overflow:hidden;
+    -webkit-user-select:none; user-select:none;
+  }
+  #stage{position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:var(--ink);}
+  canvas{display:block; background:var(--ink2); image-rendering:auto;}
+  .overlay{
+    position:absolute; inset:0; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; text-align:center;
+    background:radial-gradient(ellipse at 50% 40%, rgba(30,18,10,.55), rgba(10,6,4,.92) 75%);
+    padding:24px; z-index:5;
+  }
+  .overlay[hidden]{display:none!important;}
+  .eyebrow{
+    font-family:'Marcellus SC','Marcellus',serif; letter-spacing:.42em; text-transform:uppercase;
+    font-size:clamp(11px,1.4vw,14px); color:var(--gold-dim); margin-bottom:14px;
+  }
+  h1{
+    font-family:'Marcellus SC','Marcellus',serif; font-weight:400; margin:0;
+    font-size:clamp(40px,7vw,84px); line-height:1.02; text-wrap:balance;
+    color:var(--gold);
+    text-shadow:0 0 34px rgba(242,180,65,.35), 0 2px 0 rgba(0,0,0,.6);
+  }
+  h1 small{display:block; font-size:.36em; letter-spacing:.34em; color:var(--parchment); margin-top:10px;}
+  .rule{width:220px; height:1px; margin:26px auto 22px;
+    background:linear-gradient(90deg,transparent,var(--gold),transparent);}
+  .story{max-width:56ch; font-size:clamp(15px,1.8vw,18px); line-height:1.75; color:#D8C8A8; margin:0 auto;}
+  .story b{color:var(--gold); font-weight:400;}
+  .keys{margin-top:26px; display:flex; gap:26px; flex-wrap:wrap; justify-content:center;
+    font-size:13px; letter-spacing:.08em; color:#A5906F;}
+  .keys kbd{
+    display:inline-block; min-width:26px; padding:3px 8px; margin-right:7px;
+    border:1px solid #5c4630; border-bottom-width:3px; border-radius:5px;
+    background:#241811; color:var(--parchment); font-family:inherit; font-size:12px;
+  }
+  .btn{
+    margin-top:34px; font-family:'Marcellus SC','Marcellus',serif; font-size:17px; letter-spacing:.3em;
+    padding:15px 46px 13px 52px; cursor:pointer; color:var(--ink);
+    background:linear-gradient(180deg,#F7CC6E,#DE9A2E); border:none; border-radius:3px;
+    box-shadow:0 0 0 1px #8C5A2B, 0 6px 22px rgba(222,154,46,.35), inset 0 1px 0 rgba(255,255,255,.5);
+  }
+  .btn:hover{filter:brightness(1.08);}
+  .btn:focus-visible{outline:2px solid var(--parchment); outline-offset:3px;}
+  #touchui{position:absolute; inset:0; pointer-events:none; z-index:4; display:none;}
+  #touchui.on{display:block;}
+  .tbtn{
+    position:absolute; bottom:4%; width:64px; height:64px; border-radius:50%;
+    background:rgba(242,180,65,.10); border:1px solid rgba(242,180,65,.4);
+    color:var(--gold); font-family:'Marcellus SC',serif; font-size:20px;
+    display:flex; align-items:center; justify-content:center; pointer-events:auto; touch-action:none;
+  }
+  #tL{left:4%;} #tR{left:calc(4% + 78px);} #tJ{right:4%;} #tA{right:calc(4% + 78px);}
+</style>
+<div id="stage">
+  <canvas id="game" width="1280" height="720"></canvas>
+
+  <div class="overlay" id="titleScreen">
+    <div class="eyebrow">A 2.5D Chronicle · 1010–1025 CE</div>
+    <h1>CHOLA<small>Tides of Bronze</small></h1>
+    <div class="rule"></div>
+    <p class="story">You are <b>Ilamaran</b>, a warrior of the Chola navy. From the shadow of
+    Rajaraja's great temple at <b>Thanjavur</b>, through the ship-crowded harbor of
+    <b>Nagapattinam</b>, to Emperor Rajendra's expedition against <b>Srivijaya</b> across the
+    eastern sea — run, climb, and fight beneath the tiger banner.</p>
+    <div class="keys">
+      <span><kbd>←</kbd><kbd>→</kbd> or <kbd>A</kbd><kbd>D</kbd> move</span>
+      <span><kbd>Space</kbd>/<kbd>W</kbd> jump · wall-jump · double-jump</span>
+      <span><kbd>J</kbd>/<kbd>X</kbd> sword</span>
+    </div>
+    <button class="btn" id="startBtn">Begin the Voyage</button>
+  </div>
+
+  <div class="overlay" id="interScreen" hidden>
+    <div class="eyebrow" id="interEyebrow">Chapter I</div>
+    <h1 style="font-size:clamp(30px,5vw,54px)" id="interTitle">Thanjavur</h1>
+    <div class="rule"></div>
+    <p class="story" id="interStory"></p>
+    <button class="btn" id="interBtn">Onward</button>
+  </div>
+
+  <div class="overlay" id="endScreen" hidden>
+    <div class="eyebrow">1025 CE · Kadaram has fallen</div>
+    <h1 style="font-size:clamp(30px,5vw,58px)">The Sea Belongs<small style="letter-spacing:.2em">to the Tiger</small></h1>
+    <div class="rule"></div>
+    <p class="story">Rajendra Chola's fleet crossed the Bay of Bengal and broke the power of
+    Srivijaya — the only great overseas naval expedition in Indian history. Trade with Song
+    China flowed free, and Tamil merchant guilds rose across Southeast Asia.
+    <br><br><b id="endStats"></b></p>
+    <button class="btn" id="againBtn">Sail Again</button>
+  </div>
+
+  <div id="touchui">
+    <div class="tbtn" id="tL">◀</div><div class="tbtn" id="tR">▶</div>
+    <div class="tbtn" id="tJ">▲</div><div class="tbtn" id="tA">⚔</div>
+  </div>
+</div>
+
+<script>
+'use strict';
+// ============================================================ core
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const W = 1280, H = 720;
+
+function fit(){
+  const s = Math.min(innerWidth / W, innerHeight / H);
+  canvas.style.width  = (W*s|0)+'px';
+  canvas.style.height = (H*s|0)+'px';
+}
+addEventListener('resize', fit); fit();
+
+const clamp = (v,a,b)=> v<a?a: v>b?b: v;
+const lerp  = (a,b,t)=> a+(b-a)*t;
+// deterministic hash noise for scenery placement
+function hash(n){ const s = Math.sin(n*127.1+311.7)*43758.5453; return s-Math.floor(s); }
+
+// ============================================================ input
+const keys = {};
+const KEYMAP = {ArrowLeft:'L', a:'L', ArrowRight:'R', d:'R', ' ':'J', w:'J', ArrowUp:'J', j:'X', x:'X', J:'X', X:'X', A:'L', D:'R', W:'J'};
+addEventListener('keydown', e=>{
+  const k = KEYMAP[e.key]; if(!k) return;
+  e.preventDefault();
+  if(!keys[k]){ keys[k]=true; if(k==='J') jumpQueued = 0.13; if(k==='X') attackQueued = true; }
+});
+addEventListener('keyup', e=>{ const k = KEYMAP[e.key]; if(k) keys[k]=false; });
+
+// touch
+const touchui = document.getElementById('touchui');
+if('ontouchstart' in window) touchui.classList.add('on');
+function bindTouch(id, k){
+  const el = document.getElementById(id);
+  el.addEventListener('touchstart', e=>{ e.preventDefault(); keys[k]=true; if(k==='J') jumpQueued=0.13; if(k==='X') attackQueued=true; }, {passive:false});
+  el.addEventListener('touchend',   e=>{ e.preventDefault(); keys[k]=false; }, {passive:false});
+}
+bindTouch('tL','L'); bindTouch('tR','R'); bindTouch('tJ','J'); bindTouch('tA','X');
+
+// ============================================================ audio (procedural WebAudio)
+let AC = null, masterGain = null, droneNodes = null;
+function audioInit(){
+  if(AC) return;
+  try{
+    AC = new (window.AudioContext||window.webkitAudioContext)();
+    masterGain = AC.createGain(); masterGain.gain.value = 0.5; masterGain.connect(AC.destination);
+    // tanpura-like drone: two soft detuned saws through a lowpass, very quiet
+    const lp = AC.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=340; lp.Q.value=0.6;
+    const g = AC.createGain(); g.gain.value = 0.035; lp.connect(g); g.connect(masterGain);
+    droneNodes = [110, 110.7, 164.8].map(f=>{
+      const o = AC.createOscillator(); o.type='sawtooth'; o.frequency.value=f; o.connect(lp); o.start(); return o;
+    });
+  }catch(e){}
+}
+function tone(freq, dur, type='sine', vol=0.2, slide=0){
+  if(!AC) return;
+  const t = AC.currentTime;
+  const o = AC.createOscillator(), g = AC.createGain();
+  o.type = type; o.frequency.setValueAtTime(freq, t);
+  if(slide) o.frequency.exponentialRampToValueAtTime(Math.max(30,freq+slide), t+dur);
+  g.gain.setValueAtTime(vol, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t+dur);
+  o.connect(g); g.connect(masterGain); o.start(t); o.stop(t+dur+0.02);
+}
+function noiseBurst(dur=0.15, vol=0.25){
+  if(!AC) return;
+  const t = AC.currentTime, n = AC.sampleRate*dur|0;
+  const buf = AC.createBuffer(1, n, AC.sampleRate);
+  const d = buf.getChannelData(0);
+  for(let i=0;i<n;i++) d[i] = (Math.random()*2-1)*(1-i/n);
+  const s = AC.createBufferSource(); s.buffer = buf;
+  const g = AC.createGain(); g.gain.value = vol;
+  const f = AC.createBiquadFilter(); f.type='bandpass'; f.frequency.value=900;
+  s.connect(f); f.connect(g); g.connect(masterGain); s.start(t);
+}
+const sfx = {
+  jump : ()=> tone(300, .18, 'square', .08, 260),
+  djump: ()=> tone(420, .16, 'square', .07, 300),
+  coin : ()=> { tone(1046, .1, 'sine', .16); setTimeout(()=>tone(1568,.16,'sine',.14), 70); },
+  hurt : ()=> { noiseBurst(.2,.3); tone(160,.25,'sawtooth',.12,-80); },
+  slash: ()=> noiseBurst(.09,.12),
+  kill : ()=> { noiseBurst(.14,.2); tone(220,.2,'triangle',.14,-120); },
+  check: ()=> [523,659,784].forEach((f,i)=> setTimeout(()=>tone(f,.22,'sine',.12), i*90)),
+  win  : ()=> [523,587,698,784,1046].forEach((f,i)=> setTimeout(()=>tone(f,.35,'sine',.13), i*130)),
+};
+
+// ============================================================ levels
+// platform: [x, y, w, h]  |  guard: [x1, x2, groundY]  |  coin: [x, y]
+function groundRun(list, x, w, y=620, h=240){ list.push([x, y, w, h]); }
+
+function buildLevel1(){
+  const P=[], C=[], G=[];
+  groundRun(P,-80, 1040);
+  P.push([300,500,140,26],[520,410,140,26],[740,330,150,26]);          // temple steps up
+  P.push([980,330,200,300]);                                            // shrine block (climbable wall)
+  C.push([360,460],[590,370],[810,290],[1060,290],[1120,290]);
+  groundRun(P,1240,620); G.push([1330,1720,620]);
+  P.push([1450,470,120,24],[1650,380,120,24]);
+  C.push([1505,430],[1705,340]);
+  P.push([1960,540,90,190]);                                            // pillar
+  P.push([2160,450,90,280]);                                            // taller pillar
+  P.push([2360,360,90,370]);                                            // tallest — wall-jump chain
+  C.push([2000,500],[2200,410],[2400,320]);
+  groundRun(P,2550,760); G.push([2650,3160,620]);
+  P.push([2760,480,150,26],[3010,400,150,26]);
+  C.push([2830,440],[3080,360]);
+  groundRun(P,3430,540);
+  P.push([3560,500,110,24],[3760,420,110,24],[3960,500,110,24]);
+  G.push([3480,3900,620]);
+  C.push([3610,460],[3810,380],[4010,460]);
+  groundRun(P,4090,900);
+  P.push([4260,470,220,26]);
+  C.push([4320,430],[4400,430],[4650,570],[4720,570]);
+  G.push([4500,4890,620]);
+  return {
+    name:'Thanjavur', chapter:'Chapter I', width:4990, killY:820,
+    story:'1010 CE. Rajaraja Chola consecrates the Brihadisvara temple — its vimana of granite '+
+          'rises sixty-six metres, crowned by a single eighty-tonne capstone. Cross the temple '+
+          'grounds and answer the summons of the new emperor, Rajendra.',
+    platforms:P, coins:C, guards:G,
+    checkpoints:[[1300,620],[2650,620],[4150,620]],
+    goal:{x:4870,y:620}, start:[60,620],
+    sky:['#2C1E3A','#8A4A3C','#D97B3F','#F2B441'], sun:{x:.72,y:.30,r:64,c:'#FFDE9E'},
+    far:'gopuram', mid:'palms', wallC:'#3A2417', fog:'rgba(242,180,65,0.06)',
+    stoneTop:'#C89B6A', stoneFace:'#8C6540', stoneSide:'#5E4128', motes:'#F5CE8A',
+  };
+}
+
+function buildLevel2(){
+  const P=[], C=[], G=[];
+  groundRun(P,-80, 780);                                                // quay
+  P.push([260,490,140,24],[470,400,140,24]);
+  C.push([320,450],[530,360]);
+  // dock pilings across water
+  P.push([840,560,90,170],[1050,500,90,230],[1260,560,90,170],[1470,470,90,260]);
+  C.push([880,520],[1090,460],[1300,520],[1510,430]);
+  groundRun(P,1680,560); G.push([1760,2140,620]);
+  P.push([1860,470,140,24],[2080,390,140,24]);
+  C.push([1925,430],[2145,350]);
+  // ship 1: hull + mast platforms
+  P.push([2420,540,420,80]);                                            // hull deck
+  P.push([2560,400,130,20],[2560,270,130,20]);                          // rigging
+  C.push([2620,360],[2620,230],[2760,500]);
+  G.push([2450,2790,540]);
+  P.push([3010,560,90,170]);                                            // piling
+  groundRun(P,3220,520); G.push([3300,3650,620]);
+  P.push([3380,480,130,24],[3590,390,130,24]);
+  C.push([3440,440],[3650,350]);
+  // ship 2
+  P.push([3880,540,420,80]);
+  P.push([4030,400,130,20],[4180,290,130,20]);
+  C.push([4090,360],[4240,250],[4100,500]);
+  G.push([3910,4250,540]);
+  groundRun(P,4440,760);
+  C.push([4560,570],[4640,570],[4720,570]);
+  G.push([4700,5080,620]);
+  return {
+    name:'Nagapattinam', chapter:'Chapter II', width:5200, killY:700,
+    story:'The great port of the Cholas. Grain, pearls, and war-elephants load onto ships bound '+
+          'for Srivijaya. Merchant guilds — the Five Hundred Lords of Ayyavole — count their '+
+          'coin while the fleet takes on marines. Find your ship before the tide turns.',
+    platforms:P, coins:C, guards:G,
+    checkpoints:[[1720,620],[3260,620],[4480,620]],
+    goal:{x:5060,y:620}, start:[40,620],
+    sky:['#1B1D3A','#5C3555','#C75B3E','#F0A45B'], sun:{x:.30,y:.34,r:74,c:'#FFD9A0'},
+    far:'ships', mid:'docks', wallC:'#2A2030', fog:'rgba(240,164,91,0.07)',
+    stoneTop:'#B08A5E', stoneFace:'#7A5A3C', stoneSide:'#4E3826', motes:'#F5D9A8',
+    water:640,
+  };
+}
+
+function buildLevel3(){
+  const P=[], C=[], G=[];
+  groundRun(P,-80, 860);
+  P.push([340,500,130,24],[560,410,130,24],[780,330,130,24]);
+  C.push([400,460],[620,370],[840,290]);
+  P.push([1000,330,180,400]);                                           // jungle cliff
+  C.push([1060,290],[1130,290]);
+  groundRun(P,1260,560); G.push([1340,1720,620]);
+  // vine pillars — wall jump chase
+  P.push([1960,520,80,210],[2140,430,80,300],[2320,340,80,390],[2500,430,80,300]);
+  C.push([1995,480],[2175,390],[2355,300],[2535,390]);
+  groundRun(P,2680,640); G.push([2760,3220,620]);
+  P.push([2880,480,140,24],[3120,390,140,24]);
+  C.push([2945,440],[3185,350]);
+  groundRun(P,3480,500);
+  P.push([3600,500,110,22],[3800,410,110,22],[4000,330,110,22]);
+  C.push([3650,460],[3850,370],[4050,290]);
+  G.push([3520,3900,620]);
+  // stupa terraces — final ascent
+  P.push([4220,540,560,190]);
+  P.push([4300,440,400,26],[4380,340,240,26],[4450,250,110,24]);
+  C.push([4340,400],[4500,300],[4500,210],[4260,500],[4720,500]);
+  G.push([4240,4740,540],[4320,4660,440]);
+  groundRun(P,4880,620);
+  G.push([4960,5340,620]);
+  C.push([5040,570],[5120,570]);
+  return {
+    name:'Kadaram · Srivijaya', chapter:'Chapter III', width:5460, killY:820,
+    story:'1025 CE. The fleet falls upon Kadaram and the river-cities of Srivijaya. Through '+
+          'monsoon jungle and past terraced sanctuaries, fight to the gates of the maharaja’s '+
+          'citadel and plant the tiger banner of Rajendra, now styled the Ganges-conqueror.',
+    platforms:P, coins:C, guards:G,
+    checkpoints:[[1300,620],[2720,620],[4880,620]],
+    goal:{x:5320,y:620}, start:[50,620],
+    sky:['#0E2422','#1E4A40','#3E7A5C','#9CC27A'], sun:{x:.80,y:.24,r:56,c:'#EAF5C8'},
+    far:'stupas', mid:'jungle', wallC:'#12251C', fog:'rgba(156,194,122,0.08)',
+    stoneTop:'#9AA86A', stoneFace:'#5F6B42', stoneSide:'#3B452B', motes:'#C8E890',
+  };
+}
+const LEVELS = [buildLevel1, buildLevel2, buildLevel3];
+
+// ============================================================ state
+let state = 'title';           // title | inter | play | end
+let levelIdx = 0, level = null;
+let cam = {x:0, y:0};
+let particles = [], floats = [];
+let jumpQueued = 0, attackQueued = false;
+let time = 0, shake = 0;
+let totalCoins = 0, coinsTaken = 0, runStart = 0, deaths = 0;
+
+const player = {
+  x:0, y:0, vx:0, vy:0, w:26, h:56,
+  face:1, onGround:false, wallDir:0, jumps:0, coyote:0,
+  attackT:0, hurtT:0, hp:3, checkpoint:[0,0],
+  runPhase:0, deadT:0,
+};
+
+function loadLevel(i){
+  levelIdx = i; level = LEVELS[i]();
+  player.x = level.start[0]; player.y = level.start[1];
+  player.vx = player.vy = 0; player.hp = 3; player.jumps = 0;
+  player.checkpoint = [level.start[0], level.start[1]];
+  player.hurtT = 0; player.attackT = 0; player.deadT = 0;
+  level.coins = level.coins.map(c=>({x:c[0], y:c[1], taken:false, spin:hash(c[0])*6}));
+  level.guards = level.guards.map(g=>({x:g[0]+30, x1:g[0], x2:g[1], y:g[2], dir:1, dead:false, w:26, h:54, phase:hash(g[0])*6}));
+  level.checkpoints = level.checkpoints.map(c=>({x:c[0], y:c[1], lit:false}));
+  totalCoins += level.coins.length;
+  particles = []; floats = [];
+  cam.x = clamp(player.x - W*0.35, 0, level.width - W); cam.y = 0;
+}
+
+// ============================================================ ui flow
+const $ = id=>document.getElementById(id);
+function showInter(i){
+  const l = LEVELS[i]();
+  $('interEyebrow').textContent = l.chapter;
+  $('interTitle').textContent = l.name;
+  $('interStory').textContent = l.story;
+  $('interScreen').hidden = false;
+  state = 'inter';
+}
+$('startBtn').onclick = ()=>{
+  audioInit();
+  $('titleScreen').hidden = true;
+  totalCoins = 0; coinsTaken = 0; deaths = 0; runStart = performance.now();
+  showInter(0);
+};
+$('interBtn').onclick = ()=>{
+  $('interScreen').hidden = true;
+  loadLevel(levelIdx);
+  state = 'play';
+};
+$('againBtn').onclick = ()=>{
+  $('endScreen').hidden = true;
+  levelIdx = 0; totalCoins = 0; coinsTaken = 0; deaths = 0; runStart = performance.now();
+  showInter(0);
+};
+// clicking "Onward" after setting levelIdx elsewhere:
+function queueLevel(i){ levelIdx = i; showInter(i); }
+
+// ============================================================ physics
+function rectsOverlap(ax,ay,aw,ah, bx,by,bw,bh){
+  return ax < bx+bw && ax+aw > bx && ay < by+bh && ay+ah > by;
+}
+
+function movePlayer(dt){
+  const p = player;
+  const ACCEL = 2600, MAXV = 385, FRICTION = 2200;
+  const dir = (keys.L?-1:0) + (keys.R?1:0);
+  if(dir !== 0 && p.attackT <= 0.12){
+    p.vx += dir*ACCEL*dt;
+    p.face = dir;
+  } else {
+    const f = FRICTION*dt;
+    p.vx = Math.abs(p.vx) <= f ? 0 : p.vx - Math.sign(p.vx)*f;
+  }
+  p.vx = clamp(p.vx, -MAXV, MAXV);
+
+  // gravity + wall slide
+  const sliding = !p.onGround && p.wallDir !== 0 && dir === p.wallDir && p.vy > 0;
+  p.vy += 2300*dt;
+  if(sliding) p.vy = Math.min(p.vy, 150);
+  p.vy = Math.min(p.vy, 1200);
+
+  // jumping
+  if(jumpQueued > 0){
+    if(p.onGround || p.coyote > 0){
+      p.vy = -830; p.jumps = 1; jumpQueued = 0; p.coyote = 0; sfx.jump();
+      spawnDust(p.x, p.y, 8);
+    } else if(p.wallDir !== 0){
+      p.vy = -760; p.vx = -p.wallDir*430; p.face = -p.wallDir; p.jumps = 1; jumpQueued = 0; sfx.jump();
+      spawnDust(p.x + p.wallDir*14, p.y-30, 6);
+    } else if(p.jumps < 2){
+      p.vy = -700; p.jumps = 2; jumpQueued = 0; sfx.djump();
+      spawnRing(p.x, p.y-10);
+    }
+  }
+  jumpQueued = Math.max(0, jumpQueued - dt);
+  if(!keys.J && p.vy < -300) p.vy = -300;      // variable jump height
+
+  // attack
+  if(attackQueued && p.attackT <= 0){ p.attackT = 0.28; sfx.slash(); }
+  attackQueued = false;
+  p.attackT = Math.max(0, p.attackT - dt);
+  p.hurtT = Math.max(0, p.hurtT - dt);
+
+  // integrate + collide, axis-separated
+  p.wallDir = 0;
+  p.x += p.vx*dt;
+  for(const [bx,by,bw,bh] of level.platforms){
+    if(rectsOverlap(p.x-p.w/2, p.y-p.h, p.w, p.h, bx,by,bw,bh)){
+      if(p.vx > 0){ p.x = bx - p.w/2; if(!p.onGround) p.wallDir = 1; }
+      else if(p.vx < 0){ p.x = bx+bw + p.w/2; if(!p.onGround) p.wallDir = -1; }
+      p.vx = 0;
+    }
+  }
+  p.x = clamp(p.x, p.w/2, level.width - p.w/2);
+
+  const wasGround = p.onGround;
+  p.onGround = false;
+  p.y += p.vy*dt;
+  for(const [bx,by,bw,bh] of level.platforms){
+    if(rectsOverlap(p.x-p.w/2, p.y-p.h, p.w, p.h, bx,by,bw,bh)){
+      if(p.vy > 0){
+        p.y = by; p.vy = 0; p.onGround = true; p.jumps = 0;
+        if(!wasGround) spawnDust(p.x, p.y, 5);
+      } else if(p.vy < 0){ p.y = by+bh+p.h; p.vy = 0; }
+    }
+  }
+  p.coyote = p.onGround ? 0.1 : Math.max(0, p.coyote - dt);
+
+  if(p.onGround && Math.abs(p.vx) > 40){
+    p.runPhase += dt*Math.abs(p.vx)*0.045;
+    if(Math.random() < dt*8) spawnDust(p.x - p.face*8, p.y, 1);
+  }
+
+  // fell off world
+  if(p.y - p.h > level.killY){ hurt(2, true); }
+}
+
+function hurt(dmg, respawn){
+  const p = player;
+  if(p.hurtT > 0 && !respawn) return;
+  p.hp -= dmg; p.hurtT = 1.2; shake = 12; sfx.hurt();
+  spawnBurst(p.x, p.y - 28, '#E86A4A', 14);
+  if(p.hp <= 0){
+    deaths++;
+    p.hp = 3;
+    p.x = p.checkpoint[0]; p.y = p.checkpoint[1];
+    p.vx = p.vy = 0;
+    floats.push({x:p.x, y:p.y-90, t:1.6, text:'Fallen — the banner rises again'});
+  } else if(respawn){
+    p.x = p.checkpoint[0]; p.y = p.checkpoint[1]; p.vx = p.vy = 0;
+  } else {
+    p.vy = -380; p.vx = -p.face*260;
+  }
+}
+
+function updateWorld(dt){
+  const p = player;
+
+  // coins
+  for(const c of level.coins){
+    if(c.taken) continue;
+    c.spin += dt*4;
+    if(rectsOverlap(p.x-p.w/2, p.y-p.h, p.w, p.h, c.x-12, c.y-12, 24, 24)){
+      c.taken = true; coinsTaken++; sfx.coin();
+      spawnBurst(c.x, c.y, '#F2B441', 10);
+      floats.push({x:c.x, y:c.y-14, t:0.8, text:'+1 kasu'});
+    }
+  }
+
+  // checkpoints
+  for(const c of level.checkpoints){
+    if(!c.lit && Math.abs(p.x-c.x) < 30 && Math.abs(p.y-c.y) < 60){
+      c.lit = true; p.checkpoint = [c.x, c.y]; sfx.check();
+      floats.push({x:c.x, y:c.y-120, t:1.4, text:'Banner planted'});
+    }
+  }
+
+  // guards
+  for(const g of level.guards){
+    if(g.dead) continue;
+    g.phase += dt*6;
+    g.x += g.dir*95*dt;
+    if(g.x < g.x1){ g.x = g.x1; g.dir = 1; }
+    if(g.x > g.x2){ g.x = g.x2; g.dir = -1; }
+    // face player when close
+    if(Math.abs(p.x-g.x) < 220 && Math.abs(p.y-g.y) < 80) g.dir = Math.sign(p.x-g.x)||g.dir;
+
+    // player attack hits guard
+    if(p.attackT > 0.1){
+      const hx = p.x + p.face*30;
+      if(rectsOverlap(hx-26, p.y-p.h, 52, p.h, g.x-g.w/2, g.y-g.h, g.w, g.h)){
+        g.dead = true; sfx.kill(); shake = 6;
+        spawnBurst(g.x, g.y-30, '#C9663F', 16);
+        floats.push({x:g.x, y:g.y-70, t:0.9, text:'Guard felled'});
+        continue;
+      }
+    }
+    // guard hits player
+    if(p.hurtT<=0 && rectsOverlap(p.x-p.w/2, p.y-p.h, p.w, p.h, g.x-g.w/2, g.y-g.h, g.w, g.h)){
+      hurt(1, false);
+    }
+  }
+
+  // goal
+  const gl = level.goal;
+  if(Math.abs(p.x-gl.x) < 34 && Math.abs(p.y-gl.y) < 80){
+    sfx.win();
+    if(levelIdx < LEVELS.length-1){
+      queueLevel(levelIdx+1);
+    } else {
+      const mins = ((performance.now()-runStart)/60000);
+      $('endStats').textContent =
+        `${coinsTaken} / ${totalCoins} kasu gathered · ${deaths} fall${deaths===1?'':'s'} · ${mins.toFixed(1)} min voyage`;
+      $('endScreen').hidden = false;
+      state = 'end';
+    }
+    return;
+  }
+
+  // particles / floats
+  for(const q of particles){
+    q.t -= dt; q.x += q.vx*dt; q.y += q.vy*dt; q.vy += (q.grav||0)*dt;
+  }
+  particles = particles.filter(q=>q.t>0);
+  for(const f of floats) f.t -= dt;
+  floats = floats.filter(f=>f.t>0);
+
+  // camera
+  const tx = clamp(p.x + p.face*90 - W*0.45, 0, level.width - W);
+  cam.x = lerp(cam.x, tx, 1-Math.pow(0.0015, dt));
+  const ty = clamp(p.y - H*0.62, -60, 40);
+  cam.y = lerp(cam.y, ty, 1-Math.pow(0.02, dt));
+  shake = Math.max(0, shake - dt*40);
+}
+
+// ============================================================ particles
+function spawnDust(x,y,n){
+  for(let i=0;i<n;i++) particles.push({
+    x:x+(Math.random()*20-10), y:y-2, vx:Math.random()*70-35, vy:-Math.random()*60,
+    t:.4+Math.random()*.3, r:2+Math.random()*3, c:'rgba(200,160,110,', grav:60,
+  });
+}
+function spawnBurst(x,y,c,n){
+  for(let i=0;i<n;i++){
+    const a = Math.random()*Math.PI*2, s = 60+Math.random()*180;
+    particles.push({x, y, vx:Math.cos(a)*s, vy:Math.sin(a)*s-60, t:.5+Math.random()*.4, r:2+Math.random()*3, c:null, col:c, grav:300});
+  }
+}
+function spawnRing(x,y){
+  for(let i=0;i<10;i++){
+    const a = i/10*Math.PI*2;
+    particles.push({x:x+Math.cos(a)*16, y:y+Math.sin(a)*7, vx:Math.cos(a)*60, vy:Math.sin(a)*24, t:.35, r:2.5, c:'rgba(245,220,160,'});
+  }
+}
+
+// ============================================================ rendering
+function skyGrad(){
+  const g = ctx.createLinearGradient(0,0,0,H);
+  const s = level.sky;
+  g.addColorStop(0,s[0]); g.addColorStop(.45,s[1]); g.addColorStop(.75,s[2]); g.addColorStop(1,s[3]);
+  return g;
+}
+
+function drawSun(){
+  const s = level.sun, x = s.x*W - cam.x*0.03, y = s.y*H;
+  const g = ctx.createRadialGradient(x,y,0, x,y,s.r*3.4);
+  g.addColorStop(0,'rgba(255,222,158,0.6)');
+  g.addColorStop(.3,'rgba(255,220,158,0.3)'); g.addColorStop(1,'rgba(255,220,158,0)');
+  ctx.fillStyle = g; ctx.fillRect(x-s.r*3.5, y-s.r*3.5, s.r*7, s.r*7);
+  ctx.fillStyle = s.c; ctx.beginPath(); ctx.arc(x,y,s.r,0,7); ctx.fill();
+}
+
+// far silhouettes -------------------------------------------------
+function drawGopuram(x, base, w, h, col){
+  ctx.fillStyle = col;
+  const tiers = 6;
+  for(let i=0;i<tiers;i++){
+    const tw = w*(1 - i*0.13), th = h/tiers;
+    ctx.fillRect(x - tw/2, base - th*(i+1), tw, th+1);
+  }
+  // shikhara cap + kalasha finial
+  ctx.beginPath();
+  ctx.moveTo(x - w*0.26, base-h); ctx.lineTo(x + w*0.26, base-h); ctx.lineTo(x, base-h-26); ctx.fill();
+  ctx.fillRect(x-2, base-h-40, 4, 16);
+}
+function drawStupa(x, base, w, h, col){
+  ctx.fillStyle = col;
+  ctx.fillRect(x-w/2, base-h*0.3, w, h*0.3);
+  ctx.beginPath(); ctx.arc(x, base-h*0.3, w*0.42, Math.PI, 0); ctx.fill();
+  for(let i=0;i<3;i++) ctx.fillRect(x-6+i*2, base-h*0.3-w*0.42-14-i*8, 12-i*4, 10);
+}
+function drawShipSil(x, y, sc, col){
+  ctx.fillStyle = col;
+  ctx.beginPath();                                     // hull
+  ctx.moveTo(x-46*sc, y); ctx.quadraticCurveTo(x, y+18*sc, x+46*sc, y);
+  ctx.lineTo(x+34*sc, y+14*sc); ctx.lineTo(x-34*sc, y+14*sc); ctx.closePath(); ctx.fill();
+  ctx.fillRect(x-1.5*sc, y-52*sc, 3*sc, 52*sc);        // mast
+  ctx.beginPath();                                     // lateen-ish sail
+  ctx.moveTo(x, y-50*sc); ctx.quadraticCurveTo(x+30*sc, y-30*sc, x+6*sc, y-6*sc);
+  ctx.lineTo(x, y-6*sc); ctx.closePath(); ctx.fill();
+}
+function drawPalm(x, y, sc, col){
+  ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = 5*sc; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(x, y);
+  ctx.quadraticCurveTo(x+8*sc, y-40*sc, x+16*sc, y-74*sc); ctx.stroke();
+  const tx = x+16*sc, ty = y-74*sc;
+  for(let i=0;i<6;i++){
+    const a = -Math.PI*0.9 + i*(Math.PI*0.8/5);
+    ctx.beginPath(); ctx.moveTo(tx,ty);
+    ctx.quadraticCurveTo(tx+Math.cos(a)*30*sc, ty+Math.sin(a)*30*sc-8*sc,
+                         tx+Math.cos(a)*46*sc, ty+Math.sin(a)*46*sc+10*sc);
+    ctx.lineWidth = 3*sc; ctx.stroke();
+  }
+  ctx.lineWidth = 1;
+}
+
+function drawFarLayer(){
+  const px = cam.x*0.12;
+  ctx.save(); ctx.translate(-px, 0);
+  const col = 'rgba(24,14,26,0.55)';
+  if(level.far==='gopuram'){
+    for(let i=0;i<10;i++){
+      const x = i*760 + hash(i)*300;
+      const h = 190 + hash(i*3)*160;
+      drawGopuram(x, 560, 130+hash(i*7)*70, h, col);
+    }
+  } else if(level.far==='ships'){
+    ctx.fillStyle = 'rgba(20,16,34,0.5)';
+    ctx.fillRect(px, 500, W, 220);                       // sea band
+    for(let i=0;i<12;i++){
+      const x = i*620 + hash(i)*280;
+      drawShipSil(x, 505 - hash(i*5)*10, 0.8+hash(i*3)*0.7, 'rgba(18,14,30,0.65)');
+    }
+  } else {
+    for(let i=0;i<9;i++){                                 // jungle ridges + stupas
+      const x = i*820 + hash(i)*300;
+      ctx.fillStyle = 'rgba(10,26,20,0.5)';
+      ctx.beginPath(); ctx.arc(x, 660, 260+hash(i*2)*160, Math.PI, 0); ctx.fill();
+      if(hash(i*9)>0.4) drawStupa(x+120, 560-hash(i*4)*60, 90+hash(i*6)*50, 120, 'rgba(8,20,16,0.6)');
+    }
+  }
+  ctx.restore();
+}
+
+function drawMidLayer(){
+  const px = cam.x*0.35;
+  ctx.save(); ctx.translate(-px, cam.y*-0.2);
+  if(level.mid==='palms'){
+    for(let i=0;i<26;i++){
+      const x = i*430 + hash(i*11)*260;
+      drawPalm(x, 640, 0.9+hash(i*13)*0.5, 'rgba(30,18,20,0.75)');
+    }
+  } else if(level.mid==='docks'){
+    ctx.fillStyle = 'rgba(28,20,26,0.8)';
+    for(let i=0;i<40;i++){
+      const x = i*300 + hash(i*17)*140;
+      ctx.fillRect(x, 560+hash(i)*30, 14, 160);           // pilings
+      if(hash(i*3)>0.55) ctx.fillRect(x-30, 552+hash(i)*30, 74, 10);
+    }
+  } else {
+    for(let i=0;i<30;i++){                                 // dense jungle trees
+      const x = i*380 + hash(i*23)*220;
+      const c = 'rgba(12,28,20,0.8)';
+      drawPalm(x, 650, 1.1+hash(i*29)*0.6, c);
+      ctx.fillStyle = c;
+      ctx.beginPath(); ctx.arc(x+150, 660, 90+hash(i*5)*60, Math.PI, 0); ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+
+// temple wall behind play field
+function drawWallLayer(){
+  const px = cam.x*0.62;
+  ctx.save(); ctx.translate(-px, cam.y*-0.5);
+  ctx.fillStyle = level.wallC;
+  ctx.fillRect(px-10, 470, W+20, 260);
+  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  const start = Math.floor(px/170)-1;
+  for(let i=start; i<start+10; i++){
+    const x = i*170;
+    ctx.fillRect(x, 470, 22, 260);                        // pilasters
+    if(hash(i*31)>0.45){                                  // niche with carving
+      ctx.fillRect(x+62, 510, 52, 96);
+      ctx.fillStyle = 'rgba(220,170,90,0.10)';
+      ctx.beginPath(); ctx.arc(x+88, 545, 15, 0, 7); ctx.fill();
+      ctx.fillRect(x+82, 556, 12, 34);
+      ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    }
+  }
+  ctx.restore();
+}
+
+// god rays
+function drawRays(){
+  const s = level.sun, sx = s.x*W - cam.x*0.03, sy = s.y*H;
+  ctx.save();
+  ctx.globalCompositeOperation = 'screen';
+  for(let i=0;i<5;i++){
+    const a = 0.6 + i*0.22 + Math.sin(time*0.13+i)*0.03;
+    const g = ctx.createLinearGradient(sx, sy, sx+Math.cos(a)*900, sy+Math.sin(a)*900);
+    g.addColorStop(0,'rgba(255,225,160,0.10)'); g.addColorStop(1,'rgba(255,225,160,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.moveTo(sx, sy);
+    ctx.lineTo(sx+Math.cos(a-0.05)*1400, sy+Math.sin(a-0.05)*1400);
+    ctx.lineTo(sx+Math.cos(a+0.07)*1400, sy+Math.sin(a+0.07)*1400);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+// 2.5D platform ---------------------------------------------------
+function drawPlatform(bx,by,bw,bh){
+  const D = 18, DY = 10;
+  // side (right) face
+  ctx.fillStyle = level.stoneSide;
+  ctx.beginPath();
+  ctx.moveTo(bx+bw, by); ctx.lineTo(bx+bw+D, by-DY);
+  ctx.lineTo(bx+bw+D, by-DY+bh); ctx.lineTo(bx+bw, by+bh); ctx.closePath(); ctx.fill();
+  // top face
+  const tg = ctx.createLinearGradient(bx, by-DY, bx, by);
+  tg.addColorStop(0, level.stoneTop); tg.addColorStop(1, shade(level.stoneTop,-14));
+  ctx.fillStyle = tg;
+  ctx.beginPath();
+  ctx.moveTo(bx, by); ctx.lineTo(bx+D, by-DY);
+  ctx.lineTo(bx+bw+D, by-DY); ctx.lineTo(bx+bw, by); ctx.closePath(); ctx.fill();
+  // front face w/ block courses
+  const fg = ctx.createLinearGradient(bx, by, bx, by+bh);
+  fg.addColorStop(0, level.stoneFace); fg.addColorStop(1, shade(level.stoneFace,-26));
+  ctx.fillStyle = fg;
+  ctx.fillRect(bx, by, bw, bh);
+  ctx.strokeStyle = 'rgba(0,0,0,0.18)'; ctx.lineWidth = 1;
+  for(let y=by+26; y<by+bh; y+=26){
+    ctx.beginPath(); ctx.moveTo(bx, y+.5); ctx.lineTo(bx+bw, y+.5); ctx.stroke();
+    const off = ((y/26)|0)%2 ? 40 : 0;
+    for(let x=bx+off+44; x<bx+bw; x+=84){
+      ctx.beginPath(); ctx.moveTo(x+.5, y-26); ctx.lineTo(x+.5, y); ctx.stroke();
+    }
+  }
+  // top rim highlight
+  ctx.fillStyle = 'rgba(255,240,200,0.28)';
+  ctx.fillRect(bx, by, bw, 2.5);
+}
+function shade(hex, amt){
+  const n = parseInt(hex.slice(1),16);
+  const r = clamp((n>>16)+amt,0,255), g = clamp(((n>>8)&255)+amt,0,255), b = clamp((n&255)+amt,0,255);
+  return `rgb(${r},${g},${b})`;
+}
+
+// entities --------------------------------------------------------
+function drawCoin(c){
+  if(c.taken) return;
+  const sx = Math.abs(Math.cos(c.spin));
+  const g = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, 22);
+  g.addColorStop(0,'rgba(242,180,65,0.4)'); g.addColorStop(1,'rgba(242,180,65,0)');
+  ctx.fillStyle = g; ctx.fillRect(c.x-22, c.y-22, 44, 44);
+  ctx.save(); ctx.translate(c.x, c.y + Math.sin(c.spin*0.7)*3); ctx.scale(sx, 1);
+  ctx.fillStyle = '#E8A93C'; ctx.beginPath(); ctx.arc(0,0,11,0,7); ctx.fill();
+  ctx.fillStyle = '#FFD97A'; ctx.beginPath(); ctx.arc(0,0,8.5,0,7); ctx.fill();
+  ctx.strokeStyle = '#8C5A2B'; ctx.lineWidth = 1.6;      // tiger-standard mark
+  ctx.beginPath(); ctx.moveTo(-4,3); ctx.quadraticCurveTo(0,-6,4,3); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0,-2); ctx.lineTo(0,4); ctx.stroke();
+  ctx.restore();
+}
+
+function drawFlag(x, y, lit){
+  ctx.fillStyle = '#3A2A1C'; ctx.fillRect(x-3, y-120, 6, 120);
+  ctx.fillStyle = lit ? '#C93F2B' : 'rgba(120,90,70,0.7)';
+  const wv = Math.sin(time*4 + x)*6;
+  ctx.beginPath();
+  ctx.moveTo(x+3, y-118); ctx.quadraticCurveTo(x+34, y-112+wv, x+58, y-104+wv);
+  ctx.lineTo(x+3, y-86); ctx.closePath(); ctx.fill();
+  if(lit){
+    ctx.fillStyle = '#F2B441';
+    ctx.beginPath(); ctx.arc(x+24, y-103+wv*0.5, 4.5, 0, 7); ctx.fill();
+    const g = ctx.createRadialGradient(x, y-100, 0, x, y-100, 60);
+    g.addColorStop(0,'rgba(242,180,65,0.18)'); g.addColorStop(1,'rgba(242,180,65,0)');
+    ctx.fillStyle = g; ctx.fillRect(x-60, y-160, 120, 120);
+  }
+}
+
+function drawGoal(x, y){
+  // grand tiger banner marking level end
+  const wv = Math.sin(time*3)*8;
+  ctx.fillStyle = '#2A1C12'; ctx.fillRect(x-5, y-170, 10, 170);
+  ctx.fillStyle = '#B33A2B';
+  ctx.beginPath();
+  ctx.moveTo(x+5, y-166); ctx.quadraticCurveTo(x+60, y-158+wv, x+96, y-146+wv);
+  ctx.lineTo(x+96, y-96+wv); ctx.quadraticCurveTo(x+60, y-104+wv, x+5, y-100);
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#F2B441';                              // tiger glyph
+  ctx.save(); ctx.translate(x+48, y-128+wv*0.7);
+  ctx.beginPath(); ctx.ellipse(0, 0, 16, 9, 0, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.arc(14, -5, 5, 0, 7); ctx.fill();
+  ctx.strokeStyle = '#B33A2B'; ctx.lineWidth = 2;
+  for(let i=-1;i<2;i++){ ctx.beginPath(); ctx.moveTo(i*7-3,-7); ctx.lineTo(i*7+1,6); ctx.stroke(); }
+  ctx.restore();
+  const g = ctx.createRadialGradient(x, y-110, 0, x, y-110, 90);
+  g.addColorStop(0,'rgba(242,180,65,0.22)'); g.addColorStop(1,'rgba(242,180,65,0)');
+  ctx.fillStyle = g; ctx.fillRect(x-90, y-200, 190, 180);
+}
+
+// articulated figures ---------------------------------------------
+function drawFigure(x, y, face, phase, opts){
+  // y = feet. Articulated warrior ~56px tall.
+  const {skin, cloth, sashC, isGuard, attackT=0, vy=0, onGround=true, hurt=false} = opts;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(face, 1);
+  if(hurt && (time*20|0)%2) ctx.globalAlpha = 0.45;
+
+  const run = onGround ? Math.min(1, Math.abs(opts.vx||0)/300) : 0;
+  const airborne = !onGround;
+  const lean = airborne ? clamp(vy*0.0004, -0.2, 0.25) : run*0.16;
+
+  // shadow
+  ctx.save(); ctx.scale(1,0.32);
+  ctx.fillStyle = 'rgba(0,0,0,0.30)';
+  ctx.beginPath(); ctx.arc(0, 8, 16, 0, 7); ctx.fill();
+  ctx.restore();
+
+  ctx.rotate(lean);
+  ctx.lineCap = 'round';
+
+  // legs
+  ctx.strokeStyle = skin; ctx.lineWidth = 6;
+  for(const s of [-1,1]){
+    let hipA, kneeB;
+    if(airborne){ hipA = s>0 ? 0.7 : -0.4; kneeB = s>0 ? 1.1 : 0.5; }
+    else if(run>0.1){ hipA = Math.sin(phase + (s>0?0:Math.PI))*0.85; kneeB = Math.max(0.15, Math.cos(phase+(s>0?0:Math.PI)))*1.1; }
+    else { hipA = s*0.08; kneeB = 0.12; }
+    const hx = 0, hy = -26;
+    const kx = hx + Math.sin(hipA)*13, ky = hy + Math.cos(hipA)*13;
+    const fx = kx + Math.sin(hipA - kneeB)*13, fy = ky + Math.cos(hipA-kneeB)*13;
+    ctx.beginPath(); ctx.moveTo(hx,hy); ctx.lineTo(kx,ky); ctx.lineTo(fx,fy); ctx.stroke();
+  }
+  // dhoti / guard skirt
+  ctx.fillStyle = cloth;
+  ctx.beginPath();
+  ctx.moveTo(-8,-40); ctx.lineTo(9,-40); ctx.lineTo(11,-22); ctx.lineTo(-10,-22); ctx.closePath(); ctx.fill();
+  // torso
+  ctx.strokeStyle = skin; ctx.lineWidth = 8;
+  ctx.beginPath(); ctx.moveTo(0,-26); ctx.lineTo(2,-44); ctx.stroke();
+  // sash flowing behind
+  ctx.strokeStyle = sashC; ctx.lineWidth = 4;
+  const flow = airborne ? -vy*0.02 : Math.sin(time*6)*3 + run*8;
+  ctx.beginPath(); ctx.moveTo(0,-42);
+  ctx.quadraticCurveTo(-14, -38+flow*0.3, -24, -30+flow);
+  ctx.stroke();
+  // arms
+  ctx.lineWidth = 5;
+  const swing = airborne ? 0.9 : Math.sin(phase)*0.8;
+  // back arm
+  ctx.strokeStyle = shadeC(skin,-25);
+  arm(2,-42, -swing*0.8 - 0.3, 0.6);
+  // front arm — sword arm
+  ctx.strokeStyle = skin;
+  if(attackT > 0){
+    const t = 1 - attackT/0.28;                            // 0→1 swing
+    const a = lerp(-1.9, 0.9, Math.min(1, t*1.6));
+    arm(2,-42, a, 0.25);
+    // sword
+    const sx = 2 + Math.sin(a)*11 + Math.sin(a+0.25)*10;
+    const sy = -42 + Math.cos(a)*11 + Math.cos(a+0.25)*10;
+    ctx.save();
+    ctx.translate(sx, sy); ctx.rotate(a + 0.2);
+    ctx.fillStyle = '#D9DDE2';
+    ctx.fillRect(-1.6, -34, 3.2, 34);
+    ctx.fillStyle = '#8C5A2B'; ctx.fillRect(-4, -2, 8, 4);
+    ctx.restore();
+    // slash arc trail
+    if(t>0.2 && t<0.95){
+      ctx.strokeStyle = 'rgba(255,235,190,'+(0.5*(1-t))+')'; ctx.lineWidth = 5;
+      ctx.beginPath(); ctx.arc(2,-42, 34, a-1.1, a+0.25); ctx.stroke();
+    }
+  } else {
+    arm(2,-42, swing*0.8+0.35, 0.5);
+    if(!isGuard){                                          // sword sheathed on back
+      ctx.save(); ctx.translate(-4,-46); ctx.rotate(2.5);
+      ctx.fillStyle = '#B9BEC6'; ctx.fillRect(-1.4, 0, 2.8, 26);
+      ctx.fillStyle = '#8C5A2B'; ctx.fillRect(-3.4, -2, 7, 3.4);
+      ctx.restore();
+    }
+  }
+  if(isGuard){                                             // spear
+    ctx.strokeStyle = '#3A2A1C'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(10,-70); ctx.lineTo(4,-14); ctx.stroke();
+    ctx.fillStyle = '#C9CDD4';
+    ctx.beginPath(); ctx.moveTo(10,-70); ctx.lineTo(14,-60); ctx.lineTo(7,-62); ctx.closePath(); ctx.fill();
+  }
+  // head
+  ctx.fillStyle = skin;
+  ctx.beginPath(); ctx.arc(3,-51, 7.5, 0, 7); ctx.fill();
+  // turban / guard helm
+  ctx.fillStyle = isGuard ? '#8C2F22' : '#EFE3CC';
+  ctx.beginPath(); ctx.arc(3,-53.5, 7.6, Math.PI*0.95, Math.PI*2.06); ctx.fill();
+  ctx.fillStyle = '#F2B441';
+  ctx.fillRect(isGuard? -1: 0, -60, isGuard? 8: 7, 2.6);
+  // rim light
+  ctx.strokeStyle = 'rgba(255,230,170,0.5)'; ctx.lineWidth = 1.4;
+  ctx.beginPath(); ctx.arc(3,-51, 7.5, -2.4, -0.6); ctx.stroke();
+
+  ctx.restore();
+
+  function arm(ox, oy, a, elbow){
+    const ex = ox + Math.sin(a)*11, ey = oy + Math.cos(a)*11;
+    const hx = ex + Math.sin(a+elbow)*10, hy = ey + Math.cos(a+elbow)*10;
+    ctx.beginPath(); ctx.moveTo(ox,oy); ctx.lineTo(ex,ey); ctx.lineTo(hx,hy); ctx.stroke();
+  }
+}
+function shadeC(hex, amt){ return shade(hex, amt); }
+
+function drawWater(){
+  if(!level.water) return;
+  const wy = level.water;
+  const g = ctx.createLinearGradient(0, wy, 0, H+80);
+  g.addColorStop(0,'rgba(38,60,92,0.85)'); g.addColorStop(1,'rgba(10,16,34,0.95)');
+  ctx.fillStyle = g;
+  ctx.fillRect(cam.x-20, wy, W+40, H);
+  ctx.strokeStyle = 'rgba(240,200,140,0.35)'; ctx.lineWidth = 2;
+  for(let i=0;i<26;i++){
+    const x = cam.x + ((i*97 + time*30)% (W+80)) - 40;
+    const y = wy + 8 + hash(i)*60;
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.quadraticCurveTo(x+14, y-3, x+30, y); ctx.stroke();
+  }
+}
+
+function drawMotes(){
+  ctx.fillStyle = level.motes;
+  for(let i=0;i<40;i++){
+    const seed = hash(i*57);
+    const x = ((seed*level.width + time*(6+seed*14)) % (level.width+100)) - cam.x*0.85;
+    const wx = ((x % (W+100)) + W+100) % (W+100) - 50;
+    const y = 80 + hash(i*3)*560 + Math.sin(time*0.8+i)*22;
+    ctx.globalAlpha = 0.22 + 0.3*Math.abs(Math.sin(time*1.3+i*2));
+    ctx.beginPath(); ctx.arc(wx, y, 1.6+seed*1.6, 0, 7); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawHUD(){
+  // hearts
+  for(let i=0;i<3;i++){
+    const x = 30 + i*34, y = 30;
+    ctx.fillStyle = i < player.hp ? '#C93F2B' : 'rgba(120,100,90,0.35)';
+    ctx.beginPath();
+    ctx.moveTo(x, y+6);
+    ctx.bezierCurveTo(x-12, y-6, x-4, y-14, x, y-5);
+    ctx.bezierCurveTo(x+4, y-14, x+12, y-6, x, y+6);
+    ctx.fill();
+  }
+  // coin count
+  ctx.fillStyle = '#F2B441';
+  ctx.beginPath(); ctx.arc(38, 72, 9, 0, 7); ctx.fill();
+  ctx.fillStyle = '#8C5A2B';
+  ctx.beginPath(); ctx.arc(38, 72, 5.5, 0, 7); ctx.fill();
+  ctx.fillStyle = '#EFE3CC';
+  ctx.font = '18px Marcellus, serif'; ctx.textAlign = 'left'; ctx.textBaseline='middle';
+  ctx.fillText(level.coins.filter(c=>c.taken).length + ' / ' + level.coins.length, 56, 73);
+  // level name
+  ctx.textAlign = 'right';
+  ctx.fillStyle = 'rgba(239,227,204,0.85)';
+  ctx.font = '16px "Marcellus SC", Marcellus, serif';
+  ctx.fillText(level.chapter + '  ·  ' + level.name, W-28, 36);
+  ctx.textAlign = 'left';
+}
+
+function render(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle = skyGrad(); ctx.fillRect(0,0,W,H);
+  drawSun();
+  drawFarLayer();
+  drawMidLayer();
+  drawWallLayer();
+  drawRays();
+
+  const shx = (Math.random()*2-1)*shake, shy = (Math.random()*2-1)*shake;
+  ctx.save();
+  ctx.translate(-cam.x + shx, -cam.y + shy);
+
+  for(const b of level.platforms) drawPlatform(...b);
+  for(const c of level.checkpoints) drawFlag(c.x, c.y, c.lit);
+  drawGoal(level.goal.x, level.goal.y);
+  for(const c of level.coins) drawCoin(c);
+  for(const g of level.guards){
+    if(g.dead) continue;
+    drawFigure(g.x, g.y, g.dir, g.phase, {
+      skin:'#6E4530', cloth:'#8C2F22', sashC:'#3A2A1C', isGuard:true, vx:95, onGround:true,
+    });
+  }
+  drawFigure(player.x, player.y, player.face, player.runPhase, {
+    skin:'#8A5A3B', cloth:'#EFE3CC', sashC:'#B33A2B', isGuard:false,
+    attackT:player.attackT, vx:player.vx, vy:player.vy,
+    onGround:player.onGround, hurt:player.hurtT>0,
+  });
+
+  for(const q of particles){
+    ctx.fillStyle = q.col || (q.c + clamp(q.t*2,0,0.8) + ')');
+    if(q.col) ctx.globalAlpha = clamp(q.t*1.6, 0, 1);
+    ctx.beginPath(); ctx.arc(q.x, q.y, q.r, 0, 7); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+  ctx.font = '17px "Marcellus SC", serif'; ctx.textAlign='center';
+  for(const f of floats){
+    ctx.fillStyle = 'rgba(242,200,120,'+clamp(f.t,0,1)+')';
+    ctx.fillText(f.text, f.x, f.y - (1.6-f.t)*26);
+  }
+  ctx.textAlign='left';
+
+  drawWater();
+  ctx.restore();
+
+  // atmosphere fog + vignette (screen space)
+  ctx.fillStyle = level.fog; ctx.fillRect(0,0,W,H);
+  const v = ctx.createRadialGradient(W/2, H*0.45, H*0.42, W/2, H*0.55, H*0.85);
+  v.addColorStop(0,'rgba(0,0,0,0)'); v.addColorStop(1,'rgba(8,4,2,0.5)');
+  ctx.fillStyle = v; ctx.fillRect(0,0,W,H);
+
+  drawMotes();
+  drawHUD();
+
+  if(player.hurtT > 1.05){
+    ctx.fillStyle = 'rgba(160,30,20,'+((player.hurtT-1.05)*2.2)+')';
+    ctx.fillRect(0,0,W,H);
+  }
+}
+
+// title backdrop keeps rendering behind overlays
+function renderTitleBG(){
+  if(!level){ level = LEVELS[0](); loadLevelPreview(); }
+  cam.x = (Math.sin(time*0.05)*0.5+0.5) * Math.max(0, level.width - W);
+  render();
+}
+function loadLevelPreview(){
+  level.coins = level.coins.map(c=>({x:c[0],y:c[1],taken:false,spin:hash(c[0])*6}));
+  level.guards = level.guards.map(g=>({x:g[0]+30,x1:g[0],x2:g[1],y:g[2],dir:1,dead:false,w:26,h:54,phase:hash(g[0])*6}));
+  level.checkpoints = level.checkpoints.map(c=>({x:c[0],y:c[1],lit:false}));
+  player.x = -999; player.y = -999;
+}
+
+// ============================================================ main loop
+let last = performance.now();
+function frame(now){
+  let dt = Math.min(0.033, (now-last)/1000);
+  last = now; time += dt;
+  if(state === 'play'){
+    movePlayer(dt);
+    if(state === 'play') updateWorld(dt);
+    render();
+  } else {
+    renderTitleBG();
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</html>

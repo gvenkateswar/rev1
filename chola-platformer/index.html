@@ -83,7 +83,7 @@
     <div class="keys">
       <span><kbd>←</kbd><kbd>→</kbd> or <kbd>A</kbd><kbd>D</kbd> move</span>
       <span><kbd>Space</kbd>/<kbd>W</kbd> jump · wall-jump · double-jump</span>
-      <span><kbd>↑</kbd><kbd>↓</kbd> shift depth plane</span>
+      <span><kbd>↑</kbd><kbd>↓</kbd> cross planes at the lamplit gates</span>
       <span><kbd>J</kbd>/<kbd>X</kbd> sword</span>
     </div>
     <button class="btn" id="startBtn">Begin the Voyage</button>
@@ -119,8 +119,11 @@
 'use strict';
 // ============================================================ core
 const canvas = document.getElementById('game');
-const ctx = canvas.getContext('2d');
+let ctx = canvas.getContext('2d');
 const W = 1280, H = 720;
+// offscreen buffer: depth-of-field layers render here, then composite with ONE blurred drawImage
+const BGC = document.createElement('canvas'); BGC.width = W; BGC.height = H;
+const bctx = BGC.getContext('2d');
 const HORIZON = 400;                      // vanishing focus for depth lanes
 // depth lanes: 0 = background path, 1 = main path, 2 = foreground path
 const LANES = [{s:0.80}, {s:1.0}, {s:1.17}];
@@ -260,6 +263,24 @@ const GRAIN = (()=>{                       // paper grain tile
 })();
 let grainPat = null;
 
+const STONETEX = (()=>{                    // dry-brush surface texture tile
+  const c = document.createElement('canvas'); c.width = c.height = 256;
+  const g = c.getContext('2d'); g.lineCap = 'round';
+  for(let i=0;i<520;i++){
+    const x = Math.random()*256, y = Math.random()*256;
+    const len = 6+Math.random()*26, a = Math.random()*0.6-0.3;
+    g.strokeStyle = Math.random()<0.5 ? 'rgba(40,26,16,0.05)' : 'rgba(255,240,210,0.045)';
+    g.lineWidth = 1+Math.random()*2.2;
+    g.beginPath(); g.moveTo(x,y); g.lineTo(x+Math.cos(a)*len, y+Math.sin(a)*len); g.stroke();
+  }
+  for(let i=0;i<40;i++){
+    g.fillStyle = 'rgba(40,26,16,'+(0.02+Math.random()*0.04)+')';
+    g.beginPath(); g.arc(Math.random()*256, Math.random()*256, 4+Math.random()*16, 0, 7); g.fill();
+  }
+  return c;
+})();
+let stonePat = null;
+
 // ============================================================ levels
 // platform: [x, y, w, h, lane, kind]   kind: 'stone'|'wood'|'stall'
 // guard: [x1, x2, groundY, lane] | coin: [x, y, lane]
@@ -278,12 +299,12 @@ function buildLevel1(){
   P.push([1960,540,90,190,1],[2160,450,90,280,1],[2360,340,90,390,1]);   // wall-jump pillars
   C.push([2000,500,1],[2200,410,1],[2400,300,1]);
   g(2550,500);
-  // — the canyon: middle path breaks, cross by the far walkway or the near ruins —
+  // — the canyon: cross by the far walkway or the near ruins, entered at the gates —
   P.push([2980,514,880,30,0]);                                            // far walkway
   C.push([3120,474,0],[3320,474,0],[3520,474,0]);
   G.push([3040,3680,514,0]);
-  P.push([3060,656,130,64,2],[3300,656,130,64,2],[3540,656,130,64,2],[3780,656,130,64,2]); // near broken plinths
-  C.push([3125,610,2],[3365,610,2],[3605,610,2]);
+  P.push([2980,656,130,64,2],[3230,656,130,64,2],[3480,656,130,64,2],[3780,656,130,64,2]); // near broken plinths
+  C.push([3045,610,2],[3295,610,2],[3545,610,2]);
   g(3760,420);
   P.push([3880,500,120,24,1],[4080,420,120,24,1]);
   C.push([3940,460,1],[4140,380,1]);
@@ -298,7 +319,8 @@ function buildLevel1(){
           'paths, and answer the summons of the young prince Rajendra.',
     platforms:P, coins:C, guards:G,
     checkpoints:[[1300,620],[2700,620],[4260,620]],
-    hints:[[2780,540,'↑ the far walkway · ↓ the near ruins']],
+    links:[[1250,130,0,1],[1620,140,0,1],[2965,120,0,1],[3765,90,0,1],[2985,60,1,2],[3785,100,1,2]],
+    hints:[[2780,540,'cross at the lamplit gates — ↑ far · ↓ near']],
     goal:{x:5080,y:620}, start:[60,620],
     sky:['#8A7B5C','#B5A47C','#CDBA8C','#D9C69A'], sun:{x:.74,y:.28,r:60,c:'#F4E7C0'},
     far:'gopuram', mid:'palms',
@@ -318,10 +340,10 @@ function buildLevel2(){
   C.push([920,520,1],[1130,460,1],[1340,520,1],[1550,430,1]);
   g(1700,540);
   // — the flooded basin: cross by warehouse ledge (far) or the market wharf (near) —
-  P.push([2280,524,860,26,0]);                                            // warehouse ledge
+  P.push([2180,524,1000,26,0]);                                           // warehouse ledge
   C.push([2380,484,0],[2540,484,0],[2700,484,0]);
   G.push([2320,2920,524,0]);
-  P.push([2260,648,900,72,2,'stall']);                                    // market wharf
+  P.push([2160,648,1000,72,2,'stall']);                                   // market wharf
   C.push([2360,606,2],[2560,606,2],[2760,606,2],[2940,606,2]);
   G.push([2300,2960,648,2]);
   g(3100,520);
@@ -344,7 +366,8 @@ function buildLevel2(){
           'awnings along the wharf. Slip between quay and warehouse and find your ship.',
     platforms:P, coins:C, guards:G,
     checkpoints:[[1760,620],[3160,620],[4620,620]],
-    hints:[[2080,540,'↑ the warehouse ledge · ↓ the market wharf']],
+    links:[[2180,60,0,1],[3105,70,0,1],[2170,70,1,2],[3095,60,1,2],[4680,200,0,1]],
+    hints:[[2010,540,'cross at the lamplit gates — ↑ far · ↓ near']],
     goal:{x:5280,y:620}, start:[40,620],
     sky:['#7E6A55','#B08A62','#CFA878','#DDBE8E'], sun:{x:.28,y:.32,r:70,c:'#F7E3B8'},
     far:'ships', mid:'docks',
@@ -372,8 +395,8 @@ function buildLevel3(){
   P.push([3020,510,840,28,0,'wood']);                                      // rope bridge
   C.push([3140,470,0],[3340,470,0],[3540,470,0]);
   G.push([3080,3700,510,0]);
-  P.push([3120,660,120,60,2],[3350,660,120,60,2],[3580,660,120,60,2],[3810,660,120,60,2]); // river stones
-  C.push([3180,616,2],[3410,616,2],[3640,616,2]);
+  P.push([3030,660,120,60,2],[3290,660,120,60,2],[3550,660,120,60,2],[3810,660,120,60,2]); // river stones
+  C.push([3090,616,2],[3350,616,2],[3610,616,2]);
   g(3800,400);
   P.push([3920,500,110,22,1],[4120,410,110,22,1]);
   C.push([3970,460,1],[4170,370,1]);
@@ -391,7 +414,8 @@ function buildLevel3(){
           'and plant the tiger banner of Rajendra, Ganges-conqueror, lord of the eastern sea.',
     platforms:P, coins:C, guards:G,
     checkpoints:[[1320,620],[2740,620],[4980,620]],
-    hints:[[2860,540,'↑ the rope bridge · ↓ the river stones']],
+    links:[[1280,130,0,1],[1620,140,0,1],[3025,70,0,1],[3795,60,0,1],[3035,60,1,2],[3815,80,1,2]],
+    hints:[[2860,540,'cross at the lamplit gates — ↑ far · ↓ near']],
     goal:{x:5460,y:620}, start:[50,620],
     sky:['#5F6B57','#8A9474','#ABB088','#C2C098'], sun:{x:.80,y:.22,r:52,c:'#EFF2CC'},
     far:'stupas', mid:'jungle',
@@ -417,10 +441,27 @@ const player = {
   runPhase:0, shiftFx:0, shiftCool:0,
 };
 
+function topAt(ln, cx){
+  let best = null;
+  for(const [bx,by,bw,bh,l2] of level.platforms){
+    if((l2??1) !== ln) continue;
+    if(cx >= bx && cx <= bx+bw && (best === null || by > best)) best = by;
+  }
+  return best ?? 620;
+}
+function prepLinks(){
+  level.links = (level.links||[]).map(k=>{
+    const cx = k[0]+k[1]/2;
+    return {x:k[0], w:k[1], a:k[2], b:k[3], cx,
+            gy:{[k[2]]:topAt(k[2],cx), [k[3]]:topAt(k[3],cx)}};
+  });
+}
+
 function loadLevel(i){
   levelIdx = i; level = LEVELS[i]();
   level.palFront = dimPal(level.pal, -22);
   level.palBack  = dimPal(level.pal, 10);
+  prepLinks();
   player.x = level.start[0]; player.y = level.start[1];
   player.vx = player.vy = 0; player.hp = 3; player.jumps = 0; player.lane = 1;
   player.checkpoint = [level.start[0], level.start[1]];
@@ -478,12 +519,20 @@ function tryShift(dir){
   const p = player;
   const target = p.lane + dir;
   if(target < 0 || target > 2 || p.shiftCool > 0) return;
+  // crossings exist only at the gates
+  const lk = level.links.find(k=> p.x >= k.x-14 && p.x <= k.x+k.w+14 &&
+    ((k.a===p.lane && k.b===target) || (k.b===p.lane && k.a===target)));
+  if(!lk){
+    sfx.deny(); p.shiftCool = 0.35;
+    floats.push({x:p.x, y:p.y-88, t:1.1, text:'no crossing here — seek a lamplit gate'});
+    return;
+  }
   // needs footing in the target lane near the player
   let best = null;
   for(const [bx,by,bw,bh,ln] of level.platforms){
     if(ln !== target) continue;
     if(p.x > bx-6 && p.x < bx+bw+6 && by > p.y-150 && by < p.y+250){
-      if(!best || Math.abs(by-p.y) < Math.abs(best-p.y)) best = by;
+      if(best === null || Math.abs(by-p.y) < Math.abs(best-p.y)) best = by;
     }
   }
   if(best === null){ sfx.deny(); p.shiftCool = 0.2; return; }
@@ -927,6 +976,13 @@ function drawPlatform(bx,by,bw,bh,lane,kind,pal){
   fg.addColorStop(0, wFace); fg.addColorStop(1, wFaceD);
   ctx.fillStyle = fg;
   ctx.fillRect(bx, by, bw, bh);
+  // dry-brush texture + ambient occlusion under the lip
+  if(!stonePat) stonePat = ctx.createPattern(STONETEX,'repeat');
+  ctx.fillStyle = stonePat;
+  ctx.fillRect(bx, by, bw, Math.min(bh,260));
+  const ao = ctx.createLinearGradient(0, by+2, 0, by+18);
+  ao.addColorStop(0,'rgba(20,12,6,0.22)'); ao.addColorStop(1,'rgba(20,12,6,0)');
+  ctx.fillStyle = ao; ctx.fillRect(bx, by+2, bw, 16);
 
   if(wood){
     // deck planks on top edge + board lines on face
@@ -1054,6 +1110,47 @@ function drawGoal(x, y){
   g.addColorStop(0,'rgba(226,188,108,0.22)'); g.addColorStop(1,'rgba(226,188,108,0)');
   ctx.fillStyle = g; ctx.fillRect(x-90, y-200, 190, 180);
 }
+// torana gateway marking a crossing between depth planes
+function drawGate(cx, gy){
+  const sway = Math.sin(time*1.6+cx)*3;
+  ctx.fillStyle = 'rgba(60,44,30,0.25)';
+  ctx.fillRect(cx-32, gy-3, 64, 6);
+  for(const s of [-1,1]){
+    const px = cx + s*26;
+    ctx.fillStyle = '#6B5138';
+    ctx.fillRect(px-4, gy-78, 8, 78);
+    ctx.fillStyle = 'rgba(0,0,0,0.22)';
+    ctx.fillRect(px-4, gy-78, 3, 78);
+    ctx.fillStyle = 'rgba(233,223,198,0.25)';
+    ctx.fillRect(px-4, gy-64, 8, 3); ctx.fillRect(px-4, gy-34, 8, 3);
+  }
+  ctx.fillStyle = '#75593C';
+  ctx.beginPath();
+  ctx.moveTo(cx-42, gy-78);
+  ctx.quadraticCurveTo(cx, gy-90, cx+42, gy-78);
+  ctx.lineTo(cx+44, gy-71); ctx.quadraticCurveTo(cx, gy-83, cx-44, gy-71);
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#A8402F';                        // hanging pennant
+  ctx.beginPath();
+  ctx.moveTo(cx-8, gy-77); ctx.lineTo(cx+8, gy-77);
+  ctx.lineTo(cx+6+sway, gy-46); ctx.lineTo(cx+sway, gy-38); ctx.lineTo(cx-6+sway, gy-46);
+  ctx.closePath(); ctx.fill();
+  const g = ctx.createRadialGradient(cx, gy-54, 0, cx, gy-54, 50);
+  g.addColorStop(0,'rgba(240,205,130,0.22)'); g.addColorStop(1,'rgba(240,205,130,0)');
+  ctx.fillStyle = g; ctx.fillRect(cx-50, gy-104, 100, 100);
+  // oil lamps on the posts
+  for(const s of [-1,1]){
+    const fx = cx + s*26, fl = 0.7+0.3*Math.sin(time*9+cx+s);
+    ctx.fillStyle = 'rgba(244,200,110,'+(0.75*fl)+')';
+    ctx.beginPath(); ctx.arc(fx, gy-82, 2.6, 0, 7); ctx.fill();
+  }
+  // pulsing chevrons above the lintel
+  const pul = 0.4+0.3*Math.sin(time*3+cx);
+  ctx.fillStyle = 'rgba(180,60,42,'+pul+')';
+  ctx.beginPath(); ctx.moveTo(cx, gy-108); ctx.lineTo(cx-7, gy-100); ctx.lineTo(cx+7, gy-100); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(cx, gy-90); ctx.lineTo(cx-7, gy-98); ctx.lineTo(cx+7, gy-98); ctx.closePath(); ctx.fill();
+}
+
 function drawBird(b){
   ctx.fillStyle = '#B5342A';
   ctx.save(); ctx.translate(b.x, b.y-6);
@@ -1076,121 +1173,182 @@ function drawFigure(x, y, face, phase, opts){
   const {skin, cloth, sashC, isGuard, hooded, attackT=0, vy=0, onGround=true, hurt=false, vx=0} = opts;
   ctx.save();
   ctx.translate(x, y);
-  ctx.scale(face, 1);
+  ctx.scale(face*1.12, 1.12);
   if(hurt && (time*20|0)%2) ctx.globalAlpha = 0.45;
 
   const run = onGround ? Math.min(1, Math.abs(vx)/300) : 0;
   const airborne = !onGround;
   const lean = airborne ? clamp(vy*0.0004, -0.2, 0.25) : run*0.16;
 
-  ctx.save(); ctx.scale(1,0.32);
-  ctx.fillStyle = 'rgba(30,20,12,0.35)';
-  ctx.beginPath(); ctx.arc(0, 8, 16, 0, 7); ctx.fill();
+  // soft contact shadow
+  ctx.save(); ctx.scale(1,0.3);
+  const shg = ctx.createRadialGradient(0,8,2, 0,8,20);
+  shg.addColorStop(0,'rgba(25,16,10,0.45)'); shg.addColorStop(1,'rgba(25,16,10,0)');
+  ctx.fillStyle = shg;
+  ctx.beginPath(); ctx.arc(0, 8, 20, 0, 7); ctx.fill();
   ctx.restore();
 
   ctx.rotate(lean);
-  ctx.lineCap = 'round';
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  const darker = shade(cloth,-24);
 
-  // legs
-  ctx.strokeStyle = isGuard? skin : cloth; ctx.lineWidth = 6;
+  // trailing sash behind the body, two layered tails
+  const flow = airborne ? clamp(-vy*0.03,-16,18) : Math.sin(time*6)*3 + run*11;
+  ctx.strokeStyle = sashC; ctx.lineWidth = 5.5;
+  ctx.beginPath(); ctx.moveTo(1,-42);
+  ctx.bezierCurveTo(-10,-36+flow*0.2, -20,-30+flow*0.7, -30,-20+flow);
+  ctx.stroke();
+  ctx.strokeStyle = shade(sashC,-32); ctx.lineWidth = 3.6;
+  ctx.beginPath(); ctx.moveTo(1,-39);
+  ctx.bezierCurveTo(-9,-30+flow*0.3, -17,-20+flow*0.8, -25,-6+flow*1.1);
+  ctx.stroke();
+
+  if(isGuard){                                     // round shield slung on the back
+    ctx.fillStyle = '#5E4429';
+    ctx.beginPath(); ctx.arc(-9,-46, 7.5, 0, 7); ctx.fill();
+    ctx.fillStyle = '#C99A3F';
+    ctx.beginPath(); ctx.arc(-9,-46, 2.6, 0, 7); ctx.fill();
+  }
+
+  // legs with far-side falloff and feet
   for(const s of [-1,1]){
     let hipA, kneeB;
     if(airborne){ hipA = s>0 ? 0.7 : -0.4; kneeB = s>0 ? 1.1 : 0.5; }
     else if(run>0.1){ hipA = Math.sin(phase + (s>0?0:Math.PI))*0.85; kneeB = Math.max(0.15, Math.cos(phase+(s>0?0:Math.PI)))*1.1; }
     else { hipA = s*0.08; kneeB = 0.12; }
-    const hx = 0, hy = -26;
+    const hx = 0, hy = -25;
     const kx = hx + Math.sin(hipA)*13, ky = hy + Math.cos(hipA)*13;
     const fx = kx + Math.sin(hipA - kneeB)*13, fy = ky + Math.cos(hipA-kneeB)*13;
+    const legC = isGuard? skin : cloth;
+    ctx.strokeStyle = s<0 ? shade(legC,-30) : legC;
+    ctx.lineWidth = 7;
     ctx.beginPath(); ctx.moveTo(hx,hy); ctx.lineTo(kx,ky); ctx.lineTo(fx,fy); ctx.stroke();
+    ctx.lineWidth = 4.5;
+    ctx.beginPath(); ctx.moveTo(fx,fy); ctx.lineTo(fx+4.5, fy+1.5); ctx.stroke();
   }
-  // robe / armor skirt
+
+  // robe skirt with a swinging hem
+  const hem = airborne? -6 : Math.sin(phase)*4*run;
   ctx.fillStyle = cloth;
   ctx.beginPath();
-  ctx.moveTo(-8,-40); ctx.lineTo(9,-40); ctx.lineTo(12,-18); ctx.lineTo(-11,-18); ctx.closePath(); ctx.fill();
-  if(isGuard){                                              // lamellar rows
-    ctx.strokeStyle = 'rgba(0,0,0,0.28)'; ctx.lineWidth = 1.2;
-    for(let ry=-36; ry<-20; ry+=5){ ctx.beginPath(); ctx.moveTo(-8,ry); ctx.lineTo(10,ry); ctx.stroke(); }
+  ctx.moveTo(-8,-42);
+  ctx.lineTo(9,-42);
+  ctx.lineTo(12,-20);
+  ctx.quadraticCurveTo(4,-14+hem, -3,-19+hem*0.6);
+  ctx.lineTo(-11,-18);
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle = 'rgba(0,0,0,0.18)';              // core shadow on the back of the skirt
+  ctx.beginPath(); ctx.moveTo(-8,-42); ctx.lineTo(-2,-42); ctx.lineTo(-4,-19); ctx.lineTo(-11,-18); ctx.closePath(); ctx.fill();
+  if(isGuard){                                     // lamellar rows
+    ctx.strokeStyle = 'rgba(0,0,0,0.3)'; ctx.lineWidth = 1.2;
+    for(let ry=-38; ry<-22; ry+=4.5){ ctx.beginPath(); ctx.moveTo(-8,ry); ctx.lineTo(11,ry); ctx.stroke(); }
   }
-  // torso
-  ctx.strokeStyle = cloth; ctx.lineWidth = 9;
-  ctx.beginPath(); ctx.moveTo(0,-26); ctx.lineTo(2,-44); ctx.stroke();
-  // long crimson sash, trailing
-  ctx.strokeStyle = sashC; ctx.lineWidth = 5;
-  const flow = airborne ? -vy*0.02 : Math.sin(time*6)*3 + run*10;
-  ctx.beginPath(); ctx.moveTo(1,-40);
-  ctx.quadraticCurveTo(-16, -34+flow*0.3, -28, -22+flow);
-  ctx.stroke();
-  ctx.lineWidth = 3.4;
-  ctx.beginPath(); ctx.moveTo(1,-38);
-  ctx.quadraticCurveTo(-14, -28+flow*0.4, -24, -10+flow*1.2);
-  ctx.stroke();
+
+  // torso volume, shoulders wider than the waist
+  ctx.fillStyle = cloth;
+  ctx.beginPath();
+  ctx.moveTo(-7,-42);
+  ctx.quadraticCurveTo(-9,-52, -6,-56);
+  ctx.lineTo(9,-56);
+  ctx.quadraticCurveTo(11,-50, 9,-42);
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = 'rgba(255,240,205,0.32)';      // rim light on the sunward edge
+  ctx.lineWidth = 1.6;
+  ctx.beginPath(); ctx.moveTo(8,-55); ctx.quadraticCurveTo(10,-49, 8.5,-43); ctx.stroke();
+  ctx.strokeStyle = sashC; ctx.lineWidth = 3.4;    // chest strap
+  ctx.beginPath(); ctx.moveTo(-6,-55); ctx.lineTo(8,-45); ctx.stroke();
 
   // arms
-  ctx.lineWidth = 5;
   const swing = airborne ? 0.9 : Math.sin(phase)*0.8;
-  ctx.strokeStyle = shade(cloth,-25);
-  arm(2,-42, -swing*0.8 - 0.3, 0.6);
-  ctx.strokeStyle = skin;
+  ctx.strokeStyle = darker; ctx.lineWidth = 6;
+  arm(0,-53, -swing*0.8 - 0.3, 0.6);
+  ctx.strokeStyle = isGuard? skin : cloth; ctx.lineWidth = 6;
   if(attackT > 0){
     const t = 1 - attackT/0.28;
     const a = lerp(-1.9, 0.9, Math.min(1, t*1.6));
-    arm(2,-42, a, 0.25);
-    const sxp = 2 + Math.sin(a)*11 + Math.sin(a+0.25)*10;
-    const syp = -42 + Math.cos(a)*11 + Math.cos(a+0.25)*10;
+    arm(2,-53, a, 0.25);
+    const sxp = 2 + Math.sin(a)*12 + Math.sin(a+0.25)*11;
+    const syp = -53 + Math.cos(a)*12 + Math.cos(a+0.25)*11;
     ctx.save();
     ctx.translate(sxp, syp); ctx.rotate(a + 0.2);
     ctx.fillStyle = '#D2D2CC';
-    ctx.fillRect(-1.6, -34, 3.2, 34);
-    ctx.fillStyle = '#7A5326'; ctx.fillRect(-4, -2, 8, 4);
+    ctx.beginPath();
+    ctx.moveTo(-1.8, 0); ctx.lineTo(-1.4, -34); ctx.lineTo(0, -39); ctx.lineTo(1.6, -34); ctx.lineTo(2, 0);
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = 'rgba(120,120,116,0.8)';       // blade fuller
+    ctx.fillRect(-0.4, -34, 0.9, 32);
+    ctx.fillStyle = '#7A5326'; ctx.fillRect(-4.5, -2, 9, 4);
     ctx.restore();
     if(t>0.2 && t<0.95){
-      ctx.strokeStyle = 'rgba(240,228,190,'+(0.5*(1-t))+')'; ctx.lineWidth = 5;
-      ctx.beginPath(); ctx.arc(2,-42, 34, a-1.1, a+0.25); ctx.stroke();
+      ctx.strokeStyle = 'rgba(240,228,190,'+(0.5*(1-t))+')'; ctx.lineWidth = 6;
+      ctx.beginPath(); ctx.arc(2,-53, 37, a-1.1, a+0.25); ctx.stroke();
     }
   } else {
-    arm(2,-42, swing*0.8+0.35, 0.5);
-    if(!isGuard){
-      ctx.save(); ctx.translate(-4,-46); ctx.rotate(2.5);
-      ctx.fillStyle = '#B9B9B2'; ctx.fillRect(-1.4, 0, 2.8, 26);
-      ctx.fillStyle = '#7A5326'; ctx.fillRect(-3.4, -2, 7, 3.4);
+    arm(2,-53, swing*0.8+0.35, 0.5);
+    if(!isGuard){                                  // sheathed on the back
+      ctx.save(); ctx.translate(-5,-58); ctx.rotate(2.5);
+      ctx.fillStyle = '#B9B9B2'; ctx.fillRect(-1.4, 0, 2.8, 27);
+      ctx.fillStyle = '#7A5326'; ctx.fillRect(-3.6, -2, 7.4, 3.4);
       ctx.restore();
     }
   }
-  if(isGuard){
+  if(isGuard){                                     // spear
     ctx.strokeStyle = '#3A2A1C'; ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.moveTo(10,-70); ctx.lineTo(4,-14); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(10,-80); ctx.lineTo(4,-14); ctx.stroke();
     ctx.fillStyle = '#C9C9C4';
-    ctx.beginPath(); ctx.moveTo(10,-70); ctx.lineTo(14,-60); ctx.lineTo(7,-62); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(10,-80); ctx.lineTo(14,-70); ctx.lineTo(7,-72); ctx.closePath(); ctx.fill();
   }
-  // head
+
+  // head shadowed under the hood, lit crescent toward the sun
+  ctx.fillStyle = shade(skin,-20);
+  ctx.beginPath(); ctx.arc(4,-62, 7.2, 0, 7); ctx.fill();
   ctx.fillStyle = skin;
-  ctx.beginPath(); ctx.arc(3,-51, 7.5, 0, 7); ctx.fill();
-  if(hooded){                                               // pointed hood over the head
+  ctx.beginPath(); ctx.arc(5.5,-62, 5.2, -1.5, 1.3); ctx.fill();
+  if(hooded){
     ctx.fillStyle = cloth;
     ctx.beginPath();
-    ctx.moveTo(-6,-46);
-    ctx.quadraticCurveTo(-7,-62, 3,-63);
-    ctx.quadraticCurveTo(13,-62, 12,-50);
-    ctx.lineTo(8,-45);
-    ctx.quadraticCurveTo(3,-58, -2,-45);
+    ctx.moveTo(-7,-56);
+    ctx.quadraticCurveTo(-10,-72, 2,-74);
+    ctx.quadraticCurveTo(14,-73, 13,-60);
+    ctx.lineTo(10,-55);
+    ctx.quadraticCurveTo(9,-68, 0,-67);
+    ctx.quadraticCurveTo(-5,-64, -3,-55);
     ctx.closePath(); ctx.fill();
-    ctx.fillStyle = '#B5342A';                              // sash band at the brow
-    ctx.fillRect(4,-56, 8, 2.4);
+    ctx.beginPath();                               // hood point trailing back
+    ctx.moveTo(-6,-70); ctx.quadraticCurveTo(-13,-66, -12,-58); ctx.lineTo(-7,-58); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = sashC; ctx.fillRect(6,-70, 7, 2.2);
+  } else if(isGuard){
+    ctx.fillStyle = '#8C2F22';
+    ctx.beginPath(); ctx.arc(4,-64, 7.6, Math.PI*0.95, Math.PI*2.05); ctx.fill();
+    ctx.fillRect(-3,-66, 15, 3);
+    ctx.fillStyle = '#C99A3F'; ctx.fillRect(2,-73, 4, 6);
   } else {
-    ctx.fillStyle = isGuard ? '#8C2F22' : '#E9DFC6';
-    ctx.beginPath(); ctx.arc(3,-53.5, 7.6, Math.PI*0.95, Math.PI*2.06); ctx.fill();
-    ctx.fillStyle = '#C99A3F';
-    ctx.fillRect(isGuard? -1: 0, -60, isGuard? 8: 7, 2.6);
+    ctx.fillStyle = '#E9DFC6';
+    ctx.beginPath(); ctx.arc(4,-64.5, 7.6, Math.PI*0.95, Math.PI*2.06); ctx.fill();
+    ctx.fillStyle = '#C99A3F'; ctx.fillRect(1,-71, 7, 2.6);
   }
-  ctx.strokeStyle = 'rgba(255,240,200,0.45)'; ctx.lineWidth = 1.4;
-  ctx.beginPath(); ctx.arc(3,-51, 7.5, -2.4, -0.6); ctx.stroke();
+  ctx.strokeStyle = 'rgba(255,240,200,0.4)'; ctx.lineWidth = 1.3;
+  ctx.beginPath(); ctx.arc(4,-62, 7.2, -2.4, -0.7); ctx.stroke();
 
   ctx.restore();
 
   function arm(ox, oy, a, elbow){
-    const ex = ox + Math.sin(a)*11, ey = oy + Math.cos(a)*11;
-    const hx2 = ex + Math.sin(a+elbow)*10, hy2 = ey + Math.cos(a+elbow)*10;
+    const ex = ox + Math.sin(a)*12, ey = oy + Math.cos(a)*12;
+    const hx2 = ex + Math.sin(a+elbow)*11, hy2 = ey + Math.cos(a+elbow)*11;
     ctx.beginPath(); ctx.moveTo(ox,oy); ctx.lineTo(ex,ey); ctx.lineTo(hx2,hy2); ctx.stroke();
+  }
+}
+
+function drawMist(yc, alpha){               // slow horizontal mist banks (screen space)
+  for(let i=0;i<4;i++){
+    const drift = (time*(9+i*3)) % (W+560);
+    const x = ((i*470 + drift) % (W+560)) - 280;
+    const y = yc + Math.sin(time*0.4+i*2)*14 + hash(i*91)*36 - 18;
+    const g = ctx.createRadialGradient(x, y, 20, x, y, 280);
+    g.addColorStop(0,'rgba(236,226,198,'+alpha+')');
+    g.addColorStop(1,'rgba(236,226,198,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.ellipse(x, y, 300, 58, 0, 0, 7); ctx.fill();
   }
 }
 
@@ -1213,6 +1371,7 @@ function drawLaneContents(l){
   const pal = l===0? level.palBack : l===2? level.palFront : level.pal;
   laneBegin(l);
   for(const b of level.platforms) if(b[4]===l) drawPlatform(b[0],b[1],b[2],b[3],l,b[5]||'stone',pal);
+  for(const lk of level.links) if(lk.a===l || lk.b===l) drawGate(lk.cx, lk.gy[l]);
   if(l===1){
     for(const c of level.checkpoints) drawFlag(c.x, c.y, c.lit);
     drawGoal(level.goal.x, level.goal.y);
@@ -1316,17 +1475,27 @@ function render(){
   ctx.fillStyle = skyGrad(); ctx.fillRect(0,0,W,H);
   drawSun();
   drawInkClouds();
+  // aerial depth of field: far + mid layers drawn offscreen, composited once with blur
+  const main = ctx;
+  bctx.clearRect(0,0,W,H);
+  ctx = bctx;
   drawFarLayer();
   drawMidLayer();
+  ctx = main;
+  ctx.filter = 'blur(1.8px)';
+  ctx.drawImage(BGC, 0, 0);
+  ctx.filter = 'none';
   drawWallLayer();
 
   // ---- background lane, then atmospheric haze over it
   drawLaneContents(0);
   ctx.fillStyle = level.fogHaze;
   ctx.fillRect(0,0,W,H);
+  drawMist(468, 0.10);
 
   // ---- main lane
   drawLaneContents(1);
+  drawMist(642, 0.07);
 
   // water sits between main and near lanes
   laneBegin(1); drawWater(); laneEnd();
@@ -1344,7 +1513,14 @@ function render(){
   ctx.textAlign='left';
   laneEnd();
 
+  const main2 = ctx;
+  bctx.clearRect(0,0,W,H);
+  ctx = bctx;
   drawForegroundDressing();
+  ctx = main2;
+  ctx.filter = 'blur(3px)';
+  ctx.drawImage(BGC, 0, 0);
+  ctx.filter = 'none';
   drawRays();
 
   // color grade + vignette + paper grain
@@ -1382,6 +1558,7 @@ function renderTitleBG(){
     level.coins = level.coins.map(c=>({x:c[0],y:c[1],lane:c[2]??1,taken:false,spin:hash(c[0])*6}));
     level.guards = level.guards.map(g=>({x:g[0]+30,x1:g[0],x2:g[1],y:g[2],lane:g[3]??1,dir:1,dead:false,w:26,h:54,phase:hash(g[0])*6}));
     level.checkpoints = level.checkpoints.map(c=>({x:c[0],y:c[1],lit:false}));
+    prepLinks();
     birds = [];
     player.x = -999; player.y = -999;
   }

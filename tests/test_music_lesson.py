@@ -1168,5 +1168,46 @@ class DecodeCostTests(unittest.TestCase):
 
 
 
+
+class BuildInfoTests(unittest.TestCase):
+    def test_in_a_git_checkout_the_commit_and_time_are_shown(self):
+        from music_lesson import __version__
+        from music_lesson.runtime import build_info
+
+        build_info.cache_clear()
+        info = build_info()
+        self.assertIn(f"v{__version__}", info)
+        # "v0.2.0 · 8fb739e · 2026-09-01 14:32" — a short sha and a timestamp.
+        parts = info.split(" · ")
+        self.assertEqual(len(parts), 3, info)
+        self.assertTrue(all(c in "0123456789abcdef" for c in parts[1]), info)
+        self.assertRegex(parts[2], r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}")
+
+    def test_outside_a_checkout_the_bare_version_still_shows(self):
+        from unittest import mock
+
+        from music_lesson import __version__, runtime
+
+        runtime.build_info.cache_clear()
+        try:
+            with mock.patch.object(
+                runtime.subprocess, "run", side_effect=OSError("no git")
+            ):
+                self.assertEqual(runtime.build_info(), f"v{__version__}")
+        finally:
+            runtime.build_info.cache_clear()
+
+    def test_the_json_export_records_the_build(self):
+        import json
+
+        from music_lesson.output import to_json
+
+        result = RenderingTests()._result()
+        data = json.loads(to_json(result))
+        self.assertIn("app_build", data)
+        self.assertIn("v", data["app_build"])
+
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

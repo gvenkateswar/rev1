@@ -114,7 +114,10 @@ class LessonResult:
         return sum(s.duration for s in self.segments if not s.is_sung)
 
     def to_dict(self) -> dict:
+        from .runtime import build_info
+
         return {
+            "app_build": build_info(),
             "source": self.source,
             "language": self.language,
             "tonic": self.tonic.to_dict(),

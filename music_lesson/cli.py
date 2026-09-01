@@ -6,7 +6,7 @@ import sys
 
 from .core import transcribe_lesson
 from .output import render
-from .runtime import environment_summary
+from .runtime import build_info, environment_summary
 from .swara import parse_tonic
 
 
@@ -144,7 +144,9 @@ def main(argv: list[str] | None = None) -> int:
             sys.stderr.write(f"Error: {exc}\n")
             return 2
 
-    sys.stderr.write(f"Running on: {environment_summary()}\n")
+    sys.stderr.write(
+        f"Running on: {environment_summary()}  |  {build_info()}\n"
+    )
 
     try:
         result = transcribe_lesson(

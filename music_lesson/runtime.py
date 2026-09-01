@@ -22,7 +22,9 @@ from __future__ import annotations
 import ctypes
 import os
 import platform
+import subprocess
 import sys
+from functools import lru_cache
 
 _applied = False
 
@@ -91,3 +93,40 @@ def _rosetta_translated() -> bool | None:
         return bool(value.value)
     except Exception:
         return None
+
+
+@lru_cache(maxsize=1)
+def build_info() -> str:
+    """Which build of this app is running: version, commit, commit time.
+
+    Answers the recurring debugging question "did the git pull actually reach
+    the app I have open?" — the sidebar shows this string, so a stale commit
+    id or a missing one settles it at a glance. Falls back to the bare
+    version when the package runs outside a git checkout. Uncommitted edits
+    are flagged, because "8fb739e plus local changes" and "8fb739e" do not
+    behave the same.
+    """
+    from music_lesson import __version__
+
+    label = f"v{__version__}"
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    try:
+        head = subprocess.run(
+            ["git", "-C", root, "log", "-1", "--format=%h %cI"],
+            capture_output=True, text=True, timeout=3,
+        )
+        if head.returncode != 0 or not head.stdout.strip():
+            return label
+        sha, _, stamp = head.stdout.strip().partition(" ")
+        when = stamp[:16].replace("T", " ")
+        dirty = subprocess.run(
+            ["git", "-C", root, "status", "--porcelain", "--untracked-files=no"],
+            capture_output=True, text=True, timeout=3,
+        )
+        suffix = (
+            " + local changes"
+            if dirty.returncode == 0 and dirty.stdout.strip() else ""
+        )
+        return f"{label} · {sha} · {when}{suffix}"
+    except Exception:
+        return label

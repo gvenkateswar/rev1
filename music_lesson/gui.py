@@ -22,7 +22,7 @@ try:
     from .output import render, to_practice_sheet
     from .output import format_timings
     from .raga import all_raga_names
-    from .runtime import environment_summary
+    from .runtime import build_info, environment_summary
     from .swara import parse_tonic
     from .transcribe import SOUTH_ASIAN_LANGUAGES
 except ImportError:
@@ -31,7 +31,7 @@ except ImportError:
     from music_lesson.output import render, to_practice_sheet
     from music_lesson.output import format_timings
     from music_lesson.raga import all_raga_names
-    from music_lesson.runtime import environment_summary
+    from music_lesson.runtime import build_info, environment_summary
     from music_lesson.swara import parse_tonic
     from music_lesson.transcribe import SOUTH_ASIAN_LANGUAGES
 
@@ -141,6 +141,7 @@ def _sidebar() -> dict:
             st.warning(summary)
         else:
             st.caption(summary)
+        st.caption(build_info())
 
     return {
         "tonic_text": tonic_text.strip(),

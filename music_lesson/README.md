@@ -138,7 +138,12 @@ cores (CTranslate2's default is 4 threads regardless of machine), and the
 **section picker** exists precisely so you audition settings on two minutes
 instead of committing an hour: expand "Preview & pick a section" in the GUI
 (waveform + range slider + player), or `--start 12:30 --end 15:00` on the CLI.
-Timestamps in the output stay true to the full recording.
+Timestamps in the output stay true to the full recording. The same expander
+has **"Analyze pitch of selection"** — the NumPy side only, seconds not
+minutes — which draws the tracked pitch as dots on a swara grid with the
+sung/spoken/drone bands shaded, so you can see what the tracker hears (and
+whether it is following the voice or the harmonium) before committing to a
+speech run.
 
 One cost is invisible and was the worst offender on real lesson audio:
 Whisper's retry ladder. Any window whose output scores "low quality" is
@@ -343,6 +348,14 @@ JSON export and counted in the run's notices, never silently deleted.
 - **Tala is not detected.** Sam, matra and laya are picked up only when
   somebody says them. Detecting the cycle from tabla would be a real addition
   and is not here.
+- **A loud harmonium is the hardest case this tool faces.** The pitch
+  tracker is monophonic: it reports ONE pitch per instant, and when voice,
+  harmonium and tanpura sound together it follows whichever dominates — so on
+  accompaniment-heavy recordings the sargam can be the harmonium's line, the
+  sung/spoken split degrades, and Whisper gets handed music. Use the pitch
+  analysis view ("Analyze pitch of selection" in the section picker) to *see*
+  what the tracker is following before spending a run; recordings where the
+  voice is clearly louder than the accompaniment transcribe far better.
 - **Noise reduction is opt-in, not automatic.** The pitch tracker is fairly
   robust to broadband noise, so hiss mostly costs Whisper words, not swaras.
   `--denoise` (or the GUI checkbox) runs a mild high-pass plus spectral
@@ -359,7 +372,7 @@ JSON export and counted in the run's notices, never silently deleted.
 python3 -m unittest discover -s tests -v
 ```
 
-93 tests, no model downloads and no network: everything runs against
+101 tests, no model downloads and no network: everything runs against
 synthesized audio whose correct answer is known by construction — a phrase sung
 at a known Sa must come back as the sargam that was synthesized, speech must
 not be labelled as singing, and the whole pipeline is exercised end to end with

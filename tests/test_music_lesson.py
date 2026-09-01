@@ -1209,5 +1209,38 @@ class BuildInfoTests(unittest.TestCase):
 
 
 
+
+class PromptEchoTests(unittest.TestCase):
+    """The Devanagari prompt can leak too, and it leaks in alternating pairs."""
+
+    def _tokens(self):
+        hot = lexicon.hotwords() + ", " + lexicon.hotwords_devanagari()
+        return [t.strip().lower() for t in hot.split(",") if t.strip()]
+
+    def test_the_alternating_devanagari_echo_is_dropped(self):
+        from music_lesson.core import _junk_reason
+
+        # The real leak: "svar, sam, matra, sam, matra, sam, matra, ..." —
+        # no token repeats consecutively, but three words fill fifty slots.
+        sam, matra = "\u0938\u092e", "\u092e\u093e\u0924\u094d\u0930\u093e"
+        wall = "\u0938\u094d\u0935\u0930, " + f"{sam}, {matra}, " * 20 + sam
+        self.assertEqual(_junk_reason(wall, self._tokens()), "repetition loop")
+
+    def test_short_deliberate_repetition_is_kept(self):
+        from music_lesson.core import _junk_reason
+
+        # A guru saying a phrase three times is teaching, not a loop.
+        phrase = "\u0938\u092e \u092a\u0947 \u0906\u0913, " * 3
+        self.assertIsNone(_junk_reason(phrase.rstrip(", "), self._tokens()))
+
+    def test_varied_real_speech_is_kept(self):
+        from music_lesson.core import _junk_reason
+
+        text = ("ab bandish shuru karo, sam pe aana hai, matra gin ke, "
+                "phir mukhda pakdo aur vistaar karo")
+        self.assertIsNone(_junk_reason(text, self._tokens()))
+
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

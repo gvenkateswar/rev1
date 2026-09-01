@@ -192,7 +192,7 @@ def _load_preview(path: str):
     return preview
 
 
-def _section_picker(source: str) -> tuple[float, float] | None:
+def _section_picker(source: str, settings: dict) -> tuple[float, float] | None:
     """Waveform + range slider; returns (start, end) or None for the whole file."""
     with st.expander("Preview & pick a section", expanded=False):
         st.audio(source)
@@ -223,9 +223,163 @@ def _section_picker(source: str) -> tuple[float, float] | None:
             f"Selected {_fmt_ts(start)} – {_fmt_ts(end)} "
             f"({_fmt_ts(end - start)} of {_fmt_ts(duration)})"
         )
-        if start > 0.0 or end < duration - 0.5:
-            return (float(start), float(end))
+        chosen = (
+            (float(start), float(end))
+            if start > 0.0 or end < duration - 0.5 else None
+        )
+        if st.button("Analyze pitch of selection  ·  fast, no speech model"):
+            st.session_state["analysis_request"] = chosen or (0.0, duration)
+        request = st.session_state.get("analysis_request")
+        if request is not None:
+            _render_pitch_analysis(source, request, settings)
+        return chosen
     return None
+
+
+def _render_pitch_analysis(
+    source: str, clip: tuple[float, float], settings: dict
+) -> None:
+    """The sonic X-ray: pitch contour on the swara grid, regions shaded.
+
+    Runs only the NumPy side of the pipeline — seconds, not minutes — so it is
+    the tool for seeing what the tracker hears *before* spending a Whisper run
+    on it: whether the taans register as singing, whether the tracker is
+    following the voice or the harmonium, where Sa sits.
+    """
+    import altair as alt
+    import pandas as pd
+
+    from music_lesson.pitch import hz_to_cents, track_pitch
+    from music_lesson.segmentation import classify_regions
+    from music_lesson.swara import (
+        _HIST_REF_HZ, detect_tonic, parse_tonic, sargam_line, segment_notes,
+        swara_label,
+    )
+    from transcriber import audio as _audio
+
+    start, end = clip
+    key = (
+        f"analysis::{source}::{os.path.getmtime(source)}::{start:.1f}"
+        f"::{end:.1f}::{settings['tonic_text']}::{settings['sung_threshold']}"
+    )
+    if st.session_state.get("analysis_key") != key:
+        with st.spinner("Analyzing pitch…"):
+            wav = _audio.extract_audio(source, start=start, duration=end - start)
+            try:
+                samples, rate = _audio.load_waveform(wav)
+            finally:
+                try:
+                    os.unlink(wav)
+                except OSError:
+                    pass
+            track = track_pitch(samples, rate)
+            if settings["tonic_text"]:
+                try:
+                    tonic = parse_tonic(settings["tonic_text"])
+                except ValueError:
+                    tonic = 0.0
+            else:
+                tonic = 0.0
+            if not tonic:
+                tonic = detect_tonic(
+                    track, segment_notes(track, _HIST_REF_HZ)
+                ).hz
+            notes = segment_notes(track, tonic) if tonic else []
+            regions = classify_regions(
+                track, notes, tonic, sung_threshold=settings["sung_threshold"]
+            )
+            st.session_state["analysis_key"] = key
+            st.session_state["analysis"] = (track, tonic, notes, regions)
+    track, tonic, notes, regions = st.session_state["analysis"]
+
+    if not tonic or not track.voiced.any():
+        st.warning("No pitched material found in this selection.")
+        return
+
+    cents = hz_to_cents(track.f0, tonic)
+    voiced = ~np.isnan(cents)
+    times = track.times[voiced] + start
+    semis = cents[voiced] / 100.0
+    if len(times) > 4000:                    # keep the chart responsive
+        step = int(np.ceil(len(times) / 4000))
+        times, semis = times[::step], semis[::step]
+
+    lo = int(np.floor(np.percentile(semis, 2))) - 1
+    hi = int(np.ceil(np.percentile(semis, 98))) + 1
+    lo, hi = max(lo, -17), min(hi, 26)
+
+    grid = pd.DataFrame([
+        {
+            "semi": r,
+            "swara": swara_label(((r % 12) + 12) % 12, r // 12),
+            "kind": "sa" if r % 12 == 0 else
+                    "pa" if ((r % 12) + 12) % 12 == 7 else
+                    "komal" if ((r % 12) + 12) % 12 in (1, 3, 6, 8, 10) else "shuddha",
+        }
+        for r in range(lo, hi + 1)
+    ])
+    region_df = pd.DataFrame([
+        {"start": r.start + start, "end": r.end + start, "kind": r.kind}
+        for r in regions
+    ])
+    contour_df = pd.DataFrame({"t": times, "semi": semis})
+
+    x_scale = alt.Scale(domain=[start, end], nice=False)
+    bands = alt.Chart(region_df).mark_rect(opacity=0.14).encode(
+        x=alt.X("start:Q", scale=x_scale, title="seconds (recording time)"),
+        x2="end:Q",
+        color=alt.Color(
+            "kind:N",
+            scale=alt.Scale(
+                domain=["sung", "spoken", "drone", "silent"],
+                range=["#2e7d32", "#607d8b", "#b8860b", "#bdbdbd"],
+            ),
+            legend=alt.Legend(title=None, orient="top"),
+        ),
+    )
+    rules = alt.Chart(grid).mark_rule().encode(
+        y=alt.Y("semi:Q", scale=alt.Scale(domain=[lo, hi]),
+                axis=alt.Axis(title="swara", values=list(range(lo, hi + 1)),
+                              labels=False, grid=False)),
+        strokeWidth=alt.condition(
+            "datum.kind == 'sa'", alt.value(1.6),
+            alt.condition("datum.kind == 'pa'", alt.value(1.1), alt.value(0.4)),
+        ),
+        strokeDash=alt.condition(
+            "datum.kind == 'komal'", alt.value([3, 4]), alt.value([1, 0])
+        ),
+        opacity=alt.value(0.6),
+    )
+    labels = alt.Chart(grid).mark_text(
+        align="right", dx=-4, fontSize=11,
+    ).encode(
+        y="semi:Q", text="swara:N",
+        x=alt.value(0),
+    )
+    contour = alt.Chart(contour_df).mark_circle(size=5, opacity=0.75).encode(
+        x=alt.X("t:Q", scale=x_scale), y="semi:Q",
+        color=alt.value("#1a5b8f"),
+    )
+    st.altair_chart(
+        alt.layer(bands, rules, labels, contour).properties(height=380),
+        use_container_width=True,
+    )
+
+    sung = sum(r.duration for r in regions if r.kind == "sung")
+    spoken = sum(r.duration for r in regions if r.kind == "spoken")
+    from music_lesson.swara import describe_hz
+    st.caption(
+        f"Sa = {describe_hz(tonic)} · {_fmt_ts(sung)} sung / "
+        f"{_fmt_ts(spoken)} spoken in this selection · dots are the tracked "
+        f"pitch — if they follow the harmonium instead of the voice, the "
+        f"sargam will too."
+    )
+    sung_notes = [n for n in notes if any(
+        r.kind == "sung" and r.overlap(n.start, n.end) > 0.5 * n.duration
+        for r in regions
+    )]
+    if sung_notes:
+        st.code(sargam_line(sung_notes, max_notes=80), language=None)
 
 
 def _pick_input() -> str | None:
@@ -319,7 +473,7 @@ def main() -> None:
 
     settings = _sidebar()
     source = _pick_input()
-    clip = _section_picker(source) if source else None
+    clip = _section_picker(source, settings) if source else None
 
     label = (
         f"Transcribe {_fmt_ts(clip[1] - clip[0])} section" if clip

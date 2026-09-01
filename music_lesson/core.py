@@ -255,7 +255,8 @@ def transcribe_lesson(
                 f"heavy apps, and try beam width 1 for drafts."
             )
         speech_segments, junk = _drop_decoder_junk(
-            speech_segments, lexicon.hotwords(prompt_terms)
+            speech_segments,
+            lexicon.hotwords(prompt_terms) + ", " + lexicon.hotwords_devanagari(),
         )
         if junk:
             notices.append(
@@ -621,6 +622,12 @@ def _junk_reason(text: str, hotword_tokens: list[str]) -> str | None:
         run = run + 1 if a == b else 1
         longest = max(longest, run)
     if longest >= 6:
+        return "repetition loop"
+
+    # Alternating loops slip the consecutive test: "sam, matra, sam, matra"
+    # forty times has no repeated *adjacent* token, but a long segment built
+    # from two or three words is a decoder loop all the same.
+    if len(tokens) >= 10 and len(set(tokens)) / len(tokens) < 0.3:
         return "repetition loop"
 
     # Hotword echo: >=5 tokens matching a contiguous, in-order slice of the

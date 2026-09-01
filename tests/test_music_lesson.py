@@ -547,6 +547,19 @@ class DecodingCostTests(unittest.TestCase):
         self.assertAlmostEqual(_speech_elapsed(50.0, clips), 10.0)
         self.assertAlmostEqual(_speech_elapsed(50.0, None), 50.0)
 
+
+    def test_missing_diarization_backend_degrades_loudly_not_silently(self):
+        # Resemblyzer is deliberately not installed in the test environment,
+        # so the real degradation path runs: no crash, no labels, one notice.
+        from music_lesson.core import _run_diarization
+
+        notices: list[str] = []
+        turns = _run_diarization("/tmp/none.wav", "cluster", None, None, notices)
+        self.assertEqual(turns, [])
+        self.assertEqual(len(notices), 1)
+        self.assertIn("requirements-speakers.txt", notices[0])
+
+
     def test_a_faster_whisper_too_old_to_skip_singing_says_so(self):
         from music_lesson.core import _transcription_notices
         from music_lesson.transcribe import SpeechResult

@@ -1,27 +1,23 @@
-# Music-lesson transcriber: pitch analysis + speech recognition on the parts
-# that are actually speech.
+# Music-lesson transcriber — core. Python 3.9 through 3.13.
 #
-# Core
-faster-whisper>=1.0.0         # transcription (CTranslate2; ~4x faster than
-                              # openai-whisper on CPU, built-in VAD, int8).
-                              # >=1.1 additionally enables per-window language
-                              # detection for Hindi/English code-switching.
+# Guru/student separation is a separate, optional install (see
+# requirements-speakers.txt): its dependency chain (resemblyzer -> webrtcvad)
+# ships no wheels for newer Pythons and needs a C compiler to build, and a
+# broken optional extra should not be able to block the whole install. The
+# pipeline runs without it — you just get no Guru/Student labels.
+faster-whisper>=1.1.0         # transcription (CTranslate2; ~4x faster than
+                              # openai-whisper on CPU, int8, native Apple
+                              # silicon wheels). >=1.1 is where hotwords,
+                              # clip_timestamps and per-window language
+                              # detection all exist — this package uses all
+                              # three.
 soundfile>=0.12.0             # WAV I/O
 numpy>=1.24.0                 # the pitch tracker is hand-rolled on top of this
 streamlit>=1.30.0             # GUI (optional if you only use the CLI)
 
-# Speaker separation (guru vs. student). Optional: run with --no-speakers to
-# skip it entirely and save the install.
-resemblyzer>=0.1.1            # speaker embeddings
-scikit-learn>=1.2.0           # clustering + silhouette auto speaker count
-
-# Optional, best-quality speaker separation (needs a free HF token and a
-# one-time license acceptance):
-# pyannote.audio>=3.1.0
-#
 # System dependency (not pip-installable): ffmpeg must be on PATH.
 #
-# Deliberately NOT required: librosa, torchaudio, essentia. Pitch tracking,
-# tonic detection and swara segmentation are implemented in this package on
-# plain NumPy (see pitch.py), which keeps the dependency set small and the
-# numpy pin question closed.
+# Deliberately NOT required: librosa, torch, torchaudio, essentia. Pitch
+# tracking, tonic detection and swara segmentation are implemented in this
+# package on plain NumPy (see pitch.py), which keeps the install small enough
+# to work on any current Python.

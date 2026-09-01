@@ -30,13 +30,34 @@ ways:
 
 ## Install
 
-Requires Python 3.9+ and **ffmpeg** on your PATH
+Requires Python 3.9-3.13 and **ffmpeg** on your PATH
 (`sudo apt install ffmpeg` / `brew install ffmpeg` / `choco install ffmpeg`).
 
+Use a virtual environment — on macOS, Homebrew's Python refuses bare
+`pip install` anyway (PEP 668 "externally-managed-environment"), and the venv
+also gives you a plain `python` command:
+
 ```sh
-cd music_lesson
-pip install -r requirements.txt
+# from the repo root, once
+python3 -m venv .venv
+
+# in every new terminal
+source .venv/bin/activate
+
+pip install -r music_lesson/requirements.txt
 ```
+
+Guru/student separation is a separate, optional install, because its
+dependency chain (resemblyzer, webrtcvad, torch) has no wheels for the newest
+Pythons and should not be able to block the rest:
+
+```sh
+# optional; if it fails to build, everything else still works
+pip install -r music_lesson/requirements-speakers.txt
+```
+
+Without it the pipeline runs normally, segments just carry no Guru/Student
+labels — and the run's output says so rather than leaving you guessing.
 
 The first run downloads the Whisper model. Pitch analysis needs no model at
 all — it is plain NumPy in `pitch.py`.
@@ -199,7 +220,14 @@ sheet cross-references against the notes.
   escape hatch (`KMP_DUPLICATE_LIB_OK=TRUE`) before either library
   initializes, noting it in the run's output. Export the variable yourself
   (either value) and your setting wins. `--no-speakers` avoids torch entirely.
-- **`zsh: command not found: python`** — use `python3`.
+- **`zsh: command not found: python`** — use `python3`, or activate the venv,
+  which provides `python`.
+- **Apple silicon** — use an arm64 Python (Homebrew's is). faster-whisper's
+  engine ships native arm64 wheels, so transcription runs 2-4x faster than
+  under an Intel Python translated by Rosetta — and the Intel-only OpenMP
+  crash above cannot happen in a pure arm64 process. The Whisper model cache
+  (`~/.cache/huggingface`) is shared, so switching Pythons re-downloads
+  nothing.
 
 ## Known limits — read this before you trust it
 

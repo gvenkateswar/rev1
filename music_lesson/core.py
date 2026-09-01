@@ -208,7 +208,8 @@ def transcribe_lesson(
             progress("Telling the voices apart", 0.75)
             with _timed(timings, "diarize"):
                 turns = _run_diarization(
-                    wav_path, diarization_backend, num_speakers, hf_token
+                    wav_path, diarization_backend, num_speakers, hf_token,
+                    notices,
                 )
 
         progress("Assembling the lesson", 0.90)
@@ -329,17 +330,34 @@ def _transcription_notices(speech) -> list[str]:
 
 
 def _run_diarization(
-    wav_path: str, backend: str, num_speakers: int | None, hf_token: str | None
+    wav_path: str,
+    backend: str,
+    num_speakers: int | None,
+    hf_token: str | None,
+    notices: list[str],
 ):
+    """Diarize if the optional backend is installed; say so if it is not.
+
+    Diarization is optional garnish — a lesson transcript without speaker
+    labels is still a lesson transcript — but degrading *silently* would look
+    like a bug ("why is nothing labelled Guru?"), so the reason lands in the
+    run's notices. Its dependencies live in requirements-speakers.txt because
+    they do not install cleanly everywhere (webrtcvad has no wheels for newer
+    Pythons), and must not be able to block the core install.
+    """
     from transcriber.diarize import diarize
 
     try:
         return diarize(
             wav_path, backend=backend, num_speakers=num_speakers, hf_token=hf_token
         )
-    except RuntimeError:
-        # Diarization is optional garnish: a lesson transcript without speaker
-        # labels is still a lesson transcript.
+    except RuntimeError as exc:
+        notices.append(
+            f"No Guru/Student labels: speaker separation is unavailable "
+            f"({exc}). Install it with: pip install -r "
+            f"music_lesson/requirements-speakers.txt — or pass --no-speakers "
+            f"to silence this."
+        )
         return []
 
 

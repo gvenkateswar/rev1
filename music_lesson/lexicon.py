@@ -189,10 +189,12 @@ class Correction:
 
 
 def whisper_prompt(extra_terms: list[str] | None = None, limit: int = 60) -> str:
-    """An ``initial_prompt`` that primes Whisper for a Hindustani lesson.
+    """An ``initial_prompt`` for the first window; see :func:`hotwords`.
 
-    Whisper truncates the prompt to its last 224 tokens, so the caller's own
-    terms (`--raga Yaman`, a guru's name) go last, where they always survive.
+    faster-whisper applies this to the first 30-second window only, so it is a
+    fallback for versions without hotwords support rather than the main lever.
+    Whisper truncates a prompt to its last 224 tokens, so the caller's own
+    terms (a raag name, a guru's name) go last, where they always survive.
     """
     core = [
         "raag", "swara", "sargam", "alaap", "bandish", "taan", "meend", "gamak",
@@ -206,6 +208,28 @@ def whisper_prompt(extra_terms: list[str] | None = None, limit: int = 60) -> str
         "A Hindustani classical music lesson in a mix of Hindi and English. "
         "Terms used: " + ", ".join(words) + "."
     )
+
+
+def hotwords(extra_terms: list[str] | None = None, limit: int = 44) -> str:
+    """A glossary for Whisper's ``hotwords``, re-injected on every window.
+
+    Unlike ``initial_prompt`` — which faster-whisper applies to the first
+    30-second window and then forgets — hotwords are prepended to every
+    window's prompt, so they keep working forty minutes into a lesson. The
+    list is truncated from the *end* if it runs long, so the caller's own terms
+    go first: a raga name you typed in matters more than the fortieth entry of
+    a generic term list.
+    """
+    core = [
+        "raag", "bandish", "sargam", "alaap", "taan", "meend", "gamak",
+        "sthayi", "antara", "vilambit", "drut", "teentaal", "ektaal", "laya",
+        "komal", "teevra", "aroha", "avaroha", "pakad", "riyaz", "tanpura",
+        "swara", "sam", "matra", "khayal", "thumri", "tihai", "gharana",
+        "Yaman", "Bhairav", "Bhairavi", "Bhupali", "Malkauns", "Kafi",
+        "Khamaj", "Bageshri", "Bihag", "Todi", "Marwa", "Des", "Darbari",
+    ]
+    words = [t for t in (extra_terms or []) if t] + core
+    return ", ".join(words[:limit])
 
 
 def correct_text(text: str) -> tuple[str, list[Correction]]:

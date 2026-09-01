@@ -287,19 +287,38 @@ def _trim_sung_regions(
     return [r for r in regions if r.duration > 0.05]
 
 
-def speech_spans(regions: list[Region], pad: float = 0.25) -> list[tuple[float, float]]:
-    """Spoken stretches, padded slightly so word onsets are not clipped."""
+def speech_spans(
+    regions: list[Region],
+    pad: float = 0.25,
+    merge_gap: float = 12.0,
+    min_span: float = 0.6,
+) -> list[tuple[float, float]]:
+    """Spoken stretches to hand to Whisper, padded and coalesced.
+
+    *merge_gap* is the important one, and it exists because of how Whisper
+    costs out: every clip you hand it is padded to a full 30-second window
+    before the encoder runs, so a 2-second clip costs exactly what a 30-second
+    one does. A lesson that alternates "listen — *sings* — now you" every few
+    seconds would otherwise be chopped into hundreds of clips and take longer
+    than transcribing the whole recording twice over.
+
+    So short sung interjections are decoded *through* rather than skipped
+    (their output is discarded afterwards by the sung-region check in
+    :mod:`music_lesson.core`), while long stretches of alaap — where
+    hallucination is worst and the saving is real — are still excluded.
+    """
     spans = [
         (max(0.0, r.start - pad), r.end + pad)
         for r in regions if r.kind == SPOKEN
     ]
     merged: list[tuple[float, float]] = []
     for start, end in spans:
-        if merged and start <= merged[-1][1]:
+        if merged and start - merged[-1][1] <= merge_gap:
             merged[-1] = (merged[-1][0], max(merged[-1][1], end))
         else:
             merged.append((start, end))
-    return merged
+    # A clip too short to hold a phrase is not worth an encoder pass of its own.
+    return [(a, b) for a, b in merged if b - a >= min_span]
 
 
 def region_at(regions: list[Region], start: float, end: float) -> Region | None:

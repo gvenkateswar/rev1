@@ -26,7 +26,7 @@ ways:
 | Hallucinates sentences over alaap — it is a speech model, and singing is not silence, so it invents words to fill it | Classifies sung stretches from pitch first and only decodes the spoken ones |
 | Throws away the actual musical content: the notes | Writes every sung phrase as sargam (`N R G m D N S'`) against your Sa, with the cents each swara was held off equal temperament |
 | Picks one language for the file, so a Hindi/English sentence comes out half-wrong | Re-detects the language per window, and romanizes the Devanagari so you can read it while singing |
-| Has barely heard the vocabulary: "bandish" → "band dish", "teentaal" → "tea total", "Raag Yaman" → "raga man" | Primes the decoder with the domain vocabulary, then repairs what still came out wrong — auditably |
+| Has barely heard the vocabulary: "bandish" → "band dish", "teentaal" → "tea total", "Raag Yaman" → "raga man" | Injects the domain glossary into *every* decoding window (`hotwords`, not `initial_prompt` — that one only conditions the first 30 seconds), then repairs what still came out wrong, auditably |
 
 ## Install
 
@@ -43,12 +43,24 @@ all — it is plain NumPy in `pitch.py`.
 
 ## Use it — command line
 
+Comments go on their own line below — an interactive `zsh` does not treat a
+trailing `#` as a comment and will pass it to the program as an argument.
+
 ```sh
-# from the repo root
-python -m music_lesson lesson.m4a                        # → practice sheet
-python -m music_lesson lesson.m4a --tonic C#3            # tell it your Sa
-python -m music_lesson lesson.m4a -f srt -o lesson.srt   # subtitles with sargam
-python -m music_lesson lesson.m4a -f json -o lesson.json # everything, incl. every note
+# from the repo root; writes a practice sheet to stdout
+python -m music_lesson lesson.m4a
+
+# tell it your Sa
+python -m music_lesson lesson.m4a --tonic C#3
+
+# subtitles with sargam
+python -m music_lesson lesson.m4a -f srt -o lesson.srt
+
+# everything, including every note
+python -m music_lesson lesson.m4a -f json -o lesson.json
+
+# fastest useful first pass on a long lesson
+python -m music_lesson lesson.m4a --tonic C#3 --beam-size 1 --no-speakers
 ```
 
 **Set `--tonic`.** You know what your tanpura is tuned to; the detector is
@@ -65,6 +77,30 @@ streamlit run music_lesson/gui.py
 
 Point it at a local path (no upload limit), set your Sa in the sidebar, and
 read the practice sheet, the colour-coded transcript, or download any format.
+
+## How long it takes, and how to tell a slow run from a stuck one
+
+Everything except speech recognition is fast: pitch tracking runs about 70x
+faster than realtime, so a 40-minute lesson is analysed for Sa, swaras and
+sung/spoken in well under a minute. **Whisper is the whole cost.** On a laptop
+CPU, `small` decodes at roughly 0.5-1.5x realtime, so 20 minutes of *talking*
+(the singing is skipped) takes somewhere between 15 and 40 minutes. `medium` is
+about 3x slower again.
+
+The progress bar reports the percentage through the speech while it decodes,
+and the label says how many minutes it has to get through — so a run that is
+working looks like `Transcribing 18 min of talking — 34%`. Two things can
+still look like a hang:
+
+- **The first run downloads the model** (~460 MB for `small`, ~1.5 GB for
+  `medium`) before any progress appears. Check with `du -sh ~/.cache/huggingface`.
+- **A stuck run uses no CPU.** `top` will show the process pinned near 100% of
+  a core if it is decoding. If it is at 0% for minutes with the model already
+  downloaded, something is genuinely wrong.
+
+To go faster: `--beam-size 1` (roughly 1.5-2x), `--no-speakers` (skips
+diarization entirely), and a smaller model. On Apple silicon, plain CPU
+inference is already what faster-whisper uses; there is no MPS path.
 
 ## What comes out
 
@@ -100,6 +136,7 @@ read the practice sheet, the colour-coded transcript, or download any format.
 |------|---------|---------|
 | `--tonic` | Your Sa: `C#3`, `D3`, `138.6` | detect it |
 | `--model` | Whisper size: tiny/base/small/medium/large-v3 | `small` |
+| `--beam-size` | Whisper beam width; 1 is ~1.5-2x faster | `5` |
 | `--language` | Force `hi` or `en` | detect per window |
 | `--term WORD` | Extra vocabulary to prime the decoder (repeatable) | — |
 | `--sung-threshold` | How readily a stretch counts as singing, 0..1 | `0.50` |
@@ -185,7 +222,7 @@ sheet cross-references against the notes.
 python -m unittest discover -s tests -v
 ```
 
-42 tests, no model downloads and no network: everything runs against
+47 tests, no model downloads and no network: everything runs against
 synthesized audio whose correct answer is known by construction — a phrase sung
 at a known Sa must come back as the sargam that was synthesized, speech must
 not be labelled as singing, and the whole pipeline is exercised end to end with
@@ -209,3 +246,16 @@ music_lesson/
 
 `transcriber/` is reused for audio extraction, the Whisper model cache, and
 speaker diarization rather than forked.
+
+## One non-obvious thing about talking to Whisper
+
+Every clip you hand faster-whisper via `clip_timestamps` is padded to a full
+30-second window before the encoder runs — so a 2-second clip costs exactly
+what a 30-second one does. A lesson that alternates "listen — *sings* — now
+you" every few seconds would be chopped into hundreds of clips and take longer
+than transcribing the whole recording twice.
+
+So `speech_spans()` decodes *through* sung interjections shorter than 12
+seconds and discards their output afterwards, and only splits the clip list
+around sustained singing, where both the saving and the hallucination risk are
+real.

@@ -56,6 +56,10 @@ def build_parser() -> argparse.ArgumentParser:
                         metavar="WORD",
                         help="Extra vocabulary to prime the decoder with — a "
                              "raag name, your guru's name. Repeatable.")
+    speech.add_argument("--beam-size", type=int, default=5,
+                        help="Whisper beam width (default: 5). Drop to 1 for "
+                             "roughly 1.5-2x faster decoding at some accuracy "
+                             "cost — worth it on a long first pass.")
     speech.add_argument("--no-vocabulary-fix", action="store_true",
                         help="Skip the Hindustani vocabulary repair pass.")
 
@@ -101,11 +105,15 @@ def main(argv: list[str] | None = None) -> int:
             fix_vocabulary=not args.no_vocabulary_fix,
             keep_sung_text=args.keep_sung_text,
             sung_threshold=args.sung_threshold,
+            beam_size=args.beam_size,
             progress=_progress,
         )
     except (RuntimeError, FileNotFoundError, ValueError) as exc:
         sys.stderr.write(f"\nError: {exc}\n")
         return 1
+
+    for notice in result.notices:
+        sys.stderr.write(f"Note: {notice}\n")
 
     if result.tonic.confidence < 0.25 and result.sung_seconds > 0:
         sys.stderr.write(

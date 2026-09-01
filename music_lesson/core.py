@@ -96,6 +96,7 @@ class LessonResult:
     language: str
     source: str
     timings: dict[str, float] = field(default_factory=dict)
+    notices: list[str] = field(default_factory=list)   # how the decode ran
 
     @property
     def sung_seconds(self) -> float:
@@ -116,6 +117,7 @@ class LessonResult:
             "sung_seconds": round(self.sung_seconds, 1),
             "spoken_seconds": round(self.spoken_seconds, 1),
             "timings": {k: round(v, 3) for k, v in self.timings.items()},
+            "notices": self.notices,
             "segments": [s.to_dict() for s in self.segments],
         }
 
@@ -148,6 +150,7 @@ def transcribe_lesson(
     fix_vocabulary: bool = True,
     keep_sung_text: bool = False,
     sung_threshold: float = 0.50,
+    beam_size: int = 5,
     progress: ProgressCb | None = None,
 ) -> LessonResult:
     """Run the whole pipeline on *src_path*.
@@ -182,11 +185,14 @@ def transcribe_lesson(
                 track, notes, tonic_estimate.hz, sung_threshold=sung_threshold
             )
 
-        progress("Transcribing the talking", 0.40)
         with _timed(timings, "transcribe"):
-            speech_segments, detected_language = _run_whisper(
-                wav_path, regions, whisper_model, language, extra_terms
+            speech = _run_whisper(
+                wav_path, regions, whisper_model, language, extra_terms,
+                beam_size, progress,
             )
+        speech_segments = speech.segments
+        detected_language = speech.language
+        notices = _transcription_notices(speech)
 
         turns = []
         if diarize_speakers:
@@ -225,6 +231,7 @@ def transcribe_lesson(
             language=detected_language,
             source=src_path,
             timings=timings,
+            notices=notices,
         )
     finally:
         try:
@@ -252,17 +259,64 @@ def _run_whisper(
     model_name: str,
     language: str | None,
     extra_terms: list[str] | None,
+    beam_size: int,
+    progress: ProgressCb,
 ):
+    """Decode the spoken stretches, reporting progress across the 40-75% band.
+
+    This is the stage that takes the time — minutes to hours, against seconds
+    for everything else — so it owns most of the progress bar, and the label
+    says how much speech there is to get through. A bar frozen at 40% with no
+    number attached is how a slow run gets mistaken for a hung one.
+    """
     from .transcribe import transcribe_speech
 
     spans = segmentation.speech_spans(regions)
+    speech_seconds = sum(end - start for start, end in spans)
+    label = (
+        f"Transcribing {speech_seconds / 60:.0f} min of talking"
+        if spans else "Transcribing the talking"
+    )
+    progress(label, 0.40)
+
+    def on_progress(fraction: float) -> None:
+        progress(f"{label} — {fraction:.0%}", 0.40 + 0.35 * fraction)
+
     return transcribe_speech(
         wav_path,
         model_name=model_name,
         language=language,
+        hotwords=lexicon.hotwords(extra_terms),
         initial_prompt=lexicon.whisper_prompt(extra_terms),
         clip_spans=spans or None,
+        beam_size=beam_size,
+        progress=on_progress,
     )
+
+
+def _transcription_notices(speech) -> list[str]:
+    """Things the caller should know about how the decode actually ran."""
+    notices: list[str] = []
+    if "clip_timestamps" in speech.dropped_options:
+        notices.append(
+            "This faster-whisper is too old for clip_timestamps, so the whole "
+            "recording was decoded including the singing. It is slower, and "
+            "Whisper's words over sung passages are still dropped afterwards. "
+            "Upgrade with: pip install -U faster-whisper"
+        )
+    if "hotwords" in speech.dropped_options:
+        notices.append(
+            "This faster-whisper is too old for hotwords, so the Hindustani "
+            "vocabulary only primed the first 30 seconds. Upgrade with: "
+            "pip install -U faster-whisper"
+        )
+    if "multilingual" in speech.dropped_options:
+        notices.append(
+            "This faster-whisper cannot detect language per window, so the "
+            "whole recording was decoded as one language. Upgrade with: "
+            "pip install -U faster-whisper"
+        )
+    return notices
 
 
 def _run_diarization(

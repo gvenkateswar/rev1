@@ -63,6 +63,12 @@ def _sidebar() -> dict:
             help="Auto re-detects per window, which is what a Hindi/English "
                  "lesson needs.",
         )
+        beam_size = st.select_slider(
+            "Decoding beam width", options=[1, 2, 3, 5], value=5,
+            help="Drop to 1 for roughly 1.5-2x faster decoding at some "
+                 "accuracy cost. Worth it on a first pass through a long "
+                 "lesson.",
+        )
         fix_vocabulary = st.checkbox(
             "Repair Hindustani vocabulary", value=True,
             help="Turns 'tea total' back into 'teentaal'. Every repair is "
@@ -96,6 +102,7 @@ def _sidebar() -> dict:
         "tonic_text": tonic_text.strip(),
         "model": model,
         "language": None if language.startswith("auto") else language,
+        "beam_size": beam_size,
         "fix_vocabulary": fix_vocabulary,
         "extra_terms": [t.strip() for t in extra_terms.split(",") if t.strip()],
         "sung_threshold": sung_threshold,
@@ -132,6 +139,9 @@ def _pick_input() -> str | None:
 
 
 def _show_summary(result) -> None:
+    for notice in result.notices:
+        st.info(notice)
+
     left, middle, right = st.columns(3)
     left.metric("Sa (tonic)", result.tonic.western, f"{result.tonic.hz:.1f} Hz")
     middle.metric("Sung", _fmt_ts(result.sung_seconds))
@@ -217,6 +227,7 @@ def main() -> None:
                 fix_vocabulary=settings["fix_vocabulary"],
                 keep_sung_text=settings["keep_sung_text"],
                 sung_threshold=settings["sung_threshold"],
+                beam_size=settings["beam_size"],
                 progress=progress,
             )
         except (RuntimeError, FileNotFoundError, ValueError) as exc:

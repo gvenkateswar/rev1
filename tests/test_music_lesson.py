@@ -416,7 +416,7 @@ class PipelineIntegrationTests(unittest.TestCase):
         from unittest import mock
 
         from music_lesson import core
-        from music_lesson.transcribe import SpeechSegment
+        from music_lesson.transcribe import SpeechResult, SpeechSegment
         from transcriber.diarize import Turn
 
         audio, bounds = self._audio()
@@ -434,7 +434,8 @@ class PipelineIntegrationTests(unittest.TestCase):
 
         with mock.patch.object(core._audio, "extract_audio", return_value="/tmp/none.wav"), \
              mock.patch.object(core._audio, "load_waveform", return_value=(audio, SR)), \
-             mock.patch.object(core, "_run_whisper", return_value=(speech, "hi")), \
+             mock.patch.object(core, "_run_whisper", return_value=SpeechResult(
+                 speech, "hi", speech_seconds=8.0, clips=2, dropped_options=[])), \
              mock.patch.object(core, "_run_diarization", return_value=turns):
             return core.transcribe_lesson("/tmp/lesson.m4a", **kwargs)
 
@@ -494,6 +495,72 @@ class PipelineIntegrationTests(unittest.TestCase):
         result = self._run(tonic=SA)
         for stage in ("extract", "pitch", "tonic", "notes", "transcribe", "total"):
             self.assertIn(stage, result.timings)
+
+
+
+
+class DecodingCostTests(unittest.TestCase):
+    """Whisper pads every clip to a 30s window, so clip count is the cost."""
+
+    def _regions(self, spec):
+        from music_lesson.segmentation import Region
+
+        return [Region(start, end, kind) for start, end, kind in spec]
+
+    def test_short_sung_interjections_are_decoded_through(self):
+        from music_lesson.segmentation import speech_spans
+
+        # talk, 4s demo, talk: one clip, not two — the gap is cheaper to
+        # decode than to pay a second encoder pass for.
+        spans = speech_spans(self._regions([
+            (0.0, 20.0, SPOKEN), (20.0, 24.0, SUNG), (24.0, 40.0, SPOKEN),
+        ]))
+        self.assertEqual(len(spans), 1)
+        self.assertAlmostEqual(spans[0][0], 0.0)
+        self.assertAlmostEqual(spans[0][1], 40.25)
+
+    def test_long_sung_stretches_still_split_the_clips(self):
+        from music_lesson.segmentation import speech_spans
+
+        spans = speech_spans(self._regions([
+            (0.0, 20.0, SPOKEN), (20.0, 140.0, SUNG), (140.0, 160.0, SPOKEN),
+        ]))
+        self.assertEqual(len(spans), 2)
+        self.assertLess(spans[0][1], 25.0)
+        self.assertGreater(spans[1][0], 135.0)
+
+    def test_slivers_too_short_to_hold_a_phrase_are_dropped(self):
+        from music_lesson.segmentation import speech_spans
+
+        spans = speech_spans(
+            self._regions([(0.0, 0.2, SPOKEN), (0.2, 200.0, SUNG)]), pad=0.0
+        )
+        self.assertEqual(spans, [])
+
+    def test_progress_tracks_decoded_audio_not_wall_clock(self):
+        from music_lesson.transcribe import _speech_elapsed
+
+        clips = [(0.0, 10.0), (100.0, 110.0)]
+        self.assertAlmostEqual(_speech_elapsed(5.0, clips), 5.0)
+        # Halfway through the second clip is 15s decoded, not 105s.
+        self.assertAlmostEqual(_speech_elapsed(105.0, clips), 15.0)
+        self.assertAlmostEqual(_speech_elapsed(50.0, clips), 10.0)
+        self.assertAlmostEqual(_speech_elapsed(50.0, None), 50.0)
+
+    def test_a_faster_whisper_too_old_to_skip_singing_says_so(self):
+        from music_lesson.core import _transcription_notices
+        from music_lesson.transcribe import SpeechResult
+
+        quiet = _transcription_notices(
+            SpeechResult([], "hi", 60.0, 3, dropped_options=[])
+        )
+        self.assertEqual(quiet, [])
+
+        loud = _transcription_notices(
+            SpeechResult([], "hi", 60.0, 1, dropped_options=["clip_timestamps"])
+        )
+        self.assertEqual(len(loud), 1)
+        self.assertIn("pip install -U faster-whisper", loud[0])
 
 
 

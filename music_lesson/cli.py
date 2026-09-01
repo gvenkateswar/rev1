@@ -6,6 +6,7 @@ import sys
 
 from .core import transcribe_lesson
 from .output import render
+from .runtime import environment_summary
 from .swara import parse_tonic
 
 
@@ -89,6 +90,8 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError as exc:
             sys.stderr.write(f"Error: {exc}\n")
             return 2
+
+    sys.stderr.write(f"Running on: {environment_summary()}\n")
 
     try:
         result = transcribe_lesson(

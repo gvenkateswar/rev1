@@ -609,5 +609,46 @@ class RuntimeGuardTests(unittest.TestCase):
 
 
 
+
+class EnvironmentSummaryTests(unittest.TestCase):
+    """The arch readout, including the Rosetta case we cannot reproduce here."""
+
+    def _summary(self, platform_name, machine, translated):
+        from unittest import mock
+
+        from music_lesson import runtime
+
+        with mock.patch.object(runtime.sys, "platform", platform_name), \
+             mock.patch.object(runtime.platform, "machine", return_value=machine), \
+             mock.patch.object(runtime, "_rosetta_translated",
+                               return_value=translated):
+            return runtime.environment_summary()
+
+    def test_reports_python_version_and_machine(self):
+        import platform as plat
+
+        from music_lesson.runtime import environment_summary
+
+        summary = environment_summary()
+        self.assertIn(plat.python_version(), summary)
+        self.assertIn(plat.machine(), summary)
+
+    def test_native_apple_silicon_is_labelled(self):
+        summary = self._summary("darwin", "arm64", False)
+        self.assertIn("arm64", summary)
+        self.assertIn("native", summary)
+        self.assertNotIn("Rosetta", summary)
+
+    def test_rosetta_translation_is_called_out(self):
+        summary = self._summary("darwin", "x86_64", True)
+        self.assertIn("Rosetta", summary)
+
+    def test_unknown_translation_state_is_not_claimed_native(self):
+        summary = self._summary("darwin", "x86_64", None)
+        self.assertNotIn("native", summary)
+        self.assertNotIn("Rosetta", summary)
+
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

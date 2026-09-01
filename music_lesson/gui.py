@@ -18,11 +18,13 @@ import streamlit as st
 try:
     from .core import ATTEMPT, transcribe_lesson
     from .output import render, to_practice_sheet
+    from .runtime import environment_summary
     from .swara import parse_tonic
 except ImportError:
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from music_lesson.core import ATTEMPT, transcribe_lesson
     from music_lesson.output import render, to_practice_sheet
+    from music_lesson.runtime import environment_summary
     from music_lesson.swara import parse_tonic
 
 _SPEAKER_COLORS = ["#b45309", "#1d4ed8", "#059669", "#7c3aed", "#db2777"]
@@ -97,6 +99,13 @@ def _sidebar() -> dict:
             "How many voices (0 = auto)", min_value=0, max_value=8, value=0,
             disabled=not diarize,
         )
+
+        st.divider()
+        summary = environment_summary()
+        if "Rosetta" in summary:
+            st.warning(summary)
+        else:
+            st.caption(summary)
 
     return {
         "tonic_text": tonic_text.strip(),

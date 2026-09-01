@@ -8,6 +8,11 @@ work/
 *.wav
 *.mp3
 
+# Speaker voiceprint store -- biometric data, never committed.
+# Lives at ~/.transcriber/speakers.db by default; this catches local copies.
+*.db
+*.sqlite3
+
 # Python
 __pycache__/
 *.pyc
@@ -20,3 +25,10 @@ venv/
 .vscode/
 .idea/
 .DS_Store
+.pytest_cache/
+
+# Credentials. The token file lives in ~/.transcriber, not here, but a stray
+# copy in the working tree must never be committable.
+hf_token
+*.token
+.env

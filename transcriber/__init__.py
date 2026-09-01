@@ -4,13 +4,35 @@ Public surface:
 
     from transcriber import transcribe_file, TranscriptSegment
 
-`transcribe_file` runs the whole pipeline (extract -> Whisper -> diarize ->
-emotion) and returns a list of :class:`TranscriptSegment`. Heavy ML deps are
-imported lazily inside the submodules, so importing this package is cheap.
+`transcribe_file` runs the whole pipeline (extract -> detect languages ->
+Whisper -> diarize -> identify speakers -> emotion) and returns a
+:class:`TranscriptResult`. Heavy ML deps are imported lazily inside the
+submodules, so importing this package is cheap.
+
+Speakers are remembered across runs in a local :class:`SpeakerStore`, so naming
+someone once makes them auto-tagged in every later transcript.
 """
 from __future__ import annotations
 
-from .core import TranscriptSegment, TranscriptResult, transcribe_file
+# Must run before torch or ctranslate2 load -- they bundle conflicting copies of
+# the OpenMP runtime that abort the process on macOS. See runtime.py.
+from .runtime import (
+    announce_environment, configure_openmp, environment_warnings,
+)
 
-__all__ = ["TranscriptSegment", "TranscriptResult", "transcribe_file"]
-__version__ = "0.1.0"
+configure_openmp()
+
+from .core import TranscriptSegment, TranscriptResult, transcribe_file  # noqa: E402
+from .speakerdb import Speaker, SpeakerStore  # noqa: E402
+
+__all__ = [
+    "TranscriptSegment",
+    "TranscriptResult",
+    "transcribe_file",
+    "Speaker",
+    "SpeakerStore",
+    "configure_openmp",
+    "announce_environment",
+    "environment_warnings",
+]
+__version__ = "0.3.0"

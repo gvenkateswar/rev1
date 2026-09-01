@@ -3,10 +3,11 @@
 This repo holds two independent tools:
 
 1. **Video Shorts Generator** (below) — find the best 30s clips in a long video.
-2. **[Speaker & Emotion Transcriber](transcriber/README.md)** — transcribe
-   audio/video, tell speakers apart, and tag each segment with an emotion fused
-   from voice tone *and* the words. CLI + local Streamlit GUI. See
-   [`transcriber/`](transcriber/).
+2. **[Multilingual Speaker Transcriber](transcriber/README.md)** — transcribe
+   audio/video, **recognise speakers by name across recordings**, handle
+   conversations that **switch language mid-sentence**, and tag each segment
+   with an emotion fused from voice tone *and* the words. Runs entirely
+   locally. CLI + Streamlit GUI. See [`transcriber/`](transcriber/).
 
 ---
 

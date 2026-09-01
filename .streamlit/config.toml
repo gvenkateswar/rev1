@@ -1,0 +1,11 @@
+# Streamlit's module watcher walks every imported package to find files to
+# reload on. transformers 5 exposes ~100 image processors as lazy attributes,
+# and touching them imports torchvision, which this audio pipeline does not
+# install. Each probe prints a full ModuleNotFoundError traceback, burying the
+# real output under hundreds of harmless ones.
+#
+# Turning the watcher off stops the probing. The cost is that editing a source
+# file no longer live-reloads the app -- restart it instead. Set this to "auto"
+# while working on the UI if you want reload back.
+[server]
+fileWatcherType = "none"

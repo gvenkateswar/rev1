@@ -1,17 +1,33 @@
-# 🎙️ Speaker & Emotion Transcriber
+# 🎙️ Multilingual Speaker Transcriber
 
-Transcribe an audio or video file, **tell the speakers apart**, and tag each
-segment with an **emotion** that's fused from *how* it was said (voice tone)
-and *what* was said (the words) — because a loud voice could be excitement or
-anger, and the words tell them apart.
+Transcribe an audio or video file, **recognise who is speaking — by name, across
+recordings**, handle **conversations that switch language mid-sentence**, and tag
+each segment with an **emotion** fused from *how* it was said (voice tone) and
+*what* was said (the words).
 
 Runs **entirely on your machine**. The Streamlit GUI just opens in your
 browser; nothing is uploaded anywhere.
 
 ```
-extract audio (ffmpeg) → Whisper transcription → speaker diarization
-                       → align speakers to words → fuse audio+text emotion
+extract audio (ffmpeg) → detect language timeline → transcribe each span
+                       → translate non-English spans → speaker diarization
+                       → recognise known speakers → align speakers to words
+                       → transliterate non-Latin scripts → fuse audio+text emotion
 ```
+
+## What makes this different
+
+- **Speakers are remembered.** Name someone once and every future transcript
+  tags them automatically — no re-labelling each meeting.
+- **Code-switching, up to a point.** A conversation that changes language
+  between turns is transcribed in whichever language is being spoken, with
+  per-segment labels. A change *inside* a sentence is beyond Whisper — see
+  [known limits](#known-limits-on-mixed-speech) before relying on it.
+- **Non-English stays non-English.** Speech is kept in its own script, and each
+  line also gets a Latin transliteration and an English translation — three
+  renderings of the same words, not one lossy compromise.
+- **It admits uncertainty.** Low-confidence lines are flagged, and a voice it
+  isn't sure about stays "Speaker 2" instead of being given the wrong name.
 
 Built for speed: transcription uses **faster-whisper** (CTranslate2, ~4x faster
 than openai-whisper on CPU) with a **VAD silence filter**, the emotion stage
@@ -20,16 +36,22 @@ first skips loading. See [Performance](#performance) to go faster still.
 
 ## Install
 
-Requires Python 3.9+ and **ffmpeg** on your PATH
-(`sudo apt install ffmpeg` / `brew install ffmpeg` / `choco install ffmpeg`).
+Requires **Python 3.10+** (uroman, the transliterator, needs it) and **ffmpeg**
+on your PATH (`sudo apt install ffmpeg` / `brew install ffmpeg` /
+`choco install ffmpeg`).
 
 ```sh
-cd transcriber
-pip install -r requirements.txt
+pip install -r transcriber/requirements.txt
 ```
 
 The first run downloads the Whisper and emotion models (a few hundred MB),
 then caches them.
+
+On **Apple Silicon**, install a native arm64 Python — a Rosetta x86 build is
+several times slower and loads two conflicting copies of the OpenMP runtime.
+See [Troubleshooting](#troubleshooting) if you hit `Abort trap: 6`, a segfault
+after switching venvs, or `No module named 'pkg_resources'`; each has a
+one-line fix there.
 
 ## Use it — GUI (recommended)
 
@@ -40,7 +62,272 @@ streamlit run transcriber/gui.py
 
 Upload a file (or paste a local path), pick your settings in the sidebar, and
 click **Transcribe**. You get a color-coded, per-speaker transcript with
-emotion tags, plus `.txt` / `.json` / `.srt` downloads.
+emotion tags — and, for non-English lines, the transliteration and translation
+underneath — plus `.txt` / `.json` / `.srt` / `.vtt` downloads.
+
+## Remembering speakers
+
+The first time you transcribe a file, speakers are anonymous:
+
+```
+[0:00:02] Speaker 1: Hey, glad you could make it.
+[0:00:05] Speaker 2: Thanks for having me.
+```
+
+Name them once — their voiceprints are saved:
+
+```sh
+python -m transcriber meeting1.wav \
+    --name-speaker "Speaker 1=Priya" --name-speaker "Speaker 2=Rahul"
+```
+
+Every later recording recognises them with no further input:
+
+```sh
+python -m transcriber standup.wav
+# [0:00:01] Priya: Morning everyone.
+# [0:00:04] Rahul: Morning.
+```
+
+You can also enroll from a clean clip of one person talking:
+
+```sh
+python -m transcriber speakers enroll "Priya" priya-intro.wav
+```
+
+Manage the store:
+
+```sh
+python -m transcriber speakers list
+python -m transcriber speakers rename "Priya" "Priya Sharma"
+python -m transcriber speakers forget "Priya"      # deletes their voiceprints
+```
+
+In the GUI, unnamed speakers get a **"Name these speakers"** box under the
+transcript, and the sidebar lists everyone you have remembered.
+
+### How recognition decides
+
+Each diarized voice is embedded into a 256-d voiceprint and compared against
+every saved speaker's centroid by cosine similarity. A name is applied only when
+**both** tests pass:
+
+- similarity ≥ `--match-threshold` (default `0.72`), **and**
+- it beats the runner-up by ≥ `--match-margin` (default `0.05`).
+
+The margin is the important one: two similar voices can both clear the
+threshold, and picking the higher would silently mislabel someone. When it is
+ambiguous the speaker stays anonymous — a missing name is obvious, a wrong name
+is not. A known speaker is also never assigned to two voices in one recording.
+
+Naming someone again **adds** a voiceprint rather than replacing it, so
+recognition improves with every recording (capped at the 20 most recent).
+Speakers with under 6s of speech are not enrolled at all — a voiceprint built
+from a few seconds degrades every future match.
+
+> **Recognition is a labelling convenience, not authentication.** It is tuned to
+> fail safe (leave people unnamed), and must not be used as a security control.
+
+### Your voiceprints stay yours
+
+Voiceprints are biometric data, so:
+
+- They live in a local SQLite file at `~/.transcriber/speakers.db` (override
+  with `--speaker-db` or the `TRANSCRIBER_HOME` env var). `*.db` is gitignored.
+- Nothing is ever uploaded — no network call carries audio or embeddings.
+- `speakers forget` really deletes the rows, so "forget me" means it.
+- Exported transcripts (`json`/`txt`/`srt`/`vtt`) contain names, never vectors.
+
+Recording and enrolling other people is your call to make lawfully; the tool
+does not and cannot check consent for you.
+
+## Multiple languages
+
+By default the language is auto-detected **and allowed to change mid-recording**,
+so a Hindi/English conversation transcribes correctly throughout instead of
+being force-decoded into whichever language came first.
+
+Non-English speech stays in the script it was spoken in, and carries two more
+renderings of the same words:
+
+```sh
+python -m transcriber bilingual-call.m4a
+# Languages: hi (142s), en (96s)
+# [0:00:03] Priya [hi]: नमस्ते, कैसे हैं आप?
+#           [latin] namaste, kaise haim aap?
+#           [english] Hello, how are you?
+# [0:00:07] Rahul [en]: Doing well, thanks — shall we start?
+```
+
+| Rendering | What it is | JSON field |
+|---|---|---|
+| Native script | What was said, written the way it is written | `text` |
+| Latin transliteration | The *same words*, spelled in the Latin alphabet | `latin` |
+| English translation | What those words *mean*, in English | `english` |
+| — | Set when the native text is really the translation | `native_is_english` |
+
+Both extra lines appear only when they add something. An English segment gets
+neither. A segment already written in Latin letters — French, Vietnamese,
+Turkish — gets a translation but no transliteration, because romanizing it
+would just reprint the line. All four output formats carry them: `txt`, `json`,
+`srt` and `vtt`.
+
+- `--no-transliterate` skips the romanization.
+- `--no-translate` skips the translation. It is a second Whisper pass, so this
+  is the faster option.
+- `--language en` pins one language for the whole file.
+- `--no-multilingual` auto-detects once instead of building a timeline.
+
+### How it works
+
+The language timeline comes first: overlapping 30s probes, 15s apart. A switch
+is accepted once **two consecutive probes agree**, *or* on a single probe the
+detector is very sure of (≥0.85) — confirmation is there to reject guesses,
+and a probe that confident is not one.
+
+The timeline is printed to the terminal as the run starts:
+
+```
+transcriber: languages: hi 0-45s (0.97), en 45-60s (0.88)
+```
+
+Worth reading when a transcript looks wrong. It says whether the language was
+read correctly *before* the decode ran, which otherwise cannot be seen from
+the output at all.
+
+Each span is then decoded **with its language pinned**. This is the part that
+keeps Hindi in Devanagari. Two things otherwise push Whisper into English:
+
+1. Left to itself, it re-detects on each 30s window in isolation. Our timeline
+   sees overlapping windows and requires confirmation, so it is the better
+   answer — and once you have it, guessing again during the decode can only
+   lose.
+2. Whisper conditions each window on the text it produced for the previous
+   one. Across a language change that prompt is a block of the *old* language,
+   and the model follows it. Spans are decoded independently, so nothing
+   prompts the next span in the wrong language.
+
+After diarization, two recovery passes run. First, stretches where diarization
+heard a speaker but the decode returned nothing are **decoded from scratch**,
+with the language taken from that stretch's own audio — a span pinned to the
+wrong language yields no text rather than wrong text, so those words go
+missing entirely and no amount of re-checking existing segments can find them.
+Only diarized speech is decoded, because Whisper invents text when handed
+silence.
+
+Then every segment's language is **re-checked on its own
+audio**. Diarization has cut the recording where the speaker changes, which is
+usually where the language changes too, and those boundaries are far finer
+than any probe. A segment whose own audio confidently says a different
+language is decoded again in that language. Detection is one encoder pass, so
+checking every segment is cheap; only the ones that disagree pay for a second
+decode.
+
+The English translation is Whisper's own `translate` task — English is the
+only target it was trained for — run **per transcript line, on that line's own
+audio**. Translating whole language stretches and matching the pieces up
+afterwards cannot be made to work: the two passes segment independently, so a
+three-second line ends up showing a thirty-second paragraph. The cost is
+context — a short line is translated without the sentence around it.
+
+The transliteration is [uroman](https://pypi.org/project/uroman/), a
+rule-driven romanizer: no model, no network, one API for every script.
+
+> **`small` is the minimum for non-English speech, and is the default.**
+> `tiny` and `base` do not transcribe it at all — they hand back an English
+> *translation* even with the language pinned, because the transcribe and
+> translate tasks share one decoder and the small checkpoints conflate them.
+> What you get looks like a clean transcript and is not one. Drop to `base`
+> only for English-only audio.
+
+### A second opinion on the language
+
+```sh
+pip install speechbrain
+python -m transcriber call.m4a --langid speechbrain
+```
+
+Whisper's language detector reads the **same encoder** that decides which
+words to emit. When it picks the wrong language, it tends to be wrong in a way
+that agrees with the wrong transcript — the detector says English, the decoder
+obligingly translates, and both look confident. That is the failure behind
+every mixed-language problem in this README.
+
+`--langid speechbrain` swaps in
+[VoxLingua107](https://huggingface.co/speechbrain/lang-id-voxlingua107-ecapa),
+trained for one job — identifying the spoken language — and knowing nothing
+about Whisper. A second opinion is only worth having if it can disagree.
+
+It drives all three decisions: the language timeline, the per-segment
+re-check, and gap filling. The terminal log names which detector produced the
+timeline, so an A/B is one line to compare:
+
+```
+transcriber: languages (whisper): en 0-16s (0.91), hi 16-24s (0.88)
+transcriber: languages (speechbrain): hi 0-8s (0.94), fr 8-16s (0.86), hi 16-24s (0.92)
+```
+
+Downloads a model (a few hundred MB) on first use, then caches it. Slower per
+probe than Whisper's detector, which is doing the work anyway.
+
+**This is not a guaranteed improvement.** It is a different opinion from a
+model that is better suited to the question, worth A/B-ing on your own audio.
+It does not touch intra-sentence switching either.
+
+### Hindi or Urdu, Devanagari or Nastaliq
+
+Whisper detects a **script and register** as much as a language: the same
+Hindustani sentence comes back as `ur` in Arabic script or `hi` in Devanagari
+depending on which way the detector leans, sometimes differently line to line.
+If you read one and not the other, pin it:
+
+```sh
+python -m transcriber call.m4a --language-alias ur=hi
+```
+
+Repeatable, and the GUI has a field for it (comma-separate several). It
+rewrites the detected code before decoding, so the transcript comes back in
+the script you asked for. Any pair works — `nn=no`, `bs=hr`.
+
+When the model returns English instead of transcribing, the transcript says so
+rather than presenting English as the original:
+
+```
+[0:00:01] Speaker 1 [hi]: You keep watching on Instagram that you wear new clothes...
+          [english] You keep watching on Instagram that you wear new clothes...
+          ⚠ this is the English translation, not the original
+```
+
+A line is flagged when its native text and its English translation say nearly
+the same thing — on the words, not the script, so a correctly transcribed
+Latin-script language is safe (Spanish reads nothing like its own
+translation).
+
+**Unless the speaker actually used English.** Two renderings agreeing happens
+for two opposite reasons, and the segment's own audio decides which: if it
+says English, the transcript is right, the *label* was wrong, and the line is
+relabelled `en` with the duplicate translation dropped. Only when the audio
+says otherwise is the model accused of skipping the transcript. An accusation
+should need more evidence than staying quiet does, and a warning on a correct
+line is itself a wrong answer.
+
+JSON carries `native_is_english` and `detected_language` per segment.
+
+> The text emotion model is English-only. Non-English segments are scored on
+> **voice tone alone** rather than being fed to a model that would return a
+> confident wrong answer.
+
+## Confidence
+
+Whisper's per-word probabilities are averaged per segment and surfaced, so you
+know which lines to double-check:
+
+```
+[0:01:12] Rahul [low confidence 43%]: something something quarterly
+```
+
+The GUI shows a ⚠ badge on those lines; JSON carries `confidence` on every
+segment.
 
 ## Use it — command line
 
@@ -63,16 +350,69 @@ Output (txt):
 
 | Flag | Meaning | Default |
 |------|---------|---------|
-| `--model` | Whisper size: tiny/base/small/medium/large-v3, or `distil-large-v3` | `base` |
-| `--language` | Force a language (ISO code) | auto-detect |
+| `--model` | Whisper size: tiny/base/small/medium/large-v3, or `distil-large-v3` | `small` |
+| `--language` | Pin one language (ISO code) for the whole file | auto-detect |
+| `--no-multilingual` | Detect the language once instead of building a timeline | off |
+| `--live` | Print lines to stderr as they are decoded | off |
+| `--langid` | `whisper` or `speechbrain` — which detector decides the language | `whisper` |
+| `--language-alias` | `ur=hi` — treat one detected language as another (repeatable) | — |
+| `--no-transliterate` | Skip the Latin transliteration of non-Latin scripts | off |
+| `--no-translate` | Skip the English translation (saves a second Whisper pass) | off |
 | `--diarization` | `cluster` (offline) or `pyannote` (best, needs token) | `cluster` |
 | `--speakers N` | Number of speakers if known | auto-detect |
-| `--hf-token` | HF token for pyannote (or set `HF_TOKEN`) | — |
+| `--hf-token` | HF token for pyannote — prefer the token file, see above | — |
+| `--name-speaker` | `"Speaker 1=Priya"` — name and remember a voice (repeatable) | — |
+| `--no-identify` | Skip matching against remembered speakers | off |
+| `--speaker-db` | Path to the speaker store | `~/.transcriber/speakers.db` |
+| `--match-threshold` | Minimum voice similarity to accept a match | `0.72` |
+| `--match-margin` | How far the best match must beat the runner-up | `0.05` |
 | `--emotion-source` | `both` / `audio` / `text` | `both` |
 | `--emotion-audio-weight` | Tone vs. words, 0..1 | `0.5` |
 | `--no-emotion` | Skip emotion detection (faster) | off |
-| `-f, --format` | `txt` / `json` / `srt` | `txt` |
+| `-f, --format` | `txt` / `json` / `srt` / `vtt` | `txt` |
 | `-o, --output` | Write to a file instead of stdout | stdout |
+
+## The Hugging Face token (pyannote only)
+
+Store it once; it is never asked for again.
+
+```bash
+mkdir -p ~/.transcriber
+printf '%s' 'hf_...' > ~/.transcriber/hf_token
+chmod 600 ~/.transcriber/hf_token
+```
+
+Or use Hugging Face's own tooling, which this reads too:
+
+```bash
+huggingface-cli login
+```
+
+Edit that file whenever the token changes. Looked for in this order — first
+hit wins:
+
+| # | Where | Notes |
+|---|---|---|
+| 1 | `--hf-token` / the GUI field | For a one-off. See the warning below. |
+| 2 | `$HF_TOKEN` or `$HUGGING_FACE_HUB_TOKEN` | Good for CI |
+| 3 | `~/.transcriber/hf_token` | Beside the speaker store; honours `TRANSCRIBER_HOME` |
+| 4 | `~/.cache/huggingface/token` | Written by `huggingface-cli login`; honours `HF_HOME` |
+
+Only the first line is read, and it is stripped, so a trailing newline from an
+editor is fine.
+
+Once a token is found, the GUI stops showing the field and just says which
+file it came from. The terminal log names the source too — never the token.
+
+> **Don't pass a token on the command line.** Your shell writes every command
+> to its history file, so `--hf-token hf_...` leaves it on disk in plain text
+> for anything that reads `~/.zsh_history`. Same for pasting one into a chat
+> or a screenshot: treat any token that has been through either as burned, and
+> revoke it at [hf.co/settings/tokens](https://hf.co/settings/tokens).
+
+The app warns if the token file is readable by other users on the machine.
+Nothing in this repo stores a token, and `hf_token`, `*.token` and `.env` are
+gitignored so a stray copy cannot be committed.
 
 ## How speaker diarization works
 
@@ -93,6 +433,10 @@ turns, so the rest of the pipeline doesn't care which ran:
 Whisper's word-level timestamps are used to **split a transcript segment when
 the speaker changes mid-sentence**, so rapid back-and-forth still separates
 cleanly.
+
+Diarization only says *"these turns are the same person"*. Turning that into
+*"that person is Priya"* is the separate recognition step described in
+[Remembering speakers](#remembering-speakers).
 
 ## How emotion works
 
@@ -129,6 +473,400 @@ predicted and which channel is driving the result:
 > The text emotion model is English. For other languages, lean on audio
 > (`--emotion-source audio`) or raise `--emotion-audio-weight`.
 
+## Troubleshooting
+
+### Which version am I running?
+
+The GUI prints it under the title; the CLI has `--version`:
+
+```
+$ python -m transcriber --version
+transcriber 0.3.0 (a8db1cd, modified)
+```
+
+`modified` means the working tree differs from that commit — a local edit, or
+a pull that did not finish. That is worth checking first when a symptom makes
+no sense against the code you think you have, because a half-updated checkout
+can leave a new module beside an old one:
+
+```
+ImportError: cannot import name 'renderings' from 'transcriber.output'
+```
+
+That one is not a code bug; it is one file updated and another not. `git status`
+says which, and `git pull` fixes it once whatever blocked it is resolved.
+
+Outside a git checkout the commit is simply omitted.
+
+### "zsh: command not found: python" — then it segfaults
+
+These are the same problem: **the venv is not activated.**
+
+`python` exists only inside the venv. If the shell cannot find it, you are
+outside, and `python3` then resolves to whatever system Python is on PATH —
+on this Mac, an x86_64 3.9 under Rosetta, which is the configuration that
+crashes.
+
+```bash
+cd /path/to/rev1
+source .venv/bin/activate
+python -m streamlit run transcriber/gui.py    # `python`, not `python3`
+```
+
+`python -V` should say 3.12, and `python -c "import platform; print(platform.machine())"`
+should say `arm64`. If either is wrong, see
+[macOS on Apple Silicon](#macos-on-apple-silicon-use-a-native-arm64-python).
+
+The run gets a fair way in before dying — the terminal shows extract,
+language, transcribe and translate all completing — because the crash happens
+when diarization loads its models, well after startup. The per-stage log is
+what tells you where:
+
+```
+transcriber: translate: done in 4.0s
+transcriber: diarize: started
+zsh: segmentation fault
+```
+
+A segfault leaves no Python traceback: the crash is below the interpreter, so
+there is nothing to catch and nothing to print. The stage log is the only
+record of how far it got.
+
+A `resource_tracker: There appear to be 1 leaked semaphore objects` warning
+often lands in the terminal a moment later, sometimes after the shell prompt
+has already come back. That is the dead process being cleaned up — a
+consequence of the crash, not a second fault — and it needs no fixing of its
+own. It stops once the run stops crashing.
+
+### The process crashes with "Abort trap: 6" / a Python crash report
+
+If the crash report mentions `__kmp_abort_process` in `libiomp5.dylib`, or you
+see this on the terminal:
+
+```
+OMP: Error #15: Initializing libiomp5.dylib, but found libiomp5.dylib already
+initialized.
+```
+
+then two copies of the Intel OpenMP runtime were loaded into one process:
+faster-whisper (through ctranslate2) and torch each bundle their own. This
+pipeline needs both libraries, so both copies load, and the second one aborts
+the process. It is not catchable -- `abort()` produces a crash report, not a
+traceback.
+
+**This is handled automatically.** `transcriber/runtime.py` sets
+`KMP_DUPLICATE_LIB_OK=TRUE` when the package is imported, before either library
+can load. If you still hit it, something imported `torch` *before*
+`transcriber` -- import `transcriber` first, or export the variable in your
+shell:
+
+```sh
+export KMP_DUPLICATE_LIB_OK=TRUE
+```
+
+Set `TRANSCRIBER_NO_OMP_FIX=1` to disable the workaround (useful only when
+diagnosing a different problem).
+
+### Segfault, or "Intel MKL WARNING", after switching to a venv
+
+```
+Intel MKL WARNING: Support of Intel(R) Streaming SIMD Extensions 4.2 ...
+zsh: segmentation fault  streamlit run transcriber/gui.py
+```
+
+**There is no Intel MKL build for arm64.** If you see that line on an M-series
+Mac, the process is running x86 code -- meaning the `streamlit` on your PATH is
+not the one in your virtualenv, even though the prompt shows `(.venv)`.
+
+The usual cause is your shell's command cache. `zsh` remembers where it found
+`streamlit` the first time you ran it; activating a venv afterwards changes
+`PATH` but does not clear that memory, so the old interpreter keeps running with
+the old (x86) site-packages.
+
+Check which one is actually running:
+
+```sh
+which streamlit          # should be <repo>/.venv/bin/streamlit
+python -c "import sys, platform; print(sys.executable, platform.machine())"
+```
+
+Fix it by clearing the cache, or just open a new terminal:
+
+```sh
+hash -r                  # zsh/bash: forget cached command paths
+```
+
+Then prefer the module form, which always uses the interpreter you mean and
+cannot be shadowed by a stale PATH entry:
+
+```sh
+python -m streamlit run transcriber/gui.py
+```
+
+> Note: with `KMP_DUPLICATE_LIB_OK` set (which this package does automatically),
+> a mismatched-architecture environment segfaults instead of printing the
+> `OMP: Error #15` abort -- the crash is quieter, not absent. Set
+> `TRANSCRIBER_NO_OMP_FIX=1` to get the explicit OpenMP error back while
+> diagnosing.
+
+### macOS on Apple Silicon: use a native arm64 Python
+
+If `python3 -c "import platform; print(platform.machine())"` prints `x86_64` on
+an M-series Mac, you are running under Rosetta. Two consequences: everything is
+several times slower than it needs to be, and the x86 wheels are what drag in
+the duplicate OpenMP runtimes above. The CLI and GUI both warn when they detect
+this.
+
+Fix it with a native interpreter and a fresh virtualenv:
+
+```sh
+# Install an arm64 Python (python.org universal2 installer, or Homebrew)
+brew install python@3.12
+
+python3.12 -c "import platform; print(platform.machine())"   # -> arm64
+python3.12 -m venv .venv && source .venv/bin/activate
+pip install -r transcriber/requirements.txt
+```
+
+Native arm64 also lets faster-whisper and torch use the Apple accelerators,
+which is the single biggest speedup available on these machines.
+
+### "Pipeline.from_pretrained() got an unexpected keyword argument 'use_auth_token'"
+
+pyannote.audio 4.x renamed that argument to `token`. The diarizer now reads the
+installed version's signature and passes whichever name it expects, so both 3.x
+and 4.x work. If you still see this, you are running an older checkout -- pull.
+
+If pyannote instead reports that no pipeline was returned, your token is valid
+but has not accepted the model licence. Accept it at
+[hf.co/pyannote/speaker-diarization-3.1](https://hf.co/pyannote/speaker-diarization-3.1)
+with the **same account** the token belongs to.
+
+The offline `cluster` backend (the default) needs no token and is unaffected.
+
+### "'DiarizeOutput' object has no attribute 'itertracks'"
+
+pyannote.audio 4.x wraps its result in a `DiarizeOutput` dataclass instead of
+returning a bare `Annotation`. Handled -- the diarizer unwraps whichever shape
+the installed version returns. Pull if you still see it.
+
+On 4.x it takes `exclusive_speaker_diarization` in preference to
+`speaker_diarization`. pyannote documents that one as "adapted to downstream
+transcription": it drops overlapping speech turns, and this pipeline assigns
+each Whisper word to the turn covering it, which is ambiguous when two turns
+overlap.
+
+### Watching it work
+
+The GUI shows lines as they are decoded, under the progress bar, before the
+finished transcript exists. The CLI does the same with `--live`:
+
+```sh
+python -m transcriber long-interview.m4a --live
+```
+
+```
+[0:00] नमस्ते, कैसे हैं आप?
+[0:07] Doing well, thanks — shall we start?
+```
+
+They are **rough on purpose**: no speaker, no language re-check, no gap pass,
+and a line can still change or merge before the end. The point is to see that
+it is working, and roughly what it is hearing, while there is still time to
+stop and change a setting rather than waiting out a whole run to find out the
+model was wrong about the language.
+
+CLI partials go to stderr, so `-o out.txt` and piping stdout are unaffected.
+
+### It has been on one stage for ages — is it stuck?
+
+Almost certainly not, if that stage is **Separating speakers** with the
+`pyannote` backend. pyannote runs slower than real time on a CPU: a 20-minute
+recording can take well over 20 minutes, and nothing about the old progress
+bar distinguished that from a hang.
+
+Both surfaces now answer the question:
+
+- The terminal you launched from prints a line when each stage starts and
+  finishes, plus the audio duration and backend up front:
+
+      transcriber: 1183s of audio | model=base diarization=pyannote
+      transcriber: extract: started
+      transcriber: extract: done in 0.4s
+      transcriber: diarize: started
+      transcriber: diarize: done in 412.7s
+
+  Set `TRANSCRIBER_QUIET=1` to turn these off.
+
+- The progress bar shows the stage, pyannote's own sub-step, and a running
+  clock, so a bar that is not moving still visibly counts up. The offline
+  `cluster` backend reports its stages too.
+
+**One thing that used to make this worse:** the results block rendered the
+*previous* run's transcript and timings underneath the in-progress bar, so a
+finished-looking set of numbers sat under a bar that was still working. The
+previous result is now cleared when a run starts.
+
+To make it faster: use the `cluster` backend (seconds rather than minutes, at
+some accuracy cost), pass `--speakers N` when you know the count (it skips the
+search over 2..8 speakers), or run on a CUDA GPU.
+
+### Known limits on mixed speech
+
+Whisper chooses **one language per decode window**. Everything below follows
+from that, and none of it is a settings problem.
+
+### Dense mixing defeats it entirely
+
+Speech that changes language every few seconds does not degrade gracefully —
+it comes back as an English *translation* presented as a transcript. Given
+this, spoken in Hindi, English and French across sixteen seconds:
+
+> मैं तो यह जानना चाहता हूँ के if i speak in english / क्या आप को समझ में आएगी
+> या फिर / c'est possible qu'on peux parler en francais aussi
+
+`medium` returns one line: *"I want to know that if I speak in English, will
+you understand it or is it possible to speak in French as well?"* Accurate as
+a translation, and not a transcript of anything.
+
+**Pin the dominant language.** `--language hi` gives a native-script
+transcript throughout, with the English and French words written phonetically
+in Devanagari. That is usually closer to what you want than an English
+paraphrase, and it is the only reliable option for densely mixed speech.
+
+Where such a line is detectable — its own audio confidently disagrees with
+being decoded as English — it is flagged like any other, though on speech this
+mixed the detector often agrees with the wrong answer.
+
+Two narrower limits:
+
+**A language switch inside one sentence.** "आप इस्ताग्राम पे... but, पैसे कहां
+से आते हैं?" is decoded as one language throughout — the English words come
+out spelled in the other script. Whisper picks one language per decode window
+and has no notion of switching mid-sentence.
+
+**A short turn at a boundary** is *mostly* handled now. It sits inside one
+30-second detection probe and is outvoted by what surrounds it, so the span
+pins the wrong language. Two passes catch the fallout:
+
+- If it became its own segment with the wrong language, the **per-segment
+  re-check** decodes it again in the language its own audio names.
+- If the wrong language produced *no text at all* — the common case, and why a
+  line can simply be absent — the **gap pass** finds stretches where
+  diarization heard a speaker and no segment came back, and decodes those
+  from scratch.
+
+Only diarized speech is ever decoded this way. Whisper handed a stretch of
+silence invents text, confidently and plausibly, and a fabricated line is
+worse than a missing one; the diarization turns are the evidence that somebody
+actually spoke. With `--no-identify` this still runs, but with diarization off
+entirely there is no such evidence and nothing is filled in.
+
+What is left is a turn that *shares a segment* with the other language, and
+the intra-sentence case above. For those, `--language` on a single-language
+file, or splitting the recording, both work.
+
+### Non-English speech comes out written in English
+
+Two causes, and they stack.
+
+**The pipeline used to let Whisper pick the language during decoding.** Fixed:
+each detected language span is now decoded with its language pinned, and spans
+are decoded independently so one cannot prompt the next in the wrong language.
+See [How it works](#how-it-works) above for why both halves of that matter.
+
+**The model may simply be too small.** `tiny` and `base` have high error rates
+outside English and drift into it on their own — no amount of pinning fixes a
+model that does not know the language well. Use `--model small` or better
+(`medium`, `large-v3`), or `distil-large-v3` for near-large accuracy at a
+fraction of the cost. In the GUI, the model dropdown carries the same note.
+
+If you know the whole recording is in one language, `--language hi` is both
+faster and stricter than auto-detection.
+
+### "No module named 'pkg_resources'" from Resemblyzer
+
+Fix:
+
+```bash
+pip install "setuptools<82"
+```
+
+`pip install setuptools` on its own does **not** work. Chain:
+
+1. Resemblyzer's `audio.py` does `import webrtcvad`.
+2. webrtcvad 2.0.10's module does `import pkg_resources`, only to read its
+   own version string.
+3. `pkg_resources` ships with setuptools -- which venvs stopped creating by
+   default on Python 3.12, and which **removed `pkg_resources` in 82.0.0**.
+   81.0.0 is the last release that has it, so an unpinned install gets a
+   version without it.
+
+`transcriber/requirements.txt` pins the cap, so a fresh
+`pip install -r transcriber/requirements.txt` is already correct; this only
+bites a venv built before the pin, or one where Resemblyzer was installed by
+hand.
+
+The `webrtcvad-wheels` fork fixes the root cause (it reads its version with
+`importlib.metadata`) and ships prebuilt wheels, but it installs the same
+`webrtcvad.py` and `_webrtcvad.so` as the `webrtcvad` that Resemblyzer
+depends on, so pip installs both and install order decides which one wins.
+Not worth the coin flip.
+
+### "X is not installed" when you know it is
+
+Fixed. This was our bug, not yours.
+
+`ModuleNotFoundError` is a subclass of `ImportError`, so a guard written as
+`except ImportError` around `import resemblyzer` also fires when Resemblyzer
+imports fine but *one of its own dependencies* does not. The old message
+blamed the package you had and told you to reinstall it, which could never
+help.
+
+Every optional dependency now goes through one helper that reads
+`ImportError.name` to tell the two cases apart, and reports the module that
+actually failed:
+
+    resemblyzer is installed but failed to import (needed to recognise
+    speakers): its dependency webrtcvad could not be loaded.
+      ModuleNotFoundError: No module named 'webrtcvad'
+    Reinstalling resemblyzer will not fix this -- the broken package is
+    webrtcvad. Run `python -c "import resemblyzer"` for the full traceback.
+
+The browser only ever shows the message; the GUI now also prints the full
+chained traceback to the terminal it was launched from.
+
+If you hit this, run the one-liner it suggests. The traceback names the file
+and the line inside the dependency chain, which is what tells you whether to
+pin a version, install a missing package, or rebuild a wheel.
+
+### Harmless warnings from pyannote
+
+`std(): degrees of freedom is <= 0` comes from pyannote's pooling layer on a
+speech turn too short to have a variance. It does not stop diarization.
+
+### Hundreds of "No module named 'torchvision'" tracebacks in the terminal
+
+Harmless, and silenced by `.streamlit/config.toml` in this repo. Streamlit's
+file watcher walks every imported package looking for files to reload on;
+transformers 5 exposes ~100 image processors as lazy attributes, and touching
+them tries to import torchvision, which an audio pipeline has no reason to
+install. Nothing is broken -- the tracebacks just bury the real output.
+
+The config disables the watcher, so source edits no longer live-reload the app;
+restart it instead. Set `fileWatcherType = "auto"` if you want reload back.
+
+### "Class AVFFrameReceiver is implemented in both ..." on macOS
+
+Also harmless. PyAV bundles its own ffmpeg libraries and Homebrew's `ffmpeg`
+installs another copy; macOS notes the duplicate Objective-C classes. It does
+not affect transcription.
+
+### ffmpeg not found
+
+`ffmpeg` is a system dependency, not a pip package:
+`brew install ffmpeg` / `sudo apt install ffmpeg` / `choco install ffmpeg`.
+
 ## Performance
 
 The pipeline is tuned for turnaround time:
@@ -143,19 +881,29 @@ The pipeline is tuned for turnaround time:
   first run pays the load cost.
 - **Per-stage timing** — every run reports where the time went (CLI prints it
   to stderr; the GUI shows a metric per stage), so you can tune with data.
+  Stage start/finish also goes to stderr as it happens, so a long run is
+  visibly alive rather than silently pending.
 
 Going faster still:
 
 - **GPU:** with a CUDA card, transcription and the emotion models switch to
   float16 automatically — typically 10-30x on transcription.
 - **Model size:** `--model distil-large-v3` is near-large accuracy at a
-  fraction of the cost; `tiny`/`base` are fastest on CPU.
+  fraction of the cost. `--model base` is faster than the `small` default, but
+  only use it on English-only audio — see the warning above.
 - **Skip emotion:** `--no-emotion` drops the emotion stage entirely.
+- **Diarization backend:** `cluster` (the default) is seconds where `pyannote`
+  is minutes on CPU. pyannote is more accurate; on a long recording it is also
+  the entire runtime. `--speakers N` skips its search over speaker counts.
+- **Skip translation:** `--no-translate` drops the second Whisper pass. It runs
+  over the non-English spans only, so on an English recording there is nothing
+  to save; on an all-Hindi one it is close to a second full decode.
 
 Example timing line (CPU, `base`, ~2 min clip):
 
 ```
-Timing: extract=0.4s transcribe=18.2s diarize=6.1s emotion=3.4s  (total 28.1s)
+Timing: extract=0.4s language=1.1s transcribe=18.2s translate=9.7s
+        diarize=6.1s emotion=3.4s  (total 38.9s)
 ```
 
 ## Library use
@@ -164,8 +912,24 @@ Timing: extract=0.4s transcribe=18.2s diarize=6.1s emotion=3.4s  (total 28.1s)
 from transcriber import transcribe_file
 
 result = transcribe_file("call.wav", whisper_model="small")
+print(result.languages)     # {"hi": 142.0, "en": 96.0}
+print(result.identified)    # {"Speaker 1": "Priya"}
+
 for seg in result.segments:
-    print(seg.start, seg.speaker, seg.emotion, seg.text)
+    print(seg.start, seg.speaker, seg.language, seg.confidence, seg.text)
+    if seg.latin:                       # None when already in Latin script
+        print("   latin:  ", seg.latin)
+    if seg.english:                     # None when already English
+        print("   english:", seg.english)
+```
+
+Remember a speaker straight from a result, without re-processing the audio:
+
+```python
+from transcriber import SpeakerStore
+
+with SpeakerStore() as store:
+    store.enroll("Rahul", result.voiceprints["Speaker 2"].vector)
 ```
 
 ## Files
@@ -173,11 +937,30 @@ for seg in result.segments:
 ```
 transcriber/
   audio.py        # ffmpeg extraction + waveform slicing
-  transcribe.py   # Whisper (segment + word timestamps)
+  transcribe.py   # Whisper: per-span decode, translate pass, confidence
+  language.py     # language timeline for code-switching
+  langid.py       # the two interchangeable language detectors
+  translit.py     # Latin transliteration of non-Latin scripts (uroman)
   diarize.py      # both diarization backends -> unified Turns
-  emotion.py      # audio + text emotion, fused
+  identify.py     # voiceprint extraction + matching against known speakers
+  speakerdb.py    # persistent SQLite speaker/voiceprint store
+  emotion.py      # audio + text emotion, fused, language-aware
   core.py         # pipeline + speaker/word alignment
-  output.py       # txt / json / srt renderers
+  output.py       # txt / json / srt / vtt renderers
+  credentials.py  # where the Hugging Face token is looked for
+  runtime.py      # OpenMP guard + optional-dependency imports
   cli.py          # `python -m transcriber`
   gui.py          # `streamlit run transcriber/gui.py`
+  tests/          # pure-logic tests (no models or ffmpeg needed)
+  SPEC.md         # what this does and why — read before changing behaviour
+```
+
+## Tests
+
+The test suite covers matching, language smoothing, alignment, and rendering
+without needing models, audio, or ffmpeg:
+
+```sh
+pip install pytest
+python -m pytest transcriber/tests -q
 ```

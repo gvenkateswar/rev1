@@ -1,11 +1,22 @@
-"""Command-line front-end:  python -m transcriber audio.wav [options]"""
+"""Command-line front-end.
+
+    python -m transcriber audio.wav [options]      # transcribe
+    python -m transcriber speakers <subcommand>    # manage the speaker store
+
+The ``speakers`` word is intercepted before argument parsing so the plain
+transcribe form keeps working unchanged.
+"""
 from __future__ import annotations
 
 import argparse
 import sys
+import time
 
 from .core import transcribe_file
-from .output import render
+from .output import render, to_summary
+from .credentials import permission_warning, token_file
+from .language import parse_aliases
+from .runtime import announce_environment, build_id
 
 
 def _progress(stage: str, frac: float) -> None:
@@ -16,6 +27,12 @@ def _progress(stage: str, frac: float) -> None:
         sys.stderr.write("\n")
 
 
+def _live_line(start: float, text: str) -> None:
+    """One decoded line, to stderr, so stdout stays the transcript alone."""
+    sys.stderr.write(f"[{int(start) // 60:d}:{int(start) % 60:02d}] {text}\n")
+    sys.stderr.flush()
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="transcriber",
@@ -23,14 +40,51 @@ def build_parser() -> argparse.ArgumentParser:
                     "fused audio+text emotion detection.",
     )
     p.add_argument("input", help="Path to an audio or video file.")
+    p.add_argument("--version", action="version", version=f"transcriber {build_id()}",
+                   help="Show the version and the commit it was built from.")
     p.add_argument("-o", "--output", help="Write result here (default: stdout).")
-    p.add_argument("-f", "--format", default="txt", choices=["txt", "json", "srt"],
+    p.add_argument("-f", "--format", default="txt",
+                   choices=["txt", "json", "srt", "vtt"],
                    help="Output format (default: txt).")
-    p.add_argument("--model", default="base",
-                   help="Whisper model size: tiny/base/small/medium/large "
-                        "(default: base).")
+    p.add_argument("--model", default="small",
+                   help="Whisper model size: tiny/base/small/medium/large-v3, "
+                        "or a distil-whisper id like distil-large-v3 "
+                        "(default: small). tiny and base do not transcribe "
+                        "non-English speech -- they return an English "
+                        "translation instead. Drop to base only for "
+                        "English-only audio.")
     p.add_argument("--language", default=None,
-                   help="Force a language (ISO code). Default: auto-detect.")
+                   help="Force one language (ISO code) for the whole file. "
+                        "Default: auto-detect, allowing mid-file switches.")
+    p.add_argument("--no-multilingual", action="store_true",
+                   help="Decode the whole file in one auto-detected language "
+                        "instead of allowing the language to change mid-file.")
+    p.add_argument("--live", action="store_true",
+                   help="Print each line to stderr as it is decoded, before "
+                        "speakers and languages are worked out. Useful on a "
+                        "long file to see that it is working and roughly what "
+                        "it is hearing.")
+    p.add_argument("--langid", default="whisper",
+                   choices=["whisper", "speechbrain"],
+                   help="Which detector decides the language. 'whisper' is "
+                        "its own built-in one. 'speechbrain' is VoxLingua107, "
+                        "trained only for language ID and independent of "
+                        "Whisper's decoder, so it can disagree with a wrong "
+                        "transcript instead of agreeing with it. Needs "
+                        "`pip install speechbrain` and downloads a model on "
+                        "first use.")
+    p.add_argument("--language-alias", action="append", metavar="FROM=TO",
+                   default=None,
+                   help="Treat one detected language as another, e.g. "
+                        "--language-alias ur=hi to get Hindustani in "
+                        "Devanagari rather than whichever script the "
+                        "detector leaned towards. Repeatable.")
+    p.add_argument("--no-transliterate", action="store_true",
+                   help="Skip the Latin transliteration of non-Latin scripts.")
+    p.add_argument("--no-translate", action="store_true",
+                   help="Skip the English translation of non-English speech. "
+                        "The translation is a second Whisper pass over the "
+                        "non-English stretches, so this is the faster option.")
     p.add_argument("--diarization", default="cluster",
                    choices=["cluster", "pyannote"],
                    help="Speaker backend: 'cluster' (offline, no token) or "
@@ -38,8 +92,27 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--speakers", type=int, default=None,
                    help="Number of speakers if known (default: auto-detect).")
     p.add_argument("--hf-token", default=None,
-                   help="Hugging Face token for the pyannote backend "
-                        "(or set HF_TOKEN).")
+                   help="Hugging Face token for the pyannote backend. Prefer "
+                        f"leaving this unset and storing it in "
+                        f"{token_file()} or $HF_TOKEN -- your shell records "
+                        "command lines, so a token passed here ends up in "
+                        "your history.")
+    p.add_argument("--no-identify", action="store_true",
+                   help="Skip matching voices against the saved speaker store.")
+    p.add_argument("--speaker-db", default=None,
+                   help="Path to the speaker store "
+                        "(default: ~/.transcriber/speakers.db).")
+    p.add_argument("--match-threshold", type=float, default=None,
+                   help="Minimum voice similarity to accept a match, 0..1 "
+                        "(default: 0.72). Lower = more matches, more mistakes.")
+    p.add_argument("--match-margin", type=float, default=None,
+                   help="How far the best match must beat the runner-up "
+                        "(default: 0.05).")
+    p.add_argument("--name-speaker", action="append", default=[],
+                   metavar="LABEL=NAME",
+                   help="Name a speaker from this recording and remember their "
+                        "voice for future files, e.g. --name-speaker "
+                        "'Speaker 1=Priya'. Repeatable.")
     p.add_argument("--no-emotion", action="store_true",
                    help="Skip emotion detection (faster).")
     p.add_argument("--emotion-audio-weight", type=float, default=0.5,
@@ -56,11 +129,28 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    announce_environment()
+    note = permission_warning(token_file())
+    if note:
+        sys.stderr.write(f"Note: {note}\n")
     try:
         result = transcribe_file(
             args.input,
             whisper_model=args.model,
             language=args.language,
+            multilingual=not args.no_multilingual,
+            language_aliases=parse_aliases(args.language_alias),
+            language_detector=args.langid,
+            transliterate=not args.no_transliterate,
+            translate=not args.no_translate,
+            # Naming a speaker needs their voiceprint, which only the
+            # identification stage extracts -- so --name-speaker implies it
+            # even under --no-identify. With nothing enrolled yet, matching is
+            # a no-op anyway, so this cannot mislabel anyone.
+            identify_speakers=not args.no_identify or bool(args.name_speaker),
+            speaker_db=args.speaker_db,
+            match_threshold=args.match_threshold,
+            match_margin=args.match_margin,
             diarization_backend=args.diarization,
             num_speakers=args.speakers,
             hf_token=args.hf_token,
@@ -69,6 +159,7 @@ def main(argv: list[str] | None = None) -> int:
             use_audio_emotion=args.emotion_source in ("both", "audio"),
             use_text_emotion=args.emotion_source in ("both", "text"),
             progress=_progress,
+            on_partial=_live_line if args.live else None,
         )
     except (RuntimeError, FileNotFoundError, ValueError) as exc:
         sys.stderr.write(f"\nError: {exc}\n")
@@ -82,6 +173,17 @@ def main(argv: list[str] | None = None) -> int:
                 f"| audio_raw={seg.audio_raw} | text_raw={seg.text_raw}\n"
             )
         sys.stderr.write("--- end emotion debug ---\n\n")
+
+    summary = to_summary(result)
+    if summary:
+        sys.stderr.write(summary + "\n")
+
+    if args.name_speaker:
+        try:
+            _enroll_named(result, args.name_speaker, args.speaker_db)
+        except (ValueError, KeyError, RuntimeError) as exc:
+            sys.stderr.write(f"\nError naming speakers: {exc}\n")
+            return 1
 
     if result.timings:
         parts = " ".join(
@@ -101,5 +203,177 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+# --------------------------------------------------------------------------- #
+# Enrollment
+# --------------------------------------------------------------------------- #
+def _parse_assignment(raw: str) -> tuple[str, str]:
+    """Split a 'LABEL=NAME' argument."""
+    if "=" not in raw:
+        raise ValueError(
+            f"--name-speaker expects LABEL=NAME, got {raw!r} "
+            "(e.g. --name-speaker 'Speaker 1=Priya')"
+        )
+    label, name = raw.split("=", 1)
+    label, name = label.strip(), name.strip()
+    if not label or not name:
+        raise ValueError(f"--name-speaker needs both a label and a name: {raw!r}")
+    return label, name
+
+
+def _enroll_named(result, assignments: list[str], db_path: str | None) -> None:
+    """Store voiceprints for speakers the user named on the command line."""
+    from .identify import DEFAULT_MIN_ENROLL_SECONDS
+    from .speakerdb import SpeakerStore
+
+    pairs = [_parse_assignment(a) for a in assignments]
+    with SpeakerStore(db_path) as store:
+        for label, name in pairs:
+            print_ = result.voiceprints.get(label)
+            if print_ is None:
+                known = ", ".join(sorted(result.voiceprints)) or "none"
+                raise KeyError(
+                    f"No speaker labelled {label!r} in this transcript "
+                    f"(available: {known})"
+                )
+            if not print_.enrollable:
+                # Storing a voiceprint built from a few seconds of speech would
+                # degrade every future match, so refuse rather than accept it.
+                sys.stderr.write(
+                    f"Skipped {label} -> {name}: only "
+                    f"{print_.speech_seconds:.1f}s of speech, need "
+                    f"{DEFAULT_MIN_ENROLL_SECONDS:.0f}s to enroll reliably.\n"
+                )
+                continue
+            speaker = store.enroll(
+                name, print_.vector,
+                source=result.source, duration=print_.speech_seconds,
+            )
+            sys.stderr.write(
+                f"Remembered {name} ({speaker.sample_count} "
+                f"voiceprint{'s' if speaker.sample_count != 1 else ''} on file).\n"
+            )
+
+
+def _enroll_from_audio(name: str, path: str, db_path: str | None) -> int:
+    """Enroll a speaker from a clip that contains only their voice."""
+    import os
+
+    from . import audio as _audio
+    from .diarize import Turn
+    from .identify import DEFAULT_MIN_ENROLL_SECONDS, extract_voiceprints
+    from .speakerdb import SpeakerStore
+
+    wav_path = _audio.extract_audio(path)
+    try:
+        duration = _audio.audio_duration(wav_path)
+        # One turn spanning the file: the caller asserts it is a single voice.
+        prints = extract_voiceprints(wav_path, [Turn(0.0, duration, name)])
+        if not prints:
+            sys.stderr.write(
+                f"Error: no usable speech found in {path}. "
+                "Enrollment needs a clip of one person talking.\n"
+            )
+            return 1
+        print_ = prints[0]
+        if print_.speech_seconds < DEFAULT_MIN_ENROLL_SECONDS:
+            sys.stderr.write(
+                f"Error: {path} has only {print_.speech_seconds:.1f}s of speech; "
+                f"need at least {DEFAULT_MIN_ENROLL_SECONDS:.0f}s.\n"
+            )
+            return 1
+        with SpeakerStore(db_path) as store:
+            speaker = store.enroll(
+                name, print_.vector, source=path,
+                duration=print_.speech_seconds,
+            )
+        sys.stderr.write(
+            f"Enrolled {speaker.name} from {path} "
+            f"({speaker.sample_count} voiceprint(s) on file).\n"
+        )
+        return 0
+    finally:
+        try:
+            os.unlink(wav_path)
+        except OSError:
+            pass
+
+
+# --------------------------------------------------------------------------- #
+# `speakers` sub-CLI
+# --------------------------------------------------------------------------- #
+def build_speakers_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="transcriber speakers",
+        description="Manage remembered speakers and their voiceprints.",
+    )
+    p.add_argument("--speaker-db", default=None,
+                   help="Path to the speaker store "
+                        "(default: ~/.transcriber/speakers.db).")
+    sub = p.add_subparsers(dest="command", required=True)
+
+    sub.add_parser("list", help="List remembered speakers.")
+
+    enroll = sub.add_parser(
+        "enroll", help="Remember a voice from a clip of one person speaking.")
+    enroll.add_argument("name")
+    enroll.add_argument("audio", help="Audio/video of just this person.")
+
+    rename = sub.add_parser("rename", help="Rename a remembered speaker.")
+    rename.add_argument("old_name")
+    rename.add_argument("new_name")
+
+    forget = sub.add_parser(
+        "forget", help="Delete a speaker and every voiceprint of theirs.")
+    forget.add_argument("name")
+    return p
+
+
+def speakers_main(argv: list[str]) -> int:
+    from .speakerdb import SpeakerStore, default_db_path
+
+    args = build_speakers_parser().parse_args(argv)
+    try:
+        if args.command == "enroll":
+            return _enroll_from_audio(args.name, args.audio, args.speaker_db)
+
+        with SpeakerStore(args.speaker_db) as store:
+            if args.command == "list":
+                speakers = store.all_speakers()
+                if not speakers:
+                    path = args.speaker_db or default_db_path()
+                    print(f"No speakers remembered yet ({path}).")
+                    print("Name one with: python -m transcriber FILE "
+                          "--name-speaker 'Speaker 1=Alice'")
+                    return 0
+                print(f"{'NAME':<24} {'VOICEPRINTS':>11}   LAST UPDATED")
+                for s in speakers:
+                    when = time.strftime(
+                        "%Y-%m-%d %H:%M", time.localtime(s.updated_at))
+                    print(f"{s.name:<24} {s.sample_count:>11}   {when}")
+                return 0
+
+            if args.command == "rename":
+                store.rename(args.old_name, args.new_name)
+                print(f"Renamed {args.old_name!r} -> {args.new_name!r}")
+                return 0
+
+            if args.command == "forget":
+                store.forget(args.name)
+                print(f"Forgot {args.name!r} and deleted their voiceprints.")
+                return 0
+    except (ValueError, KeyError, RuntimeError, FileNotFoundError) as exc:
+        sys.stderr.write(f"Error: {exc}\n")
+        return 1
+    return 1
+
+
+def dispatch(argv: list[str] | None = None) -> int:
+    """Route to the speakers sub-CLI or the transcribe CLI."""
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "speakers":
+        return speakers_main(argv[1:])
+    return main(argv)
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(dispatch())

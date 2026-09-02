@@ -166,7 +166,13 @@ class ScaleGuess:
     def summary(self) -> str:
         """One line, hedged as strongly as the evidence deserves."""
         if not self.swaras:
-            return "not enough sung material to identify a scale"
+            return (
+                f"only {self.total_seconds:.0f}s of singing was captured — "
+                f"too little to fit a scale (if the recording has more, the "
+                f"tracker is not registering it as singing: check the pitch "
+                f"analysis view, lower the singing sensitivity, or reduce "
+                f"the accompaniment)"
+            )
         if self.hint_fits:
             name, fit = self.hint_fits[0]
             if fit >= 0.6:

@@ -236,6 +236,58 @@ def _section_picker(source: str, settings: dict) -> tuple[float, float] | None:
     return None
 
 
+def _build_pitch_chart(contour_df, region_df, grid_df, x_domain, y_domain):
+    """Layered vega spec: region bands, swara grid, labels, pitch dots.
+
+    Kept free of streamlit calls so the spec can be built (and compiled to a
+    dict) in tests — the first version crashed at runtime on an altair v6
+    rule (no nested conditions), which is exactly the class of bug a test
+    that renders nothing would still have caught.
+    """
+    import altair as alt
+
+    # Per-row style columns instead of nested conditions.
+    grid_df = grid_df.copy()
+    grid_df["width"] = grid_df["kind"].map(
+        {"sa": 1.6, "pa": 1.1, "komal": 0.4, "shuddha": 0.55}
+    )
+    x_scale = alt.Scale(domain=list(x_domain), nice=False)
+    y_scale = alt.Scale(domain=list(y_domain))
+    y_axis = alt.Axis(title=None, labels=False, ticks=False, grid=False)
+
+    bands = alt.Chart(region_df).mark_rect(opacity=0.14).encode(
+        x=alt.X("start:Q", scale=x_scale, title="seconds (recording time)"),
+        x2="end:Q",
+        color=alt.Color(
+            "kind:N",
+            scale=alt.Scale(
+                domain=["sung", "spoken", "drone", "silent"],
+                range=["#2e7d32", "#607d8b", "#b8860b", "#bdbdbd"],
+            ),
+            legend=alt.Legend(title=None, orient="top"),
+        ),
+    )
+    solid = alt.Chart(grid_df[grid_df["kind"] != "komal"]).mark_rule(
+        opacity=0.6,
+    ).encode(
+        y=alt.Y("semi:Q", scale=y_scale, axis=y_axis),
+        strokeWidth=alt.StrokeWidth("width:Q", scale=None, legend=None),
+    )
+    komal = alt.Chart(grid_df[grid_df["kind"] == "komal"]).mark_rule(
+        opacity=0.5, strokeDash=[3, 4], strokeWidth=0.4,
+    ).encode(y=alt.Y("semi:Q", scale=y_scale, axis=y_axis))
+    labels = alt.Chart(grid_df).mark_text(
+        align="left", dx=3, fontSize=11, color="#555555",
+    ).encode(y=alt.Y("semi:Q", scale=y_scale, axis=y_axis),
+             text="swara:N", x=alt.value(2))
+    contour = alt.Chart(contour_df).mark_circle(size=5, opacity=0.75).encode(
+        x=alt.X("t:Q", scale=x_scale),
+        y=alt.Y("semi:Q", scale=y_scale, axis=y_axis),
+        color=alt.value("#1a5b8f"),
+    )
+    return alt.layer(bands, solid, komal, labels, contour).properties(height=380)
+
+
 def _render_pitch_analysis(
     source: str, clip: tuple[float, float], settings: dict
 ) -> None:
@@ -246,7 +298,6 @@ def _render_pitch_analysis(
     on it: whether the taans register as singing, whether the tracker is
     following the voice or the harmonium, where Sa sits.
     """
-    import altair as alt
     import pandas as pd
 
     from music_lesson.pitch import hz_to_cents, track_pitch
@@ -323,47 +374,8 @@ def _render_pitch_analysis(
         for r in regions
     ])
     contour_df = pd.DataFrame({"t": times, "semi": semis})
-
-    x_scale = alt.Scale(domain=[start, end], nice=False)
-    bands = alt.Chart(region_df).mark_rect(opacity=0.14).encode(
-        x=alt.X("start:Q", scale=x_scale, title="seconds (recording time)"),
-        x2="end:Q",
-        color=alt.Color(
-            "kind:N",
-            scale=alt.Scale(
-                domain=["sung", "spoken", "drone", "silent"],
-                range=["#2e7d32", "#607d8b", "#b8860b", "#bdbdbd"],
-            ),
-            legend=alt.Legend(title=None, orient="top"),
-        ),
-    )
-    rules = alt.Chart(grid).mark_rule().encode(
-        y=alt.Y("semi:Q", scale=alt.Scale(domain=[lo, hi]),
-                axis=alt.Axis(title="swara", values=list(range(lo, hi + 1)),
-                              labels=False, grid=False)),
-        strokeWidth=alt.condition(
-            "datum.kind == 'sa'", alt.value(1.6),
-            alt.condition("datum.kind == 'pa'", alt.value(1.1), alt.value(0.4)),
-        ),
-        strokeDash=alt.condition(
-            "datum.kind == 'komal'", alt.value([3, 4]), alt.value([1, 0])
-        ),
-        opacity=alt.value(0.6),
-    )
-    labels = alt.Chart(grid).mark_text(
-        align="right", dx=-4, fontSize=11,
-    ).encode(
-        y="semi:Q", text="swara:N",
-        x=alt.value(0),
-    )
-    contour = alt.Chart(contour_df).mark_circle(size=5, opacity=0.75).encode(
-        x=alt.X("t:Q", scale=x_scale), y="semi:Q",
-        color=alt.value("#1a5b8f"),
-    )
-    st.altair_chart(
-        alt.layer(bands, rules, labels, contour).properties(height=380),
-        use_container_width=True,
-    )
+    chart = _build_pitch_chart(contour_df, region_df, grid, (start, end), (lo, hi))
+    st.altair_chart(chart, use_container_width=True)
 
     sung = sum(r.duration for r in regions if r.kind == "sung")
     spoken = sum(r.duration for r in regions if r.kind == "spoken")

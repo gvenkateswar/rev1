@@ -230,7 +230,7 @@ class ScaleIdentificationTests(unittest.TestCase):
         guess = raga.identify_scale({0: 2.0, 4: 1.0})
         self.assertIsNone(guess.thaat)
         self.assertEqual(guess.exact_ragas, ())
-        self.assertIn("not enough", guess.summary())
+        self.assertIn("too little to fit a scale", guess.summary())
 
     def test_thaat_lookup_is_case_insensitive(self):
         self.assertEqual(raga.thaat_of_raga("yaman"), "Kalyan")
@@ -1239,6 +1239,42 @@ class PromptEchoTests(unittest.TestCase):
         text = ("ab bandish shuru karo, sam pe aana hai, matra gin ke, "
                 "phir mukhda pakdo aur vistaar karo")
         self.assertIsNone(_junk_reason(text, self._tokens()))
+
+
+
+
+class PitchChartTests(unittest.TestCase):
+    """The analysis chart must COMPILE, not merely construct.
+
+    The first version passed import and crashed at runtime on an altair v6
+    rule (no nested conditions), taking the whole GUI down. Building the spec
+    and compiling it to a dict exercises exactly that path. Skipped where the
+    charting stack is not installed — the rest of the suite stays NumPy-only.
+    """
+
+    def test_the_spec_compiles_with_all_layers(self):
+        try:
+            import pandas as pd
+
+            from music_lesson.gui import _build_pitch_chart
+        except ImportError:
+            self.skipTest("altair/pandas/streamlit not installed")
+
+        contour = pd.DataFrame({"t": [10.0, 10.5, 11.0], "semi": [0.0, 2.0, 4.0]})
+        regions = pd.DataFrame([
+            {"start": 10.0, "end": 10.6, "kind": "spoken"},
+            {"start": 10.6, "end": 11.0, "kind": "sung"},
+        ])
+        grid = pd.DataFrame([
+            {"semi": r, "swara": f"s{r}",
+             "kind": "sa" if r % 12 == 0 else "pa" if r % 12 == 7
+                     else "komal" if r % 12 in (1, 3, 6, 8, 10) else "shuddha"}
+            for r in range(-3, 13)
+        ])
+        spec = _build_pitch_chart(
+            contour, regions, grid, (10.0, 11.0), (-3, 12)
+        ).to_dict()
+        self.assertEqual(len(spec["layer"]), 5)
 
 
 

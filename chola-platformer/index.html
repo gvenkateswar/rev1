@@ -1593,7 +1593,7 @@ function render(){
   ctx.filter = 'blur(1.8px)';
   ctx.drawImage(BGC, 0, 0);
   ctx.filter = 'none';
-  drawWallLayer();
+  if(!farIm) drawWallLayer();      // the painted backdrop carries its own architecture
 
   // ---- background lane, then atmospheric haze over it
   drawLaneContents(0);

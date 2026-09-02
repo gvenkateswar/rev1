@@ -9,7 +9,8 @@ Open `index.html` in a browser to play. No build step, no dependencies.
 
 ## How to play
 
-- **↑ / ↓** (or W/S, or swipe up/down) — drift between the three paths;
+- **↑ / ↓** (or W/S) — drift between the three paths; on touch, swipe or drag
+  up/down anywhere — keep dragging to cross two paths in one motion;
   Biscuit follows on the leash a beat behind you
 - **Space** (or tap/click) — whistle; when a squirrel appears and the ring is
   counting down, whistle in time or Biscuit hauls you off your stride

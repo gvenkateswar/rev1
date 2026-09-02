@@ -294,9 +294,44 @@ const ASSET_FILES = {
   gate:'gate.png',
 };
 const IMGS = {};
+// character and prop sprites get alpha-trimmed so feet anchor to the ground
+const TRIM_KEYS = new Set(['hero_idle','hero_run_a','hero_run_b','hero_jump','hero_attack','guard_walk_a','guard_walk_b','gate']);
+function trimAlpha(im){
+  const c = document.createElement('canvas');
+  c.width = im.width; c.height = im.height;
+  const g = c.getContext('2d');
+  g.drawImage(im, 0, 0);
+  const d = g.getImageData(0,0,c.width,c.height).data;  // throws on tainted (file://) canvases
+  let minX=c.width, minY=c.height, maxX=-1, maxY=-1;
+  for(let y=0;y<c.height;y+=2){
+    for(let x=0;x<c.width;x+=2){
+      if(d[(y*c.width+x)*4+3] > 128){
+        if(x<minX)minX=x; if(x>maxX)maxX=x;
+        if(y<minY)minY=y; if(y>maxY)maxY=y;
+      }
+    }
+  }
+  if(maxX < 0) return im;
+  const t = document.createElement('canvas');
+  t.width = maxX-minX+2; t.height = maxY-minY+2;
+  t.getContext('2d').drawImage(c, minX, minY, t.width, t.height, 0, 0, t.width, t.height);
+  // foot anchor: mean opaque x across the bottom rows (sash tails skew the box center)
+  let sx=0, n=0;
+  const y0 = Math.max(minY, maxY - ((maxY-minY)*0.12|0));
+  for(let y=y0;y<=maxY;y+=2){
+    for(let x=minX;x<=maxX;x+=2){
+      if(d[(y*c.width+x)*4+3] > 128){ sx += x-minX; n++; }
+    }
+  }
+  t.ax = n ? (sx/n)/t.width : 0.5;
+  return t;
+}
 for(const [k,f] of Object.entries(ASSET_FILES)){
   const im = new Image();
-  im.onload = ()=>{ IMGS[k] = im; };
+  im.onload = ()=>{
+    if(TRIM_KEYS.has(k)){ try{ IMGS[k] = trimAlpha(im); }catch(e){ IMGS[k] = im; } }
+    else IMGS[k] = im;
+  };
   im.src = 'assets/'+f;
 }
 const TEXPATS = {};
@@ -1263,8 +1298,11 @@ function drawFigure(x, y, face, phase, opts){
     ctx.beginPath(); ctx.arc(0, 8, 22, 0, 7); ctx.fill();
     ctx.restore();
     ctx.scale(face, 1);
-    const dh = 104, dw = dh * sprite.width / sprite.height;
-    ctx.drawImage(sprite, -dw/2, -dh+4, dw, dh);
+    // constant world scale keeps pose proportions (a tucked jump draws shorter than idle)
+    const S = 0.069;
+    const dh = sprite.height*S, dw = sprite.width*S;
+    const ax = sprite.ax ?? 0.5;
+    ctx.drawImage(sprite, -dw*ax, -dh+2, dw, dh);
     ctx.restore();
     return;
   }

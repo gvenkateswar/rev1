@@ -49,6 +49,10 @@ class PitchTrack:
     times: np.ndarray        # frame centre, seconds
     hop_s: float
     sample_rate: int
+    # The pitch estimate BEFORE the confidence gate zeroed it. Analysis views
+    # draw it faintly so a person can see what the gate is costing on their
+    # audio; the pipeline itself never reads it.
+    raw_f0: np.ndarray | None = None
 
     def __len__(self) -> int:
         return len(self.f0)
@@ -70,6 +74,7 @@ class PitchTrack:
         return PitchTrack(
             f0=self.f0[a:b], confidence=self.confidence[a:b], rms=self.rms[a:b],
             times=self.times[a:b], hop_s=self.hop_s, sample_rate=self.sample_rate,
+            raw_f0=None if self.raw_f0 is None else self.raw_f0[a:b],
         )
 
 
@@ -97,13 +102,15 @@ def track_pitch(
 
     if len(samples) < buf or tau_max <= tau_min:
         empty = np.zeros(0)
-        return PitchTrack(empty, empty, empty, empty, hop_s, sample_rate)
+        return PitchTrack(empty, empty, empty, empty, hop_s, sample_rate,
+                          raw_f0=empty)
 
     frames = np.lib.stride_tricks.sliding_window_view(samples, buf)[::hop]
     n = len(frames)
     fft_size = 1 << int(buf - 1).bit_length()
 
     f0 = np.zeros(n)
+    raw_f0 = np.zeros(n)
     conf = np.zeros(n)
     rms = np.zeros(n)
 
@@ -119,10 +126,12 @@ def track_pitch(
         block_conf = np.clip(1.0 - quality, 0.0, 1.0)
         voiced = (lag > 0) & (block_conf >= min_confidence)
         f0[lo:lo + len(block)] = np.where(voiced, block_f0, 0.0)
+        raw_f0[lo:lo + len(block)] = np.where(lag > 0, block_f0, 0.0)
         conf[lo:lo + len(block)] = block_conf
 
     times = np.arange(n) * hop / sample_rate + (win / 2) / sample_rate
-    return PitchTrack(f0, conf, rms, times, hop / sample_rate, sample_rate)
+    return PitchTrack(f0, conf, rms, times, hop / sample_rate, sample_rate,
+                      raw_f0=raw_f0)
 
 
 # --------------------------------------------------------------------------- #

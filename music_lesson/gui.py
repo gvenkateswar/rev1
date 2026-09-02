@@ -238,7 +238,7 @@ def _section_picker(source: str, settings: dict) -> tuple[float, float] | None:
 
 def _build_pitch_chart(
     contour_df, region_df, grid_df, x_domain, y_domain,
-    notes_df=None, glide_df=None, height=None,
+    notes_df=None, glide_df=None, height=None, faint_df=None,
 ):
     """Layered vega spec: bands, swara grid, labels, pitch dots, note bars.
 
@@ -308,7 +308,21 @@ def _build_pitch_chart(
         color=alt.value("#1a5b8f"),
     )
 
-    layers = [bands, solid, komal, labels, contour]
+    layers = [bands, solid, komal, labels]
+    if faint_df is not None and len(faint_df):
+        # Pitch the tracker FOUND but the confidence gate rejected. Drawn
+        # faint, under the confident dots: on accompanied recordings this is
+        # where "why is my sustained note full of holes" gets its answer.
+        layers.append(
+            alt.Chart(faint_df).mark_circle(
+                size=4, opacity=0.18, clip=True,
+            ).encode(
+                x=alt.X("t:Q", scale=x_scale),
+                y=alt.Y("semi:Q", scale=y_scale, axis=y_axis),
+                color=alt.value("#7a8ca0"),
+            )
+        )
+    layers.append(contour)
 
     if glide_df is not None and len(glide_df):
         layers.append(
@@ -422,9 +436,25 @@ def _render_pitch_analysis(
     voiced = ~np.isnan(cents)
     times = track.times[voiced] + start
     semis = cents[voiced] / 100.0
-    if len(times) > 4000:                    # keep the chart responsive
-        step = int(np.ceil(len(times) / 4000))
+    if len(times) > 6000:                    # keep the chart responsive
+        step = int(np.ceil(len(times) / 6000))
         times, semis = times[::step], semis[::step]
+
+    # What the gate threw away: pitch the tracker found below the confidence
+    # threshold. Seeing it faintly is how holes in a sustained note (or a
+    # taan captured as three dots) get diagnosed instead of guessed at.
+    faint_df = None
+    if track.raw_f0 is not None:
+        rejected = (~track.voiced) & (track.raw_f0 > 0) & (track.confidence >= 0.25)
+        if rejected.any():
+            f_cents = hz_to_cents(track.raw_f0[rejected], tonic)
+            f_times = track.times[rejected] + start
+            keep = ~np.isnan(f_cents)
+            f_times, f_semis = f_times[keep], f_cents[keep] / 100.0
+            if len(f_times) > 6000:
+                step = int(np.ceil(len(f_times) / 6000))
+                f_times, f_semis = f_times[::step], f_semis[::step]
+            faint_df = pd.DataFrame({"t": f_times, "semi": f_semis})
 
     full_lo = max(int(np.floor(np.percentile(semis, 2))) - 1, -17)
     full_hi = min(int(np.ceil(np.percentile(semis, 98))) + 1, 26)
@@ -490,7 +520,7 @@ def _render_pitch_analysis(
 
     chart = _build_pitch_chart(
         contour_df, region_df, grid, (start, end), (lo, hi), notes_df, glide_df,
-        height=(hi - lo + 1) * row_px,
+        height=(hi - lo + 1) * row_px, faint_df=faint_df,
     )
     st.altair_chart(chart, use_container_width=True)
 
@@ -500,7 +530,7 @@ def _render_pitch_analysis(
     st.caption(
         f"Sa = {describe_hz(tonic)} · {_fmt_ts(sung)} sung / "
         f"{_fmt_ts(spoken)} spoken in this selection · wheel zooms time, drag "
-        f"pans, double-click resets; use the sliders for vertical size · dots = tracked pitch, green bars = "
+        f"pans, double-click resets; use the sliders for vertical size · solid dots = confident pitch, faint dots = pitch the gate rejected, green bars = "
         f"notes in the sargam, grey bars = held pitch not counted as singing "
         f"(hover any bar for its swara), gold links = meend. If the dots ride "
         f"the harmonium instead of the voice, the sargam will too."

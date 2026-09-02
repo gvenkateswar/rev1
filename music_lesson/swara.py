@@ -450,6 +450,7 @@ def detect_glides(
     tonic_hz: float,
     notes: list[Note],
     min_span_cents: float = 120.0,
+    max_span_cents: float = 800.0,
     min_duration: float = 0.08,
     max_duration: float = 1.0,
 ) -> list[Glide]:
@@ -468,7 +469,10 @@ def detect_glides(
         if not (min_duration <= gap <= max_duration):
             continue
         interval = second.cents - first.cents
-        if abs(interval) < min_span_cents:
+        # Below the floor it is articulation; above the ceiling it is not a
+        # meend but the tracker leaping an octave (a real meend past a minor
+        # sixth is vanishingly rare, an octave-error "meend" is constant).
+        if not (min_span_cents <= abs(interval) <= max_span_cents):
             continue
         between = track.slice(first.end, second.start)
         if len(between) < 3 or float(between.voiced.mean()) < 0.7:

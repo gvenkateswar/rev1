@@ -1296,6 +1296,43 @@ class PitchChartTests(unittest.TestCase):
         ).to_dict()
         self.assertEqual(len(bare["layer"]), 6)   # empty-notes layer still compiles
 
+        with_faint = _build_pitch_chart(
+            contour, regions, grid, (10.0, 11.0), (-3, 12), notes, glides,
+            height=640, faint_df=pd.DataFrame({"t": [10.2], "semi": [1.0]}),
+        ).to_dict()
+        self.assertEqual(len(with_faint["layer"]), 8)
+
+    def test_the_tracker_keeps_what_the_gate_rejected(self):
+        # The faint layer needs pre-gate pitch; slicing must carry it too.
+        audio = sing([0, 4, 7])
+        track = track_pitch(audio, SR)
+        self.assertIsNotNone(track.raw_f0)
+        self.assertGreaterEqual(
+            int((track.raw_f0 > 0).sum()), int(track.voiced.sum())
+        )
+        sub = track.slice(0.2, 1.0)
+        self.assertIsNotNone(sub.raw_f0)
+        self.assertEqual(len(sub.raw_f0), len(sub.f0))
+
+    def test_an_octave_leap_is_not_a_meend(self):
+        from music_lesson.swara import Glide, detect_glides
+        from music_lesson.swara import Note
+
+        # Two held notes 14 semitones apart with voiced travel between them:
+        # a genuine glide of that size is vanishingly rare, an octave-error
+        # "meend" is constant, so the span cap must reject it.
+        f_lo, f_hi = SA, SA * 2 ** (14 / 12)
+        segs = [
+            np.full(int(0.5 * SR), f_lo),
+            np.geomspace(f_lo, f_hi, int(0.2 * SR)),
+            np.full(int(0.5 * SR), f_hi),
+        ]
+        freq = np.concatenate(segs)
+        audio = _harmonic(np.cumsum(2 * np.pi * freq / SR), 0.3)
+        track = track_pitch(audio, SR)
+        notes = segment_notes(track, SA)
+        self.assertEqual(detect_glides(track, SA, notes), [])
+
 
 
 if __name__ == "__main__":

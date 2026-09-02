@@ -302,7 +302,12 @@ for(const [k,f] of Object.entries(ASSET_FILES)){
 const TEXPATS = {};
 function texPat(key){
   if(!IMGS[key]) return null;
-  if(!TEXPATS[key]) TEXPATS[key] = ctx.createPattern(IMGS[key],'repeat');
+  if(!TEXPATS[key]){
+    const p = ctx.createPattern(IMGS[key],'repeat');
+    // painted tiles arrive at 1024px; show one tile per ~260 world px so courses read at game scale
+    if(p && p.setTransform) p.setTransform(new DOMMatrix().scale(260 / IMGS[key].width));
+    TEXPATS[key] = p;
+  }
   return TEXPATS[key];
 }
 // painted backdrop, mirror-tiled so the seam never shows

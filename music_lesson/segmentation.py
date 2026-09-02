@@ -71,6 +71,7 @@ def classify_regions(
     sung_threshold: float = 0.50,
     min_sung: float = 1.2,
     min_spoken: float = 0.5,
+    melody_notes: list[Note] | None = None,
 ) -> list[Region]:
     """Label the timeline as sung / spoken / drone / silent.
 
@@ -78,6 +79,11 @@ def classify_regions(
     which a window counts as a demonstration. Raise it if spoken sargam ("sa
     re ga ma", said slowly) is being swallowed into demonstrations; lower it
     if quiet humming is being missed.
+
+    *melody_notes* are notes from the salience/Viterbi melody tracker
+    (:mod:`music_lesson.melody`), when the caller ran it. They power a third
+    way for a window to count as sung — see :func:`_melody_line_score` — that
+    rescues accompanied singing the per-instant tracker shatters into hops.
     """
     if len(track) == 0:
         return []
@@ -95,7 +101,7 @@ def classify_regions(
         end = min(start + window, duration)
         label, score = _classify_window(
             track, notes, tonic_hz, float(start), float(end),
-            silence_floor, sung_threshold,
+            silence_floor, sung_threshold, melody_notes=melody_notes,
         )
         labels.append(label)
         scores.append(score)
@@ -103,7 +109,7 @@ def classify_regions(
     labels = _smooth_labels(labels)
     regions = _merge_regions(labels, scores, starts, window, duration,
                              min_sung, min_spoken)
-    return _trim_sung_regions(regions, notes)
+    return _trim_sung_regions(regions, melody_notes or notes)
 
 
 def _silence_floor(track: PitchTrack) -> float:
@@ -123,6 +129,7 @@ def _classify_window(
     silence_floor: float,
     sung_threshold: float,
     min_hold: float = 0.18,
+    melody_notes: list[Note] | None = None,
 ) -> tuple[str, float]:
     """Score one window on four features and label it.
 
@@ -182,13 +189,75 @@ def _classify_window(
     # see one second of it.
     wide = track.slice(start - 1.0, end + 1.0)
     run_score = _melodic_run_score(sub, wide, notes, start, end, span)
-    score = max(hold_score, run_score)
+    line_score = (
+        _melody_line_score(melody_notes, start, end, span)
+        if melody_notes is not None else 0.0
+    )
+    score = max(hold_score, run_score, line_score)
     if score >= sung_threshold:
-        # Only a *held* window can be the drone; a fast run never is.
-        if hold_score >= run_score and _is_drone(held, sub, track):
+        # Only a *held* window can be the drone; a fast run never is, and the
+        # melody-line path already refuses anything that stays on Sa/Pa.
+        if hold_score >= max(run_score, line_score) and _is_drone(held, sub, track):
             return DRONE, score
         return SUNG, score
     return SPOKEN, score
+
+
+def _melody_line_score(
+    melody_notes: list[Note], start: float, end: float, span: float,
+    min_hold: float = 0.18,
+) -> float:
+    """Recognize singing the per-instant tracker shatters.
+
+    On a voice-plus-harmonium mixture YIN's answer changes owner every few
+    frames, so the held-note path sees fragments and the window gets called
+    spoken even while the guru is singing full phrases. The melody tracker
+    follows the continuous line through the mixture, so *its* notes are the
+    evidence to consult — with one crucial guard. During actual talking the
+    melody tracker rides the tanpura, which holds notes beautifully; but a
+    drone never leaves Sa/Pa, so a window only passes here when the melody
+    around it moves through the scale (two swaras beyond Sa/Pa, three
+    distinct in all, judged over +/-1s so a window inside a slow phrase sees
+    its neighbours) — and moves in *scale steps*. The step test is the
+    decisive one: the Viterbi tracker smooths even talking into held notes,
+    but speech pitch wanders in sub-semitone drifts and arbitrary leaps,
+    while a phrase walks the scale a semitone to a fourth at a time.
+    Measured on a real lesson and on synthetic speech: singing sits at a
+    step fraction of 0.5-1.0, talking at 0.0-0.33 or with too few note
+    pairs to measure at all.
+    """
+    held = [
+        n for n in melody_notes
+        if n.duration >= min_hold and n.overlap_seconds(start, end) > 0
+    ]
+    if not held:
+        return 0.0
+    wide = [
+        n for n in melody_notes
+        if n.duration >= min_hold and n.overlap_seconds(start - 1.0, end + 1.0) > 0
+    ]
+    classes = {n.swara % 12 for n in wide}
+    if len(classes - {0, 7}) < 2 or len(classes) < 3:
+        return 0.0
+    pairs = [(a, b) for a, b in zip(wide, wide[1:]) if b.start - a.end < 0.3]
+    if len(pairs) < 3:
+        return 0.0
+    steps = [abs(b.cents - a.cents) for a, b in pairs]
+    step_fraction = float(np.mean([70.0 <= d <= 500.0 for d in steps]))
+    if step_fraction < 0.5:
+        return 0.0
+    coverage = min(
+        sum(
+            n.overlap_seconds(start, end) * min(n.duration / _FULL_HOLD, 1.0)
+            for n in held
+        ) / span,
+        1.0,
+    )
+    mean_deviation = float(np.mean([abs(n.deviation) for n in held]))
+    alignment = float(np.clip(1.0 - mean_deviation / 35.0, 0.0, 1.0))
+    return float(np.clip(
+        0.4 * coverage + 0.3 * alignment + 0.3 * step_fraction, 0.0, 1.0
+    ))
 
 
 def _melodic_run_score(
@@ -351,6 +420,26 @@ def _trim_sung_regions(
         region.start, region.end = start, end
 
     return [r for r in regions if r.duration > 0.05]
+
+
+def force_sung(regions: list[Region]) -> list[Region]:
+    """Every non-silent region becomes sung — the "it's all music" mode.
+
+    The escape hatch for a recording with no talking in it (a practice
+    session, a recital, an alaap): whatever the classifier thought, every
+    pitched stretch is treated as a demonstration, nothing is handed to the
+    speech model, and the whole timeline comes back as sargam. Silence stays
+    silence; even the drone label goes, because with no speech to protect
+    there is no cost to reading the tanpura's stretch for notes.
+    """
+    out: list[Region] = []
+    for region in regions:
+        kind = SILENT if region.kind == SILENT else SUNG
+        if out and out[-1].kind == kind:
+            out[-1].end = region.end
+        else:
+            out.append(Region(region.start, region.end, kind, region.score))
+    return out
 
 
 def speech_spans(

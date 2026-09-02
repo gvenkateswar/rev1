@@ -112,6 +112,25 @@ def _sidebar() -> dict:
             help="Bhatkhande matches your handwritten-notes conventions: "
                  "komal underlined, octave dots, M\u2019 for teevra Ma.",
         )
+        tracker = st.selectbox(
+            "Pitch tracker",
+            ["Hybrid — melody line + YIN (recommended)",
+             "YIN only (per-instant, the old behaviour)",
+             "Melody line only"],
+            index=0,
+            help="'Hybrid' follows the voice through tanpura and harmonium "
+                 "with a melody tracker (so accompanied phrases and taans "
+                 "come out as full sargam lines) while YIN keeps telling "
+                 "singing from talking. Use 'YIN only' to compare with "
+                 "older runs.",
+        )
+        all_sung = st.checkbox(
+            "It's all music — no talking in this recording", value=False,
+            help="Skips speech recognition entirely and writes every pitched "
+                 "stretch as sargam. The escape hatch when singing keeps "
+                 "getting classified as talk — and much faster, since "
+                 "Whisper never runs.",
+        )
         sung_threshold = st.slider(
             "Singing sensitivity", 0.30, 0.75, 0.50, 0.05,
             help="Lower catches quiet humming; higher stops slow, deliberate "
@@ -153,6 +172,10 @@ def _sidebar() -> dict:
         "fix_vocabulary": fix_vocabulary,
         "extra_terms": [t.strip() for t in extra_terms.split(",") if t.strip()],
         "sung_threshold": sung_threshold,
+        "tracker": ("yin" if tracker.startswith("YIN")
+                    else "melody" if tracker.startswith("Melody")
+                    else "hybrid"),
+        "all_sung": all_sung,
         "denoise": denoise,
         "keep_sung_text": keep_sung_text,
         "diarize": diarize,
@@ -385,8 +408,9 @@ def _render_pitch_analysis(
     """
     import pandas as pd
 
-    from music_lesson.pitch import hz_to_cents, track_pitch
-    from music_lesson.segmentation import classify_regions
+    from music_lesson.core import _run_trackers
+    from music_lesson.pitch import hz_to_cents
+    from music_lesson.segmentation import classify_regions, force_sung
     from music_lesson.swara import (
         _HIST_REF_HZ, detect_tonic, parse_tonic, sargam_line, segment_notes,
         swara_label,
@@ -397,6 +421,7 @@ def _render_pitch_analysis(
     key = (
         f"analysis::{source}::{os.path.getmtime(source)}::{start:.1f}"
         f"::{end:.1f}::{settings['tonic_text']}::{settings['sung_threshold']}"
+        f"::{settings['tracker']}::{settings['all_sung']}"
     )
     if st.session_state.get("analysis_key") != key:
         with st.spinner("Analyzing pitch…"):
@@ -408,7 +433,10 @@ def _render_pitch_analysis(
                     os.unlink(wav)
                 except OSError:
                     pass
-            track = track_pitch(samples, rate)
+            # Same machinery as the pipeline: the note track is what the
+            # chart draws and the sargam reads; in hybrid mode the YIN track
+            # additionally works the sung/spoken decision behind the scenes.
+            class_track, track = _run_trackers(samples, rate, settings["tracker"])
             if settings["tonic_text"]:
                 try:
                     tonic = parse_tonic(settings["tonic_text"])
@@ -421,9 +449,18 @@ def _render_pitch_analysis(
                     track, segment_notes(track, _HIST_REF_HZ)
                 ).hz
             notes = segment_notes(track, tonic) if tonic else []
+            if class_track is track:
+                class_notes, melody_notes = notes, None
+            else:
+                class_notes = segment_notes(class_track, tonic) if tonic else []
+                melody_notes = notes
             regions = classify_regions(
-                track, notes, tonic, sung_threshold=settings["sung_threshold"]
+                class_track, class_notes, tonic,
+                sung_threshold=settings["sung_threshold"],
+                melody_notes=melody_notes,
             )
+            if settings["all_sung"]:
+                regions = force_sung(regions)
             st.session_state["analysis_key"] = key
             st.session_state["analysis"] = (track, tonic, notes, regions)
     track, tonic, notes, regions = st.session_state["analysis"]
@@ -675,6 +712,8 @@ def main() -> None:
                 beam_size=settings["beam_size"],
                 notation=settings["notation"],
                 raga_hints=settings["raga_hints"],
+                tracker=settings["tracker"],
+                all_sung=settings["all_sung"],
                 progress=progress,
             )
         except (RuntimeError, FileNotFoundError, ValueError) as exc:

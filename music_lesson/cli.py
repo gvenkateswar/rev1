@@ -54,6 +54,20 @@ def build_parser() -> argparse.ArgumentParser:
                        help="Sargam display: 'bhatkhande' uses komal "
                             "underlines, octave dots and M' for teevra Ma "
                             "(default); 'ascii' uses lowercase komal, .S / S'.")
+    music.add_argument("--tracker", default="hybrid",
+                       choices=["hybrid", "yin", "melody"],
+                       help="Pitch machinery. 'hybrid' (default) classifies "
+                            "speech with YIN and reads notes with a "
+                            "salience+Viterbi melody tracker that follows "
+                            "the voice through tanpura and harmonium; 'yin' "
+                            "is the old per-instant behaviour; 'melody' uses "
+                            "the melody tracker for everything.")
+    music.add_argument("--all-music", action="store_true",
+                       help="Treat the whole recording (or --start/--end "
+                            "section) as music: every pitched stretch "
+                            "becomes sargam and no speech model runs. For "
+                            "practice recordings and recitals with no "
+                            "talking.")
     music.add_argument("--sung-threshold", type=float, default=0.50,
                        help="How readily a stretch counts as singing, 0..1 "
                             "(default: 0.50). Raise it if slow, deliberate "
@@ -171,6 +185,8 @@ def main(argv: list[str] | None = None) -> int:
             denoise=args.denoise,
             clip=clip,
             notation=args.notation,
+            tracker=args.tracker,
+            all_sung=args.all_music,
             raga_hints=[
                 name.strip()
                 for chunk in args.ragas for name in chunk.split(",")

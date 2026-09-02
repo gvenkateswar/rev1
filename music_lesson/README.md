@@ -8,7 +8,7 @@ the talking**, writes the singing as **sargam against your Sa**, transcribes the
 Runs **entirely on your machine**. Recordings of your gurus never leave it.
 
 ```
-extract audio (ffmpeg) → track pitch (YIN) → find Sa → cut into swaras
+extract audio (ffmpeg) → track pitch (melody tracker + YIN) → find Sa → cut into swaras
                        → label each stretch sung / spoken
                        → Whisper on the SPOKEN parts only
                        → guru vs. student → repair the vocabulary
@@ -200,6 +200,8 @@ inference is already what faster-whisper uses; there is no MPS path.
 | `--language` | Force ONE language everywhere | — |
 | `--languages` | Allow-list for detection, e.g. `te,en` for Carnatic | `hi,en,bn` |
 | `--term WORD` | Extra vocabulary to prime the decoder (repeatable) | — |
+| `--tracker` | `hybrid` (melody tracker reads notes, YIN tells singing from talk), `yin`, `melody` | `hybrid` |
+| `--all-music` | The whole recording is music: everything becomes sargam, no speech model runs | off |
 | `--sung-threshold` | How readily a stretch counts as singing, 0..1 | `0.50` |
 | `--keep-sung-text` | Keep Whisper's words over singing (bandish lyrics) | off |
 | `--denoise` | Mild high-pass + spectral denoiser before analysis | off |
@@ -210,12 +212,21 @@ inference is already what faster-whisper uses; there is no MPS path.
 
 ## How the music side works
 
-**Pitch** (`pitch.py`) — YIN, hand-rolled on NumPy: cumulative mean normalized
-difference over FFT-computed correlation, parabolic interpolation, and a
-subharmonic guard (a voice over a tanpura is two periodic sounds at a simple
-ratio, so the *mixture* has a real period an octave or a fifth below the voice,
-and YIN is right to find it — we want the voice). Runs ~70× faster than
-realtime on a laptop CPU.
+**Pitch** (`pitch.py`, `melody.py`) — two trackers, because the two jobs want
+opposite things. YIN (`pitch.py`), hand-rolled on NumPy — cumulative mean
+normalized difference over FFT-computed correlation, parabolic interpolation,
+a subharmonic guard — answers "what is the pitch of this instant", and over a
+voice-plus-harmonium mixture that answer honestly changes owner every few
+frames. That instability is exactly what tells talking from singing, so YIN
+keeps the classification job. The **melody tracker** (`melody.py`,
+Melodia-style) does what a listener does instead: harmonic-summation salience
+over a log-f0 grid, then a Viterbi pass with a movement cost, so the track
+follows the strong *continuous* line through moments where the harmonium is
+louder rather than leaping to it and back. Its notes are what become the
+sargam. The default `hybrid` mode runs both (~30× realtime combined); windows
+YIN shatters but whose melody-tracker notes walk the scale in real steps are
+counted as singing — this is what turns an accompanied phrase from
+`D̲ Ṣ D Ṣ`-style confetti into a readable line.
 
 **Finding Sa** (`swara.py`) — every voiced frame folds into a one-octave cents
 histogram, weighted by how long each note was held, with phrase-final notes
@@ -348,14 +359,17 @@ JSON export and counted in the run's notices, never silently deleted.
 - **Tala is not detected.** Sam, matra and laya are picked up only when
   somebody says them. Detecting the cycle from tabla would be a real addition
   and is not here.
-- **A loud harmonium is the hardest case this tool faces.** The pitch
-  tracker is monophonic: it reports ONE pitch per instant, and when voice,
-  harmonium and tanpura sound together it follows whichever dominates — so on
-  accompaniment-heavy recordings the sargam can be the harmonium's line, the
-  sung/spoken split degrades, and Whisper gets handed music. Use the pitch
-  analysis view ("Analyze pitch of selection" in the section picker) to *see*
-  what the tracker is following before spending a run; recordings where the
-  voice is clearly louder than the accompaniment transcribe far better.
+- **A loud harmonium is still the hardest case this tool faces.** Both
+  trackers are monophonic: they report ONE line per instant. The melody
+  tracker rides *through* moments where the harmonium is louder instead of
+  leaping to them, which is what makes accompanied phrases readable — but
+  when the harmonium plays a sustained counter-line louder than the voice,
+  that line IS the strongest continuous one and the sargam will be the
+  harmonium's. (In a lesson the harmonium usually shadows the voice, so the
+  notes are mostly right even then.) Use the pitch analysis view ("Analyze
+  pitch of selection" in the section picker) to *see* what the tracker is
+  following before spending a run; recordings where the voice is clearly
+  louder than the accompaniment transcribe far better.
 - **Noise reduction is opt-in, not automatic.** The pitch tracker is fairly
   robust to broadband noise, so hiss mostly costs Whisper words, not swaras.
   `--denoise` (or the GUI checkbox) runs a mild high-pass plus spectral

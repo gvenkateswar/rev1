@@ -1334,6 +1334,214 @@ class PitchChartTests(unittest.TestCase):
         self.assertEqual(detect_glides(track, SA, notes), [])
 
 
+class MelodyTrackerTests(unittest.TestCase):
+    """The salience+Viterbi tracker follows the line, not the loudest instant."""
+
+    def test_phrase_over_a_loud_drone_comes_out_as_the_phrase(self):
+        from music_lesson.melody import track_melody
+
+        # The drone here is four times its usual level — loud enough that a
+        # per-instant tracker would keep visiting it. The melody tracker must
+        # ride the voice through it and hand back the phrase, whole.
+        audio = sing([0, 2, 4, 7, 9, 7, 4, 2, 0])
+        audio = audio + tanpura(len(audio), amplitude=0.12)
+        track = track_melody(audio, SR)
+        notes = segment_notes(track, SA)
+        self.assertEqual([n.swara for n in notes if n.duration >= 0.3],
+                         [0, 2, 4, 7, 9, 7, 4, 2, 0])
+        # And CONTINUOUSLY: no octave hops mid-note, the failure that made
+        # sargam lines come out as confetti on real recordings.
+        voiced = track.f0[track.voiced]
+        hops = np.abs(np.diff(np.log2(voiced))) > 0.4
+        self.assertLessEqual(int(hops.sum()), 2)
+
+    def test_silence_is_unvoiced(self):
+        from music_lesson.melody import track_melody
+
+        track = track_melody(np.zeros(2 * SR), SR)
+        self.assertFalse(track.voiced.any())
+
+    def test_a_moment_of_interference_does_not_break_the_line(self):
+        from music_lesson.melody import _viterbi
+
+        # A steady candidate at bin 20, with a brighter distractor flashing
+        # at bin 45 for a few frames. The per-frame argmax would jump there
+        # and back; the movement cost must hold the path on the line.
+        salience = np.full((40, 60), 0.05, dtype=np.float32)
+        salience[:, 20] = 0.8
+        salience[18:21, 45] = 1.0
+        path = _viterbi(salience)
+        self.assertTrue((path == 20).all())
+
+    def test_vectorized_viterbi_matches_the_naive_recurrence(self):
+        from music_lesson.melody import _STEP_CAP_BINS, _STEP_COST, _viterbi
+
+        def path_cost(salience, path):
+            norm = salience / (salience.max(axis=1, keepdims=True) + 1e-12)
+            emission = -np.log(norm + 1e-6)
+            cost = emission[0, path[0]]
+            for t in range(1, len(path)):
+                move = min(abs(int(path[t]) - int(path[t - 1])), _STEP_CAP_BINS)
+                cost += emission[t, path[t]] + _STEP_COST * move
+            return cost
+
+        def naive(salience):
+            n, k = salience.shape
+            norm = salience / (salience.max(axis=1, keepdims=True) + 1e-12)
+            emission = -np.log(norm + 1e-6)
+            idx = np.arange(k)
+            move = _STEP_COST * np.minimum(
+                np.abs(idx[:, None] - idx[None, :]), _STEP_CAP_BINS
+            )
+            cost = emission[0].copy()
+            back = np.zeros((n, k), dtype=int)
+            for t in range(1, n):
+                total = cost[None, :] + move
+                back[t] = np.argmin(total, axis=1)
+                cost = total.min(axis=1) + emission[t]
+            path = np.zeros(n, dtype=int)
+            path[-1] = int(cost.argmin())
+            for t in range(n - 1, 0, -1):
+                path[t - 1] = back[t, path[t]]
+            return path
+
+        rng = np.random.default_rng(7)
+        for _ in range(8):
+            salience = rng.random(
+                (int(rng.integers(2, 30)), int(rng.integers(3, 50)))
+            ).astype(np.float32) + 0.01
+            fast, slow = _viterbi(salience), naive(salience)
+            # Exact ties may resolve differently; the path COST must agree.
+            self.assertAlmostEqual(
+                path_cost(salience, fast), path_cost(salience, slow), places=5
+            )
+
+
+class MelodyLinePathTests(unittest.TestCase):
+    """The third way a window counts as sung: the melody tracker's evidence."""
+
+    def _phrase_notes(self, swaras, note_s=0.5, deviation=8.0):
+        from music_lesson.swara import Note
+
+        notes, t = [], 0.0
+        for s in swaras:
+            cents = (s % 12) * 100 + (s // 12) * 1200 + deviation
+            notes.append(Note(t, t + note_s, s % 12, s // 12, cents,
+                              deviation, 0.9))
+            t += note_s
+        return notes
+
+    def test_a_phrase_through_the_scale_scores_as_singing(self):
+        from music_lesson.segmentation import _melody_line_score
+
+        notes = self._phrase_notes([0, 2, 4, 7, 9, 7, 4, 2, 0])
+        score = _melody_line_score(notes, 1.0, 2.0, 1.0)
+        self.assertGreaterEqual(score, 0.5)
+
+    def test_the_drone_never_passes_it_stays_on_sa_and_pa(self):
+        from music_lesson.segmentation import _melody_line_score
+
+        notes = self._phrase_notes([0, 7, 0, 7, 0, 7])
+        self.assertEqual(_melody_line_score(notes, 1.0, 2.0, 1.0), 0.0)
+
+    def test_wandering_speech_pitch_fails_the_step_test(self):
+        from music_lesson.segmentation import _melody_line_score
+
+        # The Viterbi tracker smooths talk into held notes too — but speech
+        # moves in sub-semitone drifts and arbitrary leaps, not scale steps.
+        from music_lesson.segmentation import _melody_line_score
+        from music_lesson.swara import Note
+
+        cents_walk = [0.0, 40.0, 610.0, 580.0, 30.0, 660.0, 20.0]
+        notes, t = [], 0.0
+        for c in cents_walk:
+            swara = int(round(c / 100)) % 12
+            notes.append(Note(t, t + 0.4, swara, 0, c,
+                              c - round(c / 100) * 100, 0.9))
+            t += 0.4
+        self.assertEqual(_melody_line_score(notes, 0.4, 1.4, 1.0), 0.0)
+
+    def test_speech_over_a_drone_stays_spoken_end_to_end(self):
+        from music_lesson.melody import track_melody
+
+        rng = np.random.default_rng(11)
+        audio = speak(6.0, rng)
+        audio = audio + tanpura(len(audio))
+        yin = track_pitch(audio, SR)
+        melody_notes = segment_notes(track_melody(audio, SR), SA)
+        regions = classify_regions(
+            yin, segment_notes(yin, SA), SA, melody_notes=melody_notes
+        )
+        self.assertFalse(any(r.kind == SUNG for r in regions))
+
+
+class AllMusicModeTests(unittest.TestCase):
+    def test_force_sung_flips_everything_but_silence(self):
+        from music_lesson.segmentation import Region, force_sung
+
+        regions = force_sung([
+            Region(0.0, 4.0, "spoken"), Region(4.0, 8.0, "sung"),
+            Region(8.0, 10.0, "drone"), Region(10.0, 12.0, "silent"),
+            Region(12.0, 14.0, "spoken"),
+        ])
+        self.assertEqual(
+            [(r.start, r.end, r.kind) for r in regions],
+            [(0.0, 10.0, "sung"), (10.0, 12.0, "silent"),
+             (12.0, 14.0, "sung")],
+        )
+
+    def test_all_music_mode_never_runs_whisper(self):
+        from unittest import mock
+
+        from music_lesson import core
+
+        audio, _ = PipelineIntegrationTests("_audio")._audio()
+        with mock.patch.object(core._audio, "extract_audio",
+                               return_value="/tmp/none.wav"), \
+             mock.patch.object(core._audio, "load_waveform",
+                               return_value=(audio, SR)), \
+             mock.patch.object(core, "_run_whisper") as whisper, \
+             mock.patch.object(core, "_run_diarization", return_value=[]):
+            result = core.transcribe_lesson(
+                "/tmp/lesson.m4a", tonic=SA, all_sung=True
+            )
+        whisper.assert_not_called()
+        self.assertEqual(result.timings["transcribe"], 0.0)
+        self.assertTrue(all(s.is_sung for s in result.segments))
+        self.assertGreater(len(result.segments), 0)
+        self.assertTrue(any("All-music" in n for n in result.notices))
+
+
+class TrackerChoiceTests(unittest.TestCase):
+    def test_yin_uses_one_track_for_both_jobs(self):
+        from music_lesson.core import _run_trackers
+
+        audio = sing([0, 4, 7])
+        classification, melody = _run_trackers(audio, SR, "yin")
+        self.assertIs(classification, melody)
+
+    def test_hybrid_runs_two_different_trackers(self):
+        from music_lesson.core import _run_trackers
+
+        audio = sing([0, 4, 7])
+        classification, melody = _run_trackers(audio, SR, "hybrid")
+        self.assertIsNot(classification, melody)
+
+    def test_an_unknown_tracker_is_rejected(self):
+        from music_lesson.core import _run_trackers
+
+        with self.assertRaises(ValueError):
+            _run_trackers(sing([0]), SR, "autotune")
+
+    def test_cli_exposes_tracker_and_all_music(self):
+        from music_lesson.cli import build_parser
+
+        args = build_parser().parse_args(
+            ["lesson.m4a", "--tracker", "melody", "--all-music"]
+        )
+        self.assertEqual(args.tracker, "melody")
+        self.assertTrue(args.all_music)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

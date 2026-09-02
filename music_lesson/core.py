@@ -168,6 +168,8 @@ def transcribe_lesson(
     clip: tuple[float, float] | None = None,
     notation: str = _swara.BHATKHANDE,
     raga_hints: list[str] | None = None,
+    tracker: str = "hybrid",
+    all_sung: bool = False,
     progress: ProgressCb | None = None,
 ) -> LessonResult:
     """Run the whole pipeline on *src_path*.
@@ -186,6 +188,13 @@ def transcribe_lesson(
     exactly one language skips detection and forces it everywhere. *keep_sung_text* keeps whatever
     Whisper produced over singing, which is normally hallucination but is
     occasionally a bandish lyric worth reading.
+
+    *tracker* picks the pitch machinery (see :func:`_run_trackers`): "hybrid"
+    (the default) classifies with YIN and reads notes with the melody
+    tracker, "yin" and "melody" use one tracker for everything. *all_sung*
+    treats every pitched stretch as music: no speech model runs at all and
+    the whole timeline comes back as sargam — for practice recordings and
+    recitals that contain no talking.
     """
     progress = progress or _noop
     hf_token = hf_token or os.environ.get("HF_TOKEN")
@@ -209,62 +218,85 @@ def transcribe_lesson(
         progress("Tracking pitch", 0.10)
         with _timed(timings, "pitch"):
             samples, sample_rate = _audio.load_waveform(wav_path)
-            track = track_pitch(samples, sample_rate)
+            class_track, note_track = _run_trackers(samples, sample_rate, tracker)
+        track = note_track
 
         progress("Finding Sa", 0.25)
         with _timed(timings, "tonic"):
-            tonic_estimate = _resolve_tonic(track, tonic)
+            tonic_estimate = _resolve_tonic(note_track, tonic)
 
         progress("Reading the swaras", 0.30)
         with _timed(timings, "notes"):
-            notes = _swara.segment_notes(track, tonic_estimate.hz) if tonic_estimate.hz else []
+            notes = _swara.segment_notes(note_track, tonic_estimate.hz) if tonic_estimate.hz else []
+            if class_track is note_track:
+                class_notes, melody_notes = notes, None
+            else:
+                class_notes = (
+                    _swara.segment_notes(class_track, tonic_estimate.hz)
+                    if tonic_estimate.hz else []
+                )
+                melody_notes = notes
             regions = segmentation.classify_regions(
-                track, notes, tonic_estimate.hz, sung_threshold=sung_threshold
+                class_track, class_notes, tonic_estimate.hz,
+                sung_threshold=sung_threshold, melody_notes=melody_notes,
             )
+            if all_sung:
+                regions = segmentation.force_sung(regions)
 
         prompt_terms = list(raga_hints or []) + list(extra_terms or [])
         forced, allowed = _resolve_languages(language, languages)
-        with _timed(timings, "transcribe"):
-            speech = _run_whisper(
-                wav_path, regions, whisper_model, forced, allowed,
-                prompt_terms, beam_size, progress,
-            )
-        speech_segments = speech.segments
-        detected_language = speech.language
-        notices = _transcription_notices(speech)
-        if speech.rescripted:
-            from .transcribe import primary_language
+        if all_sung:
+            # Everything is music: there is no talking to decode, so the
+            # slowest stage of the pipeline simply does not run.
+            speech_segments, junk = [], []
+            detected_language = ""
+            notices = [
+                "All-music mode: the whole selection was read as singing and "
+                "no speech transcription was run."
+            ]
+            timings["transcribe"] = 0.0
+        else:
+            with _timed(timings, "transcribe"):
+                speech = _run_whisper(
+                    wav_path, regions, whisper_model, forced, allowed,
+                    prompt_terms, beam_size, progress,
+                )
+            speech_segments = speech.segments
+            detected_language = speech.language
+            notices = _transcription_notices(speech)
+            if speech.rescripted:
+                from .transcribe import primary_language
 
-            seen = ", ".join(speech.foreign_languages) or "unknown"
-            target = primary_language(allowed)
-            notices.append(
-                f"{speech.rescripted} window(s) came out in languages or "
-                f"scripts outside your list (detector saw: {seen}) and were "
-                f"re-decoded as '{target}'. If one of those languages was "
-                f"real, add it to the language list and re-run."
+                seen = ", ".join(speech.foreign_languages) or "unknown"
+                target = primary_language(allowed)
+                notices.append(
+                    f"{speech.rescripted} window(s) came out in languages or "
+                    f"scripts outside your list (detector saw: {seen}) and were "
+                    f"re-decoded as '{target}'. If one of those languages was "
+                    f"real, add it to the language list and re-run."
+                )
+            decode_ratio = (
+                timings.get("transcribe", 0.0) / speech.speech_seconds
+                if speech.speech_seconds else 0.0
             )
-        decode_ratio = (
-            timings.get("transcribe", 0.0) / speech.speech_seconds
-            if speech.speech_seconds else 0.0
-        )
-        if decode_ratio > 2.0:
-            notices.append(
-                f"The decode ran at {decode_ratio:.1f}x slower than realtime "
-                f"— more than this model should cost. Check the sidebar says "
-                f"arm64 native (a Rosetta Python is 2-4x slower), close other "
-                f"heavy apps, and try beam width 1 for drafts."
+            if decode_ratio > 2.0:
+                notices.append(
+                    f"The decode ran at {decode_ratio:.1f}x slower than realtime "
+                    f"— more than this model should cost. Check the sidebar says "
+                    f"arm64 native (a Rosetta Python is 2-4x slower), close other "
+                    f"heavy apps, and try beam width 1 for drafts."
+                )
+            speech_segments, junk = _drop_decoder_junk(
+                speech_segments,
+                lexicon.hotwords(prompt_terms) + ", " + lexicon.hotwords_devanagari(),
             )
-        speech_segments, junk = _drop_decoder_junk(
-            speech_segments,
-            lexicon.hotwords(prompt_terms) + ", " + lexicon.hotwords_devanagari(),
-        )
-        if junk:
-            notices.append(
-                f"Dropped {len(junk)} spoken segment(s) as decoder junk — "
-                f"a repetition loop, or the vocabulary prompt echoed back "
-                f"verbatim. They are preserved under 'dropped' in the JSON "
-                f"export."
-            )
+            if junk:
+                notices.append(
+                    f"Dropped {len(junk)} spoken segment(s) as decoder junk — "
+                    f"a repetition loop, or the vocabulary prompt echoed back "
+                    f"verbatim. They are preserved under 'dropped' in the JSON "
+                    f"export."
+                )
         from .runtime import openmp_workaround_applied
 
         if openmp_workaround_applied():
@@ -331,6 +363,37 @@ def transcribe_lesson(
 # --------------------------------------------------------------------------- #
 # Stages
 # --------------------------------------------------------------------------- #
+def _run_trackers(
+    samples: np.ndarray, sample_rate: int, tracker: str
+) -> tuple[PitchTrack, PitchTrack]:
+    """(classification track, note track) for the chosen *tracker*.
+
+    The two jobs want opposite trackers, which is why "hybrid" runs both.
+    YIN answers "what is the pitch of this instant", and over talking that
+    answer is unstable in exactly the way the sung/spoken classifier keys on
+    — while the melody tracker, which follows the strongest *continuous*
+    line, happily rides the tanpura through an entire explanation and would
+    make the talking look sung. But over accompanied singing YIN's
+    instant-by-instant honesty shatters the vocal line into hops, and the
+    melody tracker is the one that reads the phrase the way a listener does.
+    So YIN decides what is speech, the melody tracker decides what the notes
+    are, and each covers the other's blind spot.
+    """
+    if tracker == "yin":
+        track = track_pitch(samples, sample_rate)
+        return track, track
+    from .melody import track_melody
+
+    melody = track_melody(samples, sample_rate)
+    if tracker == "melody":
+        return melody, melody
+    if tracker != "hybrid":
+        raise ValueError(
+            f"Unknown tracker {tracker!r} (expected hybrid, yin or melody)"
+        )
+    return track_pitch(samples, sample_rate), melody
+
+
 def _resolve_tonic(track: PitchTrack, override: float | None) -> TonicEstimate:
     """Use the caller's Sa if given, else detect it from a first pass of notes."""
     if override:
@@ -563,23 +626,36 @@ def _build_segments(
     return [s for s in segments if s.text or s.notes]
 
 
-def _strip_edge_blips(notes: list[Note], min_edge: float = 0.15) -> list[Note]:
-    """Drop the very short notes at each end of a sung phrase.
+def _strip_edge_blips(
+    notes: list[Note], min_edge: float = 0.15, max_edge_deviation: float = 35.0
+) -> list[Note]:
+    """Drop the very short or badly off-grid notes at each end of a phrase.
 
     Where speech meets singing the tracker emits a sliver as the pitch settles.
     In the middle of a phrase a sliver is a real note — and in a taan *every*
     note is one, which is why the threshold adapts: the edge only sheds notes
     clearly shorter than the phrase's own typical note, so a taan whose notes
     all run 0.11s keeps them all instead of being eaten from both ends.
+
+    The deviation test catches the melody tracker's version of the same
+    artifact: it settles out of a phrase into the surrounding talk smoothly,
+    holding the talker's pitch long enough to name — but a trained phrase
+    does not end on a note a third of a semitone off the grid, and speech
+    pitch usually is.
     """
     if not notes:
         return []
     typical = float(np.median([n.duration for n in notes]))
     threshold = min(min_edge, 0.6 * typical)
+
+    def is_edge_artifact(note: Note) -> bool:
+        return (note.duration < threshold
+                or abs(note.deviation) > max_edge_deviation)
+
     trimmed = list(notes)
-    while trimmed and trimmed[0].duration < threshold:
+    while trimmed and is_edge_artifact(trimmed[0]):
         trimmed.pop(0)
-    while trimmed and trimmed[-1].duration < threshold:
+    while trimmed and is_edge_artifact(trimmed[-1]):
         trimmed.pop()
     return trimmed
 

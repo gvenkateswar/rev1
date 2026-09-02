@@ -238,15 +238,21 @@ def _section_picker(source: str, settings: dict) -> tuple[float, float] | None:
 
 def _build_pitch_chart(
     contour_df, region_df, grid_df, x_domain, y_domain,
-    notes_df=None, glide_df=None,
+    notes_df=None, glide_df=None, height=None,
 ):
     """Layered vega spec: bands, swara grid, labels, pitch dots, note bars.
 
     The note bars are the point of the whole view: green bars are what became
     sargam, grey bars are pitch the tracker held but the classifier did not
     count as singing, and gold links are meends — so "why is this phrase
-    missing from my transcript" has a visual answer. The chart is interactive
-    (wheel to zoom, drag to pan, double-click to reset).
+    missing from my transcript" has a visual answer.
+
+    Interaction follows the piano-roll convention rather than the map
+    convention: the wheel zooms TIME only (drag pans, double-click resets),
+    and vertical detail comes from the caller's *height* plus a cropped
+    *y_domain* — zooming both axes at once just made everything drift, and a
+    chart whose pixel height never grows cannot gain vertical detail however
+    hard the scale zooms.
 
     Kept free of streamlit calls so the spec can be compiled in tests — an
     earlier version crashed at runtime on an altair v6 rule that no import
@@ -294,7 +300,9 @@ def _build_pitch_chart(
         align="left", dx=3, fontSize=11, color="#555555",
     ).encode(y=alt.Y("semi:Q", scale=y_scale, axis=y_axis),
              text="swara:N", x=alt.value(2))
-    contour = alt.Chart(contour_df).mark_circle(size=5, opacity=0.6).encode(
+    contour = alt.Chart(contour_df).mark_circle(
+        size=5, opacity=0.6, clip=True,
+    ).encode(
         x=alt.X("t:Q", scale=x_scale),
         y=alt.Y("semi:Q", scale=y_scale, axis=y_axis),
         color=alt.value("#1a5b8f"),
@@ -305,7 +313,7 @@ def _build_pitch_chart(
     if glide_df is not None and len(glide_df):
         layers.append(
             alt.Chart(glide_df).mark_line(
-                strokeWidth=2.2, opacity=0.9, color="#b8860b",
+                strokeWidth=2.2, opacity=0.9, color="#b8860b", clip=True,
             ).encode(
                 x=alt.X("t:Q", scale=x_scale),
                 y=alt.Y("semi:Q", scale=y_scale, axis=y_axis),
@@ -318,7 +326,7 @@ def _build_pitch_chart(
                      "duration", "cents_off"]
         )
     layers.append(
-        alt.Chart(notes_df).mark_rect(cornerRadius=2).encode(
+        alt.Chart(notes_df).mark_rect(cornerRadius=2, clip=True).encode(
             x=alt.X("start:Q", scale=x_scale),
             x2="end:Q",
             y=alt.Y("lo:Q", scale=y_scale, axis=y_axis),
@@ -345,9 +353,10 @@ def _build_pitch_chart(
     )
 
     rows = int(y_domain[1] - y_domain[0]) + 1
+    zoom_time = alt.selection_interval(bind="scales", encodings=["x"])
     return alt.layer(*layers).properties(
-        height=max(340, rows * 15)
-    ).interactive()
+        height=height or max(340, rows * 15)
+    ).add_params(zoom_time)
 
 
 def _render_pitch_analysis(
@@ -417,9 +426,26 @@ def _render_pitch_analysis(
         step = int(np.ceil(len(times) / 4000))
         times, semis = times[::step], semis[::step]
 
-    lo = int(np.floor(np.percentile(semis, 2))) - 1
-    hi = int(np.ceil(np.percentile(semis, 98))) + 1
-    lo, hi = max(lo, -17), min(hi, 26)
+    full_lo = max(int(np.floor(np.percentile(semis, 2))) - 1, -17)
+    full_hi = min(int(np.ceil(np.percentile(semis, 98))) + 1, 26)
+
+    # Piano-roll controls (think a DAW's midi editor): the wheel zooms time
+    # only, so vertical detail comes from these two — taller rows, and
+    # cropping away the octaves you are not looking at.
+    size_col, range_col = st.columns([1, 2])
+    with size_col:
+        row_px = st.slider("Row height (px)", 10, 44, 18, 2,
+                           key="chart_row_px")
+    with range_col:
+        lo, hi = st.slider(
+            "Swara range shown (semitones from Sa)",
+            full_lo, full_hi, (full_lo, full_hi), 1,
+            key="chart_y_range",
+            help="Crop to the octaves in play — the drone octave rarely "
+                 "needs the same space as the melody.",
+        )
+    if hi <= lo:
+        hi = lo + 1
 
     grid = pd.DataFrame([
         {
@@ -463,7 +489,8 @@ def _render_pitch_analysis(
     glide_df = pd.DataFrame(glide_rows)
 
     chart = _build_pitch_chart(
-        contour_df, region_df, grid, (start, end), (lo, hi), notes_df, glide_df
+        contour_df, region_df, grid, (start, end), (lo, hi), notes_df, glide_df,
+        height=(hi - lo + 1) * row_px,
     )
     st.altair_chart(chart, use_container_width=True)
 
@@ -472,8 +499,8 @@ def _render_pitch_analysis(
     from music_lesson.swara import describe_hz
     st.caption(
         f"Sa = {describe_hz(tonic)} · {_fmt_ts(sung)} sung / "
-        f"{_fmt_ts(spoken)} spoken in this selection · scroll to zoom, drag "
-        f"to pan, double-click to reset · dots = tracked pitch, green bars = "
+        f"{_fmt_ts(spoken)} spoken in this selection · wheel zooms time, drag "
+        f"pans, double-click resets; use the sliders for vertical size · dots = tracked pitch, green bars = "
         f"notes in the sargam, grey bars = held pitch not counted as singing "
         f"(hover any bar for its swara), gold links = meend. If the dots ride "
         f"the harmonium instead of the voice, the sargam will too."

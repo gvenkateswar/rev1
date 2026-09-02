@@ -1281,10 +1281,15 @@ class PitchChartTests(unittest.TestCase):
             {"gid": 0, "t": 10.6, "semi": 4.0},
         ])
         spec = _build_pitch_chart(
-            contour, regions, grid, (10.0, 11.0), (-3, 12), notes, glides
+            contour, regions, grid, (10.0, 11.0), (-3, 12), notes, glides,
+            height=640,
         ).to_dict()
         self.assertEqual(len(spec["layer"]), 7)
-        self.assertIn("params", spec)          # zoom/pan is wired in
+        self.assertEqual(spec["height"], 640)   # caller controls vertical size
+        # Piano-roll convention: the wheel zooms time only.
+        param = spec["params"][0]
+        self.assertEqual(param["select"].get("encodings"), ["x"])
+        self.assertEqual(param.get("bind"), "scales")
 
         bare = _build_pitch_chart(
             contour, regions, grid, (10.0, 11.0), (-3, 12)

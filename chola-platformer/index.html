@@ -281,6 +281,44 @@ const STONETEX = (()=>{                    // dry-brush surface texture tile
 })();
 let stonePat = null;
 
+// ============================================================ painted assets (optional)
+// Drop PNG files into ./assets/ — see ASSETS.md for sizes and generation prompts.
+// Every slot is optional: a missing file falls back to the procedural art below.
+const ASSET_FILES = {
+  l1_far:'l1_far.png',  l2_far:'l2_far.png',  l3_far:'l3_far.png',
+  l1_mid:'l1_mid.png',  l2_mid:'l2_mid.png',  l3_mid:'l3_mid.png',
+  tex_stone:'tex_stone.png', tex_wood:'tex_wood.png',
+  hero_idle:'hero_idle.png', hero_run_a:'hero_run_a.png', hero_run_b:'hero_run_b.png',
+  hero_jump:'hero_jump.png', hero_attack:'hero_attack.png',
+  guard_walk_a:'guard_walk_a.png', guard_walk_b:'guard_walk_b.png',
+  gate:'gate.png',
+};
+const IMGS = {};
+for(const [k,f] of Object.entries(ASSET_FILES)){
+  const im = new Image();
+  im.onload = ()=>{ IMGS[k] = im; };
+  im.src = 'assets/'+f;
+}
+const TEXPATS = {};
+function texPat(key){
+  if(!IMGS[key]) return null;
+  if(!TEXPATS[key]) TEXPATS[key] = ctx.createPattern(IMGS[key],'repeat');
+  return TEXPATS[key];
+}
+// painted backdrop, mirror-tiled so the seam never shows
+function drawBackdrop(im, par){
+  const s = H / im.height, w = im.width*s;
+  const start = Math.floor((cam.x*par)/w) - 1;
+  const count = Math.ceil(W/w) + 2;
+  for(let i=start; i<start+count; i++){
+    const sx = i*w - cam.x*par;
+    if(Math.abs(i)%2 === 1){
+      ctx.save(); ctx.translate(sx+w, 0); ctx.scale(-1,1);
+      ctx.drawImage(im, 0, 0, w, H); ctx.restore();
+    } else ctx.drawImage(im, sx, 0, w, H);
+  }
+}
+
 // ============================================================ levels
 // platform: [x, y, w, h, lane, kind]   kind: 'stone'|'wood'|'stall'
 // guard: [x1, x2, groundY, lane] | coin: [x, y, lane]
@@ -971,27 +1009,42 @@ function drawPlatform(bx,by,bw,bh,lane,kind,pal){
   ctx.beginPath();
   ctx.moveTo(bx, by); ctx.lineTo(bx+D, by-DY);
   ctx.lineTo(bx+bw+D, by-DY); ctx.lineTo(bx+bw, by); ctx.closePath(); ctx.fill();
-  // front face
-  const fg = ctx.createLinearGradient(bx, by, bx, by+bh);
-  fg.addColorStop(0, wFace); fg.addColorStop(1, wFaceD);
-  ctx.fillStyle = fg;
-  ctx.fillRect(bx, by, bw, bh);
-  // dry-brush texture + ambient occlusion under the lip
-  if(!stonePat) stonePat = ctx.createPattern(STONETEX,'repeat');
-  ctx.fillStyle = stonePat;
-  ctx.fillRect(bx, by, bw, Math.min(bh,260));
+  // front face: painted texture when the asset exists, procedural wash otherwise
+  const pat = texPat(wood ? 'tex_wood' : 'tex_stone');
+  if(pat){
+    ctx.fillStyle = pat;
+    ctx.fillRect(bx, by, bw, bh);
+    ctx.save();
+    ctx.globalCompositeOperation = 'multiply';
+    ctx.globalAlpha = 0.4;
+    const tint = ctx.createLinearGradient(bx, by, bx, by+bh);
+    tint.addColorStop(0, wFace); tint.addColorStop(1, wFaceD);
+    ctx.fillStyle = tint;
+    ctx.fillRect(bx, by, bw, bh);
+    ctx.restore();
+  } else {
+    const fg = ctx.createLinearGradient(bx, by, bx, by+bh);
+    fg.addColorStop(0, wFace); fg.addColorStop(1, wFaceD);
+    ctx.fillStyle = fg;
+    ctx.fillRect(bx, by, bw, bh);
+    if(!stonePat) stonePat = ctx.createPattern(STONETEX,'repeat');
+    ctx.fillStyle = stonePat;
+    ctx.fillRect(bx, by, bw, Math.min(bh,260));
+  }
   const ao = ctx.createLinearGradient(0, by+2, 0, by+18);
   ao.addColorStop(0,'rgba(20,12,6,0.22)'); ao.addColorStop(1,'rgba(20,12,6,0)');
   ctx.fillStyle = ao; ctx.fillRect(bx, by+2, bw, 16);
 
   if(wood){
-    // deck planks on top edge + board lines on face
-    ctx.strokeStyle = 'rgba(50,34,20,0.4)'; ctx.lineWidth = 1.4;
-    for(let x=bx+22; x<bx+bw; x+=34){
-      ctx.beginPath(); ctx.moveTo(x, by); ctx.lineTo(x+D*0.8, by-DY*0.8); ctx.stroke();
-    }
-    for(let y=by+16; y<by+bh; y+=18){
-      ctx.beginPath(); ctx.moveTo(bx, y); ctx.lineTo(bx+bw, y); ctx.stroke();
+    if(!pat){
+      // deck planks on top edge + board lines on face
+      ctx.strokeStyle = 'rgba(50,34,20,0.4)'; ctx.lineWidth = 1.4;
+      for(let x=bx+22; x<bx+bw; x+=34){
+        ctx.beginPath(); ctx.moveTo(x, by); ctx.lineTo(x+D*0.8, by-DY*0.8); ctx.stroke();
+      }
+      for(let y=by+16; y<by+bh; y+=18){
+        ctx.beginPath(); ctx.moveTo(bx, y); ctx.lineTo(bx+bw, y); ctx.stroke();
+      }
     }
     // railing with red-banded posts (background of the walkway)
     if(bh <= 90){
@@ -1004,13 +1057,15 @@ function drawPlatform(bx,by,bw,bh,lane,kind,pal){
       }
     }
   } else {
-    // stone block courses
-    ctx.strokeStyle = 'rgba(40,28,18,0.20)'; ctx.lineWidth = 1;
-    for(let y=by+26; y<by+bh; y+=26){
-      ctx.beginPath(); ctx.moveTo(bx, y+.5); ctx.lineTo(bx+bw, y+.5); ctx.stroke();
-      const off = ((y/26)|0)%2 ? 40 : 0;
-      for(let x=bx+off+44; x<bx+bw; x+=84){
-        ctx.beginPath(); ctx.moveTo(x+.5, y-26); ctx.lineTo(x+.5, y); ctx.stroke();
+    if(!pat){
+      // stone block courses
+      ctx.strokeStyle = 'rgba(40,28,18,0.20)'; ctx.lineWidth = 1;
+      for(let y=by+26; y<by+bh; y+=26){
+        ctx.beginPath(); ctx.moveTo(bx, y+.5); ctx.lineTo(bx+bw, y+.5); ctx.stroke();
+        const off = ((y/26)|0)%2 ? 40 : 0;
+        for(let x=bx+off+44; x<bx+bw; x+=84){
+          ctx.beginPath(); ctx.moveTo(x+.5, y-26); ctx.lineTo(x+.5, y); ctx.stroke();
+        }
       }
     }
     // occasional red paint remnant on tall faces, like weathered lacquer
@@ -1112,6 +1167,19 @@ function drawGoal(x, y){
 }
 // torana gateway marking a crossing between depth planes
 function drawGate(cx, gy){
+  const gim = IMGS.gate;
+  if(gim){
+    const gh = 150, gw = gh * gim.width / gim.height;
+    ctx.drawImage(gim, cx-gw/2, gy-gh+4, gw, gh);
+    const gg = ctx.createRadialGradient(cx, gy-60, 0, cx, gy-60, 54);
+    gg.addColorStop(0,'rgba(240,205,130,0.22)'); gg.addColorStop(1,'rgba(240,205,130,0)');
+    ctx.fillStyle = gg; ctx.fillRect(cx-54, gy-114, 108, 108);
+    const pul0 = 0.4+0.3*Math.sin(time*3+cx);
+    ctx.fillStyle = 'rgba(180,60,42,'+pul0+')';
+    ctx.beginPath(); ctx.moveTo(cx, gy-172); ctx.lineTo(cx-7, gy-164); ctx.lineTo(cx+7, gy-164); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(cx, gy-154); ctx.lineTo(cx-7, gy-162); ctx.lineTo(cx+7, gy-162); ctx.closePath(); ctx.fill();
+    return;
+  }
   const sway = Math.sin(time*1.6+cx)*3;
   ctx.fillStyle = 'rgba(60,44,30,0.25)';
   ctx.fillRect(cx-32, gy-3, 64, 6);
@@ -1171,6 +1239,30 @@ function drawBird(b){
 // figures ---------------------------------------------------------
 function drawFigure(x, y, face, phase, opts){
   const {skin, cloth, sashC, isGuard, hooded, attackT=0, vy=0, onGround=true, hurt=false, vx=0} = opts;
+  // painted sprite path: pose picked from the asset slots, procedural rig as fallback
+  const poseKey = isGuard
+    ? (Math.sin(phase) > 0 ? 'guard_walk_a' : 'guard_walk_b')
+    : attackT > 0 ? 'hero_attack'
+    : !onGround ? 'hero_jump'
+    : Math.abs(vx) > 40 ? (Math.sin(phase) > 0 ? 'hero_run_a' : 'hero_run_b')
+    : 'hero_idle';
+  const sprite = IMGS[poseKey];
+  if(sprite){
+    ctx.save();
+    ctx.translate(x, y);
+    if(hurt && (time*20|0)%2) ctx.globalAlpha = 0.45;
+    ctx.save(); ctx.scale(1,0.3);
+    const shg0 = ctx.createRadialGradient(0,8,2, 0,8,22);
+    shg0.addColorStop(0,'rgba(25,16,10,0.45)'); shg0.addColorStop(1,'rgba(25,16,10,0)');
+    ctx.fillStyle = shg0;
+    ctx.beginPath(); ctx.arc(0, 8, 22, 0, 7); ctx.fill();
+    ctx.restore();
+    ctx.scale(face, 1);
+    const dh = 104, dw = dh * sprite.width / sprite.height;
+    ctx.drawImage(sprite, -dw/2, -dh+4, dw, dh);
+    ctx.restore();
+    return;
+  }
   ctx.save();
   ctx.translate(x, y);
   ctx.scale(face*1.12, 1.12);
@@ -1479,8 +1571,9 @@ function render(){
   const main = ctx;
   bctx.clearRect(0,0,W,H);
   ctx = bctx;
-  drawFarLayer();
-  drawMidLayer();
+  const farIm = IMGS['l'+(levelIdx+1)+'_far'], midIm = IMGS['l'+(levelIdx+1)+'_mid'];
+  if(farIm) drawBackdrop(farIm, 0.08); else drawFarLayer();
+  if(midIm) drawBackdrop(midIm, 0.30); else drawMidLayer();
   ctx = main;
   ctx.filter = 'blur(1.8px)';
   ctx.drawImage(BGC, 0, 0);

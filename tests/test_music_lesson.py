@@ -1271,10 +1271,25 @@ class PitchChartTests(unittest.TestCase):
                      else "komal" if r % 12 in (1, 3, 6, 8, 10) else "shuddha"}
             for r in range(-3, 13)
         ])
+        notes = pd.DataFrame([{
+            "start": 10.6, "end": 10.9, "lo": -0.22, "hi": 0.22,
+            "swara": "S", "duration": 0.3, "cents_off": 3.0,
+            "status": "in the sargam",
+        }])
+        glides = pd.DataFrame([
+            {"gid": 0, "t": 10.5, "semi": 0.0},
+            {"gid": 0, "t": 10.6, "semi": 4.0},
+        ])
         spec = _build_pitch_chart(
+            contour, regions, grid, (10.0, 11.0), (-3, 12), notes, glides
+        ).to_dict()
+        self.assertEqual(len(spec["layer"]), 7)
+        self.assertIn("params", spec)          # zoom/pan is wired in
+
+        bare = _build_pitch_chart(
             contour, regions, grid, (10.0, 11.0), (-3, 12)
         ).to_dict()
-        self.assertEqual(len(spec["layer"]), 5)
+        self.assertEqual(len(bare["layer"]), 6)   # empty-notes layer still compiles
 
 
 

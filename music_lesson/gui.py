@@ -236,17 +236,25 @@ def _section_picker(source: str, settings: dict) -> tuple[float, float] | None:
     return None
 
 
-def _build_pitch_chart(contour_df, region_df, grid_df, x_domain, y_domain):
-    """Layered vega spec: region bands, swara grid, labels, pitch dots.
+def _build_pitch_chart(
+    contour_df, region_df, grid_df, x_domain, y_domain,
+    notes_df=None, glide_df=None,
+):
+    """Layered vega spec: bands, swara grid, labels, pitch dots, note bars.
 
-    Kept free of streamlit calls so the spec can be built (and compiled to a
-    dict) in tests — the first version crashed at runtime on an altair v6
-    rule (no nested conditions), which is exactly the class of bug a test
-    that renders nothing would still have caught.
+    The note bars are the point of the whole view: green bars are what became
+    sargam, grey bars are pitch the tracker held but the classifier did not
+    count as singing, and gold links are meends — so "why is this phrase
+    missing from my transcript" has a visual answer. The chart is interactive
+    (wheel to zoom, drag to pan, double-click to reset).
+
+    Kept free of streamlit calls so the spec can be compiled in tests — an
+    earlier version crashed at runtime on an altair v6 rule that no import
+    check could catch.
     """
     import altair as alt
+    import pandas as pd
 
-    # Per-row style columns instead of nested conditions.
     grid_df = grid_df.copy()
     grid_df["width"] = grid_df["kind"].map(
         {"sa": 1.6, "pa": 1.1, "komal": 0.4, "shuddha": 0.55}
@@ -255,16 +263,22 @@ def _build_pitch_chart(contour_df, region_df, grid_df, x_domain, y_domain):
     y_scale = alt.Scale(domain=list(y_domain))
     y_axis = alt.Axis(title=None, labels=False, ticks=False, grid=False)
 
-    bands = alt.Chart(region_df).mark_rect(opacity=0.14).encode(
+    bands = alt.Chart(region_df).mark_rect().encode(
         x=alt.X("start:Q", scale=x_scale, title="seconds (recording time)"),
         x2="end:Q",
         color=alt.Color(
             "kind:N",
             scale=alt.Scale(
                 domain=["sung", "spoken", "drone", "silent"],
-                range=["#2e7d32", "#607d8b", "#b8860b", "#bdbdbd"],
+                range=["#2e7d32", "#78909c", "#b8860b", "#bdbdbd"],
             ),
             legend=alt.Legend(title=None, orient="top"),
+        ),
+        opacity=alt.Opacity(
+            "kind:N",
+            scale=alt.Scale(domain=["sung", "spoken", "drone", "silent"],
+                            range=[0.22, 0.07, 0.18, 0.05]),
+            legend=None,
         ),
     )
     solid = alt.Chart(grid_df[grid_df["kind"] != "komal"]).mark_rule(
@@ -280,12 +294,60 @@ def _build_pitch_chart(contour_df, region_df, grid_df, x_domain, y_domain):
         align="left", dx=3, fontSize=11, color="#555555",
     ).encode(y=alt.Y("semi:Q", scale=y_scale, axis=y_axis),
              text="swara:N", x=alt.value(2))
-    contour = alt.Chart(contour_df).mark_circle(size=5, opacity=0.75).encode(
+    contour = alt.Chart(contour_df).mark_circle(size=5, opacity=0.6).encode(
         x=alt.X("t:Q", scale=x_scale),
         y=alt.Y("semi:Q", scale=y_scale, axis=y_axis),
         color=alt.value("#1a5b8f"),
     )
-    return alt.layer(bands, solid, komal, labels, contour).properties(height=380)
+
+    layers = [bands, solid, komal, labels, contour]
+
+    if glide_df is not None and len(glide_df):
+        layers.append(
+            alt.Chart(glide_df).mark_line(
+                strokeWidth=2.2, opacity=0.9, color="#b8860b",
+            ).encode(
+                x=alt.X("t:Q", scale=x_scale),
+                y=alt.Y("semi:Q", scale=y_scale, axis=y_axis),
+                detail="gid:N",
+            )
+        )
+    if notes_df is None:
+        notes_df = pd.DataFrame(
+            columns=["start", "end", "lo", "hi", "swara", "status",
+                     "duration", "cents_off"]
+        )
+    layers.append(
+        alt.Chart(notes_df).mark_rect(cornerRadius=2).encode(
+            x=alt.X("start:Q", scale=x_scale),
+            x2="end:Q",
+            y=alt.Y("lo:Q", scale=y_scale, axis=y_axis),
+            y2="hi:Q",
+            color=alt.Color(
+                "status:N",
+                scale=alt.Scale(domain=["in the sargam", "detected, not sung"],
+                                range=["#1b5e20", "#8d8d8d"]),
+                legend=alt.Legend(title=None, orient="top"),
+            ),
+            opacity=alt.Opacity(
+                "status:N",
+                scale=alt.Scale(domain=["in the sargam", "detected, not sung"],
+                                range=[0.85, 0.45]),
+                legend=None,
+            ),
+            tooltip=[
+                alt.Tooltip("swara:N", title="swara"),
+                alt.Tooltip("duration:Q", title="held (s)", format=".2f"),
+                alt.Tooltip("cents_off:Q", title="cents off", format="+.0f"),
+                alt.Tooltip("status:N", title="status"),
+            ],
+        )
+    )
+
+    rows = int(y_domain[1] - y_domain[0]) + 1
+    return alt.layer(*layers).properties(
+        height=max(340, rows * 15)
+    ).interactive()
 
 
 def _render_pitch_analysis(
@@ -374,7 +436,35 @@ def _render_pitch_analysis(
         for r in regions
     ])
     contour_df = pd.DataFrame({"t": times, "semi": semis})
-    chart = _build_pitch_chart(contour_df, region_df, grid, (start, end), (lo, hi))
+
+    from music_lesson.swara import detect_glides
+
+    def in_sung(note):
+        return any(
+            r.kind == "sung" and r.overlap(note.start, note.end) > 0.5 * note.duration
+            for r in regions
+        )
+
+    notes_df = pd.DataFrame([
+        {
+            "start": n.start + start, "end": n.end + start,
+            "lo": n.cents / 100.0 - 0.22, "hi": n.cents / 100.0 + 0.22,
+            "swara": n.label(), "duration": n.duration,
+            "cents_off": n.deviation,
+            "status": "in the sargam" if in_sung(n) else "detected, not sung",
+        }
+        for n in notes
+    ])
+    glide_rows = []
+    for gid, g in enumerate(detect_glides(track, tonic, notes)):
+        a, b = notes[g.index], notes[g.index + 1]
+        glide_rows.append({"gid": gid, "t": a.end + start, "semi": a.cents / 100.0})
+        glide_rows.append({"gid": gid, "t": b.start + start, "semi": b.cents / 100.0})
+    glide_df = pd.DataFrame(glide_rows)
+
+    chart = _build_pitch_chart(
+        contour_df, region_df, grid, (start, end), (lo, hi), notes_df, glide_df
+    )
     st.altair_chart(chart, use_container_width=True)
 
     sung = sum(r.duration for r in regions if r.kind == "sung")
@@ -382,9 +472,11 @@ def _render_pitch_analysis(
     from music_lesson.swara import describe_hz
     st.caption(
         f"Sa = {describe_hz(tonic)} · {_fmt_ts(sung)} sung / "
-        f"{_fmt_ts(spoken)} spoken in this selection · dots are the tracked "
-        f"pitch — if they follow the harmonium instead of the voice, the "
-        f"sargam will too."
+        f"{_fmt_ts(spoken)} spoken in this selection · scroll to zoom, drag "
+        f"to pan, double-click to reset · dots = tracked pitch, green bars = "
+        f"notes in the sargam, grey bars = held pitch not counted as singing "
+        f"(hover any bar for its swara), gold links = meend. If the dots ride "
+        f"the harmonium instead of the voice, the sargam will too."
     )
     sung_notes = [n for n in notes if any(
         r.kind == "sung" and r.overlap(n.start, n.end) > 0.5 * n.duration

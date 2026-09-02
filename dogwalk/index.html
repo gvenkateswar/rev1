@@ -34,6 +34,7 @@
     position:absolute; inset:0;
     width:100%; height:100%;
     display:block;
+    touch-action:none;
   }
   /* ---------- HUD ---------- */
   #hud{
@@ -195,11 +196,11 @@
     <div class="overlay" id="title">
       <div class="eyebrow">Ashbourne Park &middot; The Autumn Issue</div>
       <h1>Heel, Biscuit!</h1>
-      <p class="sub">A promenade in five o’clock light. Ride the hills, land soft
-        with the slope, and mind the puddles — Biscuit has opinions about squirrels.</p>
+      <p class="sub">A promenade in five o’clock light. Drift between paths,
+        ride the hills, and mind the puddles — Biscuit has opinions about squirrels.</p>
       <div class="controls">
-        <div class="ctrl"><span class="key">Space</span><small>Leap &middot; hold to go far</small></div>
-        <div class="ctrl"><span class="key">Space</span><small>Whistle at squirrels</small></div>
+        <div class="ctrl"><span class="key">&uarr; &darr;</span><small>Change path</small></div>
+        <div class="ctrl"><span class="key">Space</span><small>Whistle</small></div>
         <div class="ctrl"><span class="key">P</span><small>Pause</small></div>
       </div>
       <div class="begin">Press space to begin the walk</div>
@@ -309,19 +310,26 @@ function layer(w, h, fn) {
 /* overhead canopy that frames the top of the screen */
 const CANOPY_H = 300;
 const canopy = layer(1600, CANOPY_H, (g, w, h) => {
+  // blobs are stamped at x−w and x+w too, so the tile wraps without a seam
+  const blob = (x, y, r, c0, c1, cm) => {
+    for (const bx of [x - w, x, x + w]) {
+      const grd = g.createRadialGradient(bx, y, 0, bx, y, r);
+      grd.addColorStop(0, c0);
+      if (cm) grd.addColorStop(0.6, cm);
+      grd.addColorStop(1, c1);
+      g.fillStyle = grd;
+      g.beginPath(); g.arc(bx, y, r, 0, TAU); g.fill();
+    }
+  };
   // dense at the top, dissolving to nothing below
   for (let i = 0; i < 110; i++) {
-    const x = rand(0, w), y = Math.pow(Math.random(), 1.7) * h * 0.8, r = rand(26, 90);
-    const grd = g.createRadialGradient(x, y, 0, x, y, r);
     const dark = Math.random() < 0.55;
-    grd.addColorStop(0, dark ? 'rgba(13,21,11,.6)' : 'rgba(40,62,32,.42)');
-    grd.addColorStop(1, 'rgba(13,21,11,0)');
-    g.fillStyle = grd;
-    g.beginPath(); g.arc(x, y, r, 0, TAU); g.fill();
+    blob(rand(0, w), Math.pow(Math.random(), 1.7) * h * 0.8, rand(26, 90),
+      dark ? 'rgba(13,21,11,.6)' : 'rgba(40,62,32,.42)', 'rgba(13,21,11,0)');
   }
   g.strokeStyle = 'rgba(8,12,7,.75)'; g.lineCap = 'round';
   for (let i = 0; i < 16; i++) {
-    const x = rand(0, w), y = rand(-10, h * 0.3);
+    const x = rand(170, w - 170), y = rand(-10, h * 0.3);   // clear of the tile edges
     g.lineWidth = rand(2, 5);
     g.beginPath(); g.moveTo(x, y);
     g.quadraticCurveTo(x + rand(-60, 60), y + rand(30, 90), x + rand(-150, 150), y + rand(60, 170));
@@ -329,14 +337,9 @@ const canopy = layer(1600, CANOPY_H, (g, w, h) => {
   }
   // warm bokeh caught in the leaves
   for (let i = 0; i < 40; i++) {
-    const x = rand(0, w), y = Math.pow(Math.random(), 1.4) * h * 0.85, r = rand(4, 24);
-    const grd = g.createRadialGradient(x, y, 0, x, y, r);
     const hot = Math.random() < 0.3;
-    grd.addColorStop(0, hot ? 'rgba(246,231,187,.75)' : 'rgba(232,200,122,.4)');
-    grd.addColorStop(0.6, 'rgba(232,200,122,.12)');
-    grd.addColorStop(1, 'rgba(232,200,122,0)');
-    g.fillStyle = grd;
-    g.beginPath(); g.arc(x, y, r, 0, TAU); g.fill();
+    blob(rand(0, w), Math.pow(Math.random(), 1.4) * h * 0.85, rand(4, 24),
+      hot ? 'rgba(246,231,187,.75)' : 'rgba(232,200,122,.4)', 'rgba(232,200,122,0)', 'rgba(232,200,122,.12)');
   }
   try {
     g.filter = 'blur(4px)'; g.globalAlpha = 0.75;
@@ -389,11 +392,13 @@ const TREES_W = 1600, TREES_H = 240;
 const treeline = layer(TREES_W, TREES_H, (g, w, h) => {
   for (let i = 0; i < 70; i++) {
     const x = rand(0, w), y = h - Math.pow(Math.random(), 1.6) * h * 0.85, r = rand(24, 70);
-    const grd = g.createRadialGradient(x, y, 0, x, y, r);
-    grd.addColorStop(0, 'rgba(19,30,14,.9)');
-    grd.addColorStop(1, 'rgba(19,30,14,0)');
-    g.fillStyle = grd;
-    g.beginPath(); g.arc(x, y, r, 0, TAU); g.fill();
+    for (const bx of [x - w, x, x + w]) {   // wrap so the tile has no seam
+      const grd = g.createRadialGradient(bx, y, 0, bx, y, r);
+      grd.addColorStop(0, 'rgba(19,30,14,.9)');
+      grd.addColorStop(1, 'rgba(19,30,14,0)');
+      g.fillStyle = grd;
+      g.beginPath(); g.arc(bx, y, r, 0, TAU); g.fill();
+    }
   }
   const grd = g.createLinearGradient(0, h * 0.5, 0, h);
   grd.addColorStop(0, 'rgba(16,26,12,0)');
@@ -468,9 +473,7 @@ const AudioSys = {
   good() { this.tone(784, 0.12, 'sine', 0.07); setTimeout(() => this.tone(1175, 0.2, 'sine', 0.06), 110); },
   hit() { this.tone(120, 0.3, 'sawtooth', 0.09, 60); },
   bark() { this.tone(420, 0.08, 'square', 0.045, 300); },
-  jump() { this.tone(340, 0.16, 'sine', 0.05, 560); },
-  land() { this.tone(150, 0.1, 'sine', 0.05, 90); },
-  flow() { this.tone(1046, 0.1, 'sine', 0.05); setTimeout(() => this.tone(1568, 0.22, 'sine', 0.045), 80); },
+  swish() { this.tone(480, 0.11, 'sine', 0.035, 320); },
   flutter() { this.tone(900, 0.05, 'triangle', 0.025, 1400); setTimeout(() => this.tone(1100, 0.05, 'triangle', 0.02, 1500), 60); }
 };
 
@@ -479,18 +482,25 @@ const AudioSys = {
    ============================================================ */
 const PX = 300;         // walker's fixed screen x
 const DOG_GAP = 68;     // Biscuit trots this far ahead
-const GRAV = 1350;
+
+/* three invisible paths across the promenade's depth */
+const LANE_OFF = [12, 44, 78];      // vertical offset below the path's crest line
+const LANE_SC = [0.84, 0.92, 1.0];  // depth scale per path
+function laneAt(f) {
+  const i = clamp(Math.floor(f), 0, 1), t = clamp(f - i, 0, 1);
+  return { off: lerp(LANE_OFF[i], LANE_OFF[i + 1], t), s: lerp(LANE_SC[i], LANE_SC[i + 1], t) };
+}
 
 const G = {
   mode: 'title', paused: false,
   t: 0, dayT: rand(0, 40), worldX: 0,
-  speed: 300, speedT: 300, boost: 0, slowT: 0,
+  speed: 300, slowT: 0,
   score: 0, mult: 1, hearts: 3, spirits: 100,
   iframes: 0, stumble: 0, shake: 0, whistleFx: 0,
   cam: { y: 0, vy: 0 },
-  pw: { y: 0, vy: 0, air: false, airT: 0, coyote: 0, squash: 0, ang: 0 },  // walker
-  dg: { y: 0, vy: 0, air: false, jumpAt: -1, ang: 0 },                     // Biscuit
-  jumpHeld: false,
+  lane: 1, laneF: 1, laneV: 0,      // walker's chosen path, spring-smoothed
+  dogLaneF: 1, dogLaneV: 0,         // Biscuit drifts over a beat behind
+  pwAng: 0, dgAng: 0,
   obs: [], picks: [], pigeons: [], strollers: [], pops: [], sparks: [], fgLeaves: [],
   squirrel: null, event: null,
   spawnWx: 2000, pickWx: 1400, squirrelT: rand(8, 12), pigeonWx: 900, strollerFx: 500,
@@ -531,54 +541,49 @@ $('mute').addEventListener('click', e => {
 });
 
 /* ============================================================
-   INPUT — one touch: leap, or whistle when Biscuit spots a squirrel
+   INPUT — glide between paths; whistle when Biscuit spots a squirrel
    ============================================================ */
-function press() {
+function laneMove(d) {
+  if (G.mode !== 'play' || G.paused) return;
+  const next = clamp(G.lane + d, 0, 2);
+  if (next !== G.lane) { G.lane = next; AudioSys.swish(); }
+}
+function whistle() {
   AudioSys.ensure();
   if (G.mode === 'title' || G.mode === 'over') return startGame();
   if (G.paused) return;
+  AudioSys.whistle();
+  G.whistleFx = 0.5;
   if (G.event) {  // resolve the squirrel moment
     G.event = null;
-    G.whistleFx = 0.5;
     addScore(50, 'good dog · +' + 50 * G.mult);
     G.spirits = clamp(G.spirits + 16, 0, 100);
-    AudioSys.whistle();
     setTimeout(() => AudioSys.good(), 160);
     if (G.squirrel) G.squirrel.flee = true;
-    return;
   }
-  // leap
-  const p = G.pw;
-  if (!p.air || p.coyote > 0) {
-    p.vy = -(430 + G.speed * 0.28);
-    p.air = true; p.coyote = 0; p.airT = 0;
-    G.jumpHeld = true;
-    G.dg.jumpAt = G.t + 0.09;   // Biscuit follows a beat later
-    AudioSys.jump();
-  }
-}
-function release() {
-  G.jumpHeld = false;
-  if (G.pw.air && G.pw.vy < -250) G.pw.vy = -250;  // short hop on a quick tap
 }
 window.addEventListener('keydown', e => {
   if (e.repeat) return;
   const k = e.key;
-  if (k === ' ' || k === 'ArrowUp' || k === 'w' || k === 'W') { e.preventDefault(); press(); }
+  if (k === 'ArrowUp' || k === 'w' || k === 'W') { e.preventDefault(); laneMove(-1); }
+  else if (k === 'ArrowDown' || k === 's' || k === 'S') { e.preventDefault(); laneMove(1); }
+  else if (k === ' ') { e.preventDefault(); whistle(); }
   else if (k === 'p' || k === 'P') { if (G.mode === 'play') G.paused = !G.paused; }
   else if (k === 'm' || k === 'M') { $('mute').click(); }
 });
-window.addEventListener('keyup', e => {
-  const k = e.key;
-  if (k === ' ' || k === 'ArrowUp' || k === 'w' || k === 'W') release();
-});
-window.addEventListener('touchstart', e => {
+/* swipe up or down to change path, tap or click to whistle */
+let pDown = null;
+window.addEventListener('pointerdown', e => {
   if (e.target.id === 'mute') return;
-  e.preventDefault(); press();
-}, { passive: false });
-window.addEventListener('touchend', () => release(), { passive: true });
-window.addEventListener('mousedown', e => { if (e.target.id !== 'mute') press(); });
-window.addEventListener('mouseup', () => release());
+  pDown = { x: e.clientX, y: e.clientY };
+});
+window.addEventListener('pointerup', e => {
+  if (!pDown) return;
+  const dy = e.clientY - pDown.y, dx = e.clientX - pDown.x;
+  pDown = null;
+  if (Math.abs(dy) > 30 && Math.abs(dy) > Math.abs(dx)) laneMove(dy > 0 ? 1 : -1);
+  else whistle();
+});
 window.addEventListener('blur', () => { if (G.mode === 'play') G.paused = true; });
 
 /* ============================================================
@@ -587,16 +592,16 @@ window.addEventListener('blur', () => { if (G.mode === 'play') G.paused = true; 
 function startGame() {
   Object.assign(G, {
     mode: 'play', paused: false, t: 0, worldX: 0,
-    speed: 300, speedT: 300, boost: 0, slowT: 0,
+    speed: 300, slowT: 0,
     score: 0, mult: 1, hearts: 3, spirits: 100,
     iframes: 0, stumble: 0, shake: 0, whistleFx: 0,
+    lane: 1, laneF: 1, laneV: 0, dogLaneF: 1, dogLaneV: 0,
+    pwAng: 0, dgAng: 0,
     obs: [], picks: [], pigeons: [], pops: [], sparks: [],
     squirrel: null, event: null,
     spawnWx: 2200, pickWx: 1500, squirrelT: rand(8, 12), pigeonWx: 1000,
     gustT: rand(6, 12), gust: 0
   });
-  G.pw = { y: pathH(PX), vy: 0, air: false, airT: 0, coyote: 0, squash: 0, ang: 0 };
-  G.dg = { y: pathH(PX + DOG_GAP), vy: 0, air: false, jumpAt: -1, ang: 0 };
   G.cam.y = 0; G.cam.vy = 0;
   renderHearts();
   titleOv.classList.add('fade');
@@ -622,41 +627,49 @@ function endGame() {
 }
 function addScore(base, label) {
   G.score += base * G.mult;
-  if (label) G.pops.push({ x: PX + 50, y: G.pw.y - G.cam.y - 165, t: 0, txt: label });
+  if (label) {
+    const y = pathH(G.worldX + PX) - G.cam.y + laneAt(G.laneF).off - 165;
+    G.pops.push({ x: PX + 50, y, t: 0, txt: label });
+  }
 }
 
 /* ============================================================
    SPAWNING (world-coordinate based)
    ============================================================ */
+let lastObsLane = 1;
+function pickObsLane() {
+  let lane = (Math.random() * 3) | 0;
+  if (lane === lastObsLane && Math.random() < 0.55) lane = (lane + 1 + ((Math.random() * 2) | 0)) % 3;
+  lastObsLane = lane;
+  return lane;
+}
 function trySpawns() {
   const ahead = G.worldX + W + 200;
   if (ahead > G.spawnWx) {
     const r = Math.random();
-    const type = r < 0.3 ? 'puddle' : r < 0.55 ? 'branch' : r < 0.78 ? 'hydrant' : 'planter';
-    G.obs.push({ type, wx: G.spawnWx, hit: false, ph: rand(0, TAU) });
-    G.spawnWx += rand(520, 980) + G.speed * 0.45;
+    const type = r < 0.24 ? 'puddle' : r < 0.44 ? 'branch' : r < 0.62 ? 'hydrant' :
+                 r < 0.83 ? 'planter' : 'walker';
+    G.obs.push({ type, lane: pickObsLane(), wx: G.spawnWx, hit: false, ph: rand(0, TAU) });
+    G.spawnWx += rand(400, 780) + G.speed * 0.4;
   }
   if (ahead > G.pickWx) {
-    // an arc of golden leaves tracing the terrain, or a lone biscuit
+    // a run of golden leaves tracing one path, or a lone biscuit
+    const lane = (Math.random() * 3) | 0;
     if (Math.random() < 0.26) {
-      G.picks.push({ type: 'biscuit', wx: G.pickWx, ph: rand(0, TAU), got: false });
+      G.picks.push({ type: 'biscuit', lane, wx: G.pickWx, ph: rand(0, TAU), got: false });
     } else {
       const n = 4 + (Math.random() * 3 | 0);
-      const arc = Math.random() < 0.5 ? 46 : 0;   // some lines float leap-high
       for (let i = 0; i < n; i++) {
-        const fr = i / (n - 1);
-        G.picks.push({
-          type: 'leaf', wx: G.pickWx + i * 52, ph: rand(0, TAU), got: false,
-          lift: arc * Math.sin(fr * Math.PI)
-        });
+        G.picks.push({ type: 'leaf', lane, wx: G.pickWx + i * 52, ph: rand(0, TAU), got: false });
       }
     }
-    G.pickWx += rand(700, 1300);
+    G.pickWx += rand(650, 1150);
   }
   if (ahead > G.pigeonWx) {
     const n = 2 + (Math.random() * 2 | 0);
+    const lane = (Math.random() * 3) | 0;
     for (let i = 0; i < n; i++) {
-      G.pigeons.push({ wx: G.pigeonWx + i * 34 + rand(-8, 8), state: 'peck', ph: rand(0, TAU), yOff: 0, a: 1 });
+      G.pigeons.push({ wx: G.pigeonWx + i * 34 + rand(-8, 8), lane, state: 'peck', ph: rand(0, TAU), yOff: 0, a: 1 });
     }
     G.pigeonWx += rand(1600, 2800);
   }
@@ -674,13 +687,11 @@ function update(dt) {
   /* --- momentum: downhill feeds speed, uphill bleeds it --- */
   const pwx = G.worldX + PX;
   const slope = pathSlope(pwx);
-  G.boost = Math.max(0, G.boost - dt * 0.8);
   G.slowT = Math.max(0, G.slowT - dt);
-  const base = Math.min(640, 300 + G.worldX / 95);
-  let target = base * clamp(1 + slope * 1.5, 0.86, 1.2) * (1 + G.boost * 0.16);
+  const base = Math.min(620, 300 + G.worldX / 95);
+  let target = base * clamp(1 + slope * 1.2, 0.88, 1.14);
   if (G.slowT > 0) target *= 0.55;
-  G.speedT = target;
-  G.speed = lerp(G.speed, G.speedT, Math.min(1, dt * 2.2));
+  G.speed = lerp(G.speed, target, Math.min(1, dt * 2.2));
   G.worldX += G.speed * dt;
 
   G.iframes = Math.max(0, G.iframes - dt);
@@ -688,56 +699,20 @@ function update(dt) {
   G.shake = Math.max(0, G.shake - dt * 3);
   G.whistleFx = Math.max(0, G.whistleFx - dt);
 
-  /* --- walker physics --- */
-  const p = G.pw;
-  const gY = pathH(G.worldX + PX);
-  if (p.air) {
-    p.airT += dt;
-    p.vy += GRAV * dt;
-    p.y += p.vy * dt;
-    if (p.y >= gY && p.vy > 0) {
-      // touch down
-      p.air = false;
-      p.squash = 1;
-      const soft = p.vy;
-      p.y = gY;
-      AudioSys.land();
-      if (slope > 0.05 && soft > 230) {   // landed with the hill: flow
-        G.boost = 1;
-        addScore(20, 'flow · +' + 20 * G.mult);
-        AudioSys.flow();
-      } else if (p.airT > 0.62) {
-        addScore(12, 'hang time · +' + 12 * G.mult);
-      }
-    }
-  } else {
-    p.y = gY;
-    p.coyote = 0.09;
-    p.vy = 0;
-  }
-  if (!p.air) p.coyote = 0.09; else p.coyote = Math.max(0, p.coyote - dt);
-  p.squash = Math.max(0, p.squash - dt * 5);
-  const targAng = p.air ? clamp(p.vy / 1900, -0.16, 0.2) : Math.atan(slope) * 0.7;
-  p.ang = lerp(p.ang, targAng, Math.min(1, dt * 7));
+  /* --- gliding between paths: a soft spring, Biscuit a beat behind --- */
+  G.laneV += (G.lane - G.laneF) * 74 * dt - G.laneV * 15.5 * dt;
+  G.laneF += G.laneV * dt;
+  G.dogLaneV += (G.laneF - G.dogLaneF) * 46 * dt - G.dogLaneV * 12 * dt;
+  G.dogLaneF += G.dogLaneV * dt;
 
-  /* --- Biscuit physics (follows a beat behind) --- */
-  const d = G.dg;
+  /* --- posture: tilt with the slope, bank into a path change --- */
   const dwx = G.worldX + PX + DOG_GAP;
-  const dgY = pathH(dwx);
-  if (d.jumpAt > 0 && G.t >= d.jumpAt && !d.air) {
-    d.vy = -(400 + G.speed * 0.26);
-    d.air = true; d.jumpAt = -1;
-  }
-  if (d.air) {
-    d.vy += GRAV * dt;
-    d.y += d.vy * dt;
-    if (d.y >= dgY && d.vy > 0) { d.air = false; d.y = dgY; }
-  } else {
-    d.y = dgY; d.vy = 0;
-  }
-  const dSlope = pathSlope(dwx);
-  const dTarg = d.air ? clamp(d.vy / 1600, -0.3, 0.25) : Math.atan(dSlope) * 0.9;
-  d.ang = lerp(d.ang, dTarg, Math.min(1, dt * 9));
+  G.pwAng = lerp(G.pwAng,
+    Math.atan(slope) * 0.7 + clamp(G.laneV * 0.05, -0.1, 0.1),
+    Math.min(1, dt * 7));
+  G.dgAng = lerp(G.dgAng,
+    Math.atan(pathSlope(dwx)) * 0.9 + clamp(G.dogLaneV * 0.06, -0.12, 0.12),
+    Math.min(1, dt * 9));
 
   /* --- camera: a slow spring that breathes with the hills --- */
   const camTarget = (pathH(G.worldX + PX + 130) - BASE_Y) * 0.82;
@@ -752,18 +727,15 @@ function update(dt) {
 
   trySpawns();
 
-  /* --- obstacles --- */
-  const CLEAR = { puddle: 10, branch: 22, hydrant: 38, planter: 48 };
-  const HALF = { puddle: 44, branch: 42, hydrant: 18, planter: 24 };
+  /* --- obstacles: dodge by path --- */
+  const HALF = { puddle: 44, branch: 42, hydrant: 18, planter: 24, walker: 30 };
   for (const o of G.obs) {
     o.ph += dt * 4;
+    if (o.type === 'walker') o.wx -= dt * 150;   // strolling toward you
     if (!o.hit && G.iframes <= 0) {
-      const half = HALF[o.type], need = CLEAR[o.type];
-      // the walker and Biscuit each have to clear it
-      const wAir = pathH(G.worldX + PX) - p.y;
-      const dAir = pathH(dwx) - d.y;
-      const wHit = Math.abs((G.worldX + PX + 8) - o.wx) < half + 16 && wAir < need;
-      const dHit = Math.abs((dwx + 8) - o.wx) < half + 12 && dAir < Math.max(0, need - 12);
+      const half = HALF[o.type];
+      const wHit = Math.abs(G.laneF - o.lane) < 0.42 && Math.abs((pwx + 8) - o.wx) < half + 28;
+      const dHit = Math.abs(G.dogLaneF - o.lane) < 0.42 && Math.abs((dwx + 4) - o.wx) < half + 22;
       if (wHit || dHit) { o.hit = true; takeHit(o.type); }
     }
   }
@@ -773,9 +745,8 @@ function update(dt) {
   for (const k of G.picks) {
     k.ph += dt * 5;
     if (!k.got) {
-      const ky = pathH(k.wx) - 26 - (k.lift || 0);
-      const nearW = Math.abs((G.worldX + PX + 10) - k.wx) < 40 && Math.abs(p.y - 20 - ky) < 52;
-      const nearD = Math.abs((dwx + 6) - k.wx) < 40 && Math.abs(d.y - 18 - ky) < 46;
+      const nearW = Math.abs(G.laneF - k.lane) < 0.5 && Math.abs((pwx + 10) - k.wx) < 42;
+      const nearD = Math.abs(G.dogLaneF - k.lane) < 0.5 && Math.abs((dwx + 6) - k.wx) < 42;
       if (nearW || nearD) {
         k.got = true;
         if (k.type === 'biscuit') {
@@ -786,8 +757,9 @@ function update(dt) {
           addScore(10, null);
           AudioSys.pickup();
         }
+        const ky = pathH(k.wx) - G.cam.y + LANE_OFF[k.lane] - 26;
         for (let i = 0; i < 7; i++) {
-          G.sparks.push({ x: k.wx - G.worldX, y: ky - G.cam.y, vx: rand(-50, 60), vy: rand(-120, -20), t: 0 });
+          G.sparks.push({ x: k.wx - G.worldX, y: ky, vx: rand(-50, 60), vy: rand(-120, -20), t: 0 });
         }
       }
     }
@@ -813,7 +785,7 @@ function update(dt) {
   if (!G.squirrel) {
     G.squirrelT -= dt;
     if (G.squirrelT <= 0) {
-      G.squirrel = { wx: G.worldX + W + 120, ph: 0, flee: false, seen: false, fleeY: 0 };
+      G.squirrel = { wx: G.worldX + W + 120, lane: (Math.random() * 3) | 0, ph: 0, flee: false, seen: false, fleeY: 0 };
       G.squirrelT = rand(10, 16);
     }
   } else {
@@ -827,7 +799,7 @@ function update(dt) {
       const dist = q.wx - dwx;
       if (!q.seen && dist < 330 && dist > 40) {
         q.seen = true;
-        G.event = { t: 0, dur: 1.25 };
+        G.event = { t: 0, dur: 1.25, lane: q.lane };
         AudioSys.bark();
       }
       if (q.wx < G.worldX - 80) G.squirrel = null;
@@ -836,11 +808,13 @@ function update(dt) {
   if (G.event) {
     G.event.t += dt;
     if (G.event.t >= G.event.dur) {
-      G.event = null;
+      const ev = G.event; G.event = null;
       G.spirits = clamp(G.spirits - 18, 0, 100);
       G.slowT = 1.0;                 // Biscuit hauls you off your stride
       G.stumble = 0.5;
-      G.pops.push({ x: PX + DOG_GAP, y: d.y - G.cam.y - 110, t: 0, txt: 'SQUIRREL!' });
+      G.lane = ev.lane;              // dragged toward the squirrel's path
+      const dy = pathH(dwx) - G.cam.y + laneAt(G.dogLaneF).off - 110;
+      G.pops.push({ x: PX + DOG_GAP, y: dy, t: 0, txt: 'SQUIRREL!' });
       AudioSys.bark(); setTimeout(() => AudioSys.bark(), 130);
     }
   }
@@ -889,13 +863,12 @@ function takeHit(type) {
   G.stumble = 0.6;
   G.shake = 1;
   G.slowT = Math.max(G.slowT, 0.7);
-  G.boost = 0;
   G.spirits = clamp(G.spirits - 10, 0, 100);
   AudioSys.hit();
   renderHearts();
   G.pops.push({
-    x: PX + 40, y: G.pw.y - G.cam.y - 175, t: 0,
-    txt: type === 'puddle' ? 'splash!' : 'oof!'
+    x: PX + 40, y: pathH(G.worldX + PX) - G.cam.y + laneAt(G.laneF).off - 175, t: 0,
+    txt: type === 'puddle' ? 'splash!' : type === 'walker' ? 'pardon!' : 'oof!'
   });
   if (G.hearts <= 0) setTimeout(endGame, 500);
 }
@@ -1525,7 +1498,7 @@ function render() {
   ctx.beginPath();
   ctx.moveTo(pts[0][0], pts[0][1]);
   for (const [x, y] of pts) ctx.lineTo(x, y);
-  for (let i = pts.length - 1; i >= 0; i--) ctx.lineTo(pts[i][0], pts[i][1] + 34);
+  for (let i = pts.length - 1; i >= 0; i--) ctx.lineTo(pts[i][0], pts[i][1] + 94);
   ctx.closePath();
   ctx.save();
   ctx.clip();
@@ -1554,7 +1527,7 @@ function render() {
     if (h1 < 0.55) continue;
     const wx = ci * cell + hash(ci + 0.5) * cell;
     const sx = wx - G.worldX;
-    const sy = pathH(wx) - camY + 3 + hash(ci + 0.7) * 26;
+    const sy = pathH(wx) - camY + 3 + hash(ci + 0.7) * 86;
     ctx.save();
     ctx.translate(sx, sy);
     ctx.rotate(hash(ci + 0.3) * TAU);
@@ -1567,105 +1540,120 @@ function render() {
   }
   ctx.globalAlpha = 1;
 
-  /* --- things on the path --- */
-  // shadows first
+  /* --- things on the path, ordered back path to front --- */
+  const yOf = (wx, off) => pathH(wx) - camY + off;
+
+  // contact shadows first
   for (const o of G.obs) {
     const sx = o.wx - G.worldX;
-    if (sx < -80 || sx > W + 80) continue;
-    dropShadow(sx, pathH(o.wx) - camY, o.type === 'puddle' ? 0 : 34);
+    if (sx < -90 || sx > W + 90 || o.type === 'puddle') continue;
+    dropShadow(sx, yOf(o.wx, LANE_OFF[o.lane]), 34 * LANE_SC[o.lane]);
   }
   for (const b of G.pigeons) {
-    if (b.state === 'peck') dropShadow(b.wx - G.worldX, pathH(b.wx) - camY, 10);
+    if (b.state === 'peck') dropShadow(b.wx - G.worldX, yOf(b.wx, LANE_OFF[b.lane]), 10 * LANE_SC[b.lane]);
   }
   if (G.mode !== 'over') {
-    const wAir = clamp(1 - (pathH(G.worldX + PX) - G.pw.y) / 130, 0.35, 1);
-    const dAir = clamp(1 - (pathH(G.worldX + PX + DOG_GAP) - G.dg.y) / 110, 0.35, 1);
-    dropShadow(PX + 8, pathH(G.worldX + PX) - camY, 32 * wAir);
-    dropShadow(PX + DOG_GAP + 4, pathH(G.worldX + PX + DOG_GAP) - camY, 24 * dAir);
+    const pl = laneAt(G.laneF), dl = laneAt(G.dogLaneF);
+    dropShadow(PX + 8, yOf(G.worldX + PX, pl.off), 32 * pl.s);
+    dropShadow(PX + DOG_GAP + 4, yOf(G.worldX + PX + DOG_GAP, dl.off), 24 * dl.s);
   }
-  // obstacles
+
+  const items = [];
   for (const o of G.obs) {
     const sx = o.wx - G.worldX;
-    if (sx < -90 || sx > W + 90) continue;
-    ctx.save();
-    ctx.translate(sx, pathH(o.wx) - camY);
-    ctx.rotate(Math.atan(pathSlope(o.wx)) * 0.85);
-    if (o.type === 'puddle') drawPuddle(ctx);
-    else if (o.type === 'branch') drawBranch(ctx);
-    else if (o.type === 'hydrant') drawHydrant(ctx);
-    else drawPlanter(ctx, o.ph);
-    ctx.restore();
+    if (sx < -110 || sx > W + 110) continue;
+    items.push({ d: o.lane, fn: () => {
+      ctx.save();
+      ctx.translate(sx, yOf(o.wx, LANE_OFF[o.lane]));
+      ctx.scale(LANE_SC[o.lane], LANE_SC[o.lane]);
+      ctx.rotate(Math.atan(pathSlope(o.wx)) * 0.85);
+      if (o.type === 'puddle') drawPuddle(ctx);
+      else if (o.type === 'branch') drawBranch(ctx);
+      else if (o.type === 'hydrant') drawHydrant(ctx);
+      else if (o.type === 'planter') drawPlanter(ctx, o.ph);
+      else drawPoodleWalker(ctx, o.ph);
+      ctx.restore();
+    }});
   }
-  // pickups
   for (const k of G.picks) {
     const sx = k.wx - G.worldX;
     if (sx < -60 || sx > W + 60) continue;
-    ctx.save();
-    ctx.translate(sx, pathH(k.wx) - camY - 26 - (k.lift || 0));
-    if (k.type === 'biscuit') drawBiscuit(ctx, k.ph);
-    else drawLeafPickup(ctx, k.ph);
-    ctx.restore();
+    items.push({ d: k.lane, fn: () => {
+      ctx.save();
+      ctx.translate(sx, yOf(k.wx, LANE_OFF[k.lane]) - 26);
+      ctx.scale(LANE_SC[k.lane], LANE_SC[k.lane]);
+      if (k.type === 'biscuit') drawBiscuit(ctx, k.ph);
+      else drawLeafPickup(ctx, k.ph);
+      ctx.restore();
+    }});
   }
-  // pigeons
   for (const b of G.pigeons) {
     const sx = b.wx - G.worldX;
     if (sx < -60 || sx > W + 60) continue;
-    ctx.save();
-    ctx.translate(sx, pathH(b.wx) - camY + b.yOff);
-    drawPigeon(ctx, b);
-    ctx.restore();
+    items.push({ d: b.lane, fn: () => {
+      ctx.save();
+      ctx.translate(sx, yOf(b.wx, LANE_OFF[b.lane]) + b.yOff);
+      ctx.scale(LANE_SC[b.lane], LANE_SC[b.lane]);
+      drawPigeon(ctx, b);
+      ctx.restore();
+    }});
   }
-  // squirrel
   if (G.squirrel) {
     const q = G.squirrel;
     const sx = q.wx - G.worldX;
     if (sx > -80 && sx < W + 140) {
-      ctx.save();
-      ctx.translate(sx, pathH(q.wx) - camY - q.fleeY);
-      ctx.scale(-1, 1);   // running toward the player
-      drawSquirrel(ctx, q);
-      ctx.restore();
+      items.push({ d: q.lane, fn: () => {
+        ctx.save();
+        ctx.translate(sx, yOf(q.wx, LANE_OFF[q.lane]) - q.fleeY);
+        ctx.scale(-LANE_SC[q.lane], LANE_SC[q.lane]);   // running toward the player
+        drawSquirrel(ctx, q);
+        ctx.restore();
+      }});
     }
   }
-
-  /* --- Biscuit & the walker --- */
   if (G.mode !== 'over') {
-    const flick = G.iframes > 0 && (t * 14 | 0) % 2 === 0;
-    if (flick) ctx.globalAlpha = 0.35;
-    const ph = t * (G.speed / 42);
-    const lunge = G.event ? clamp(G.event.t / G.event.dur, 0, 1) * 0.9 : 0;
+    items.push({ d: Math.max(G.laneF, G.dogLaneF), fn: () => {
+      const flick = G.iframes > 0 && (t * 14 | 0) % 2 === 0;
+      if (flick) ctx.globalAlpha = 0.35;
+      const ph = t * (G.speed / 42);
+      const lunge = G.event ? clamp(G.event.t / G.event.dur, 0, 1) * 0.9 : 0;
+      const pl = laneAt(G.laneF), dl = laneAt(G.dogLaneF);
+      const wY = yOf(G.worldX + PX, pl.off);
+      const dY = yOf(G.worldX + PX + DOG_GAP, dl.off);
 
-    ctx.save();
-    ctx.translate(PX + DOG_GAP, G.dg.y - camY);
-    ctx.rotate(G.dg.ang);
-    const dog = drawDog(ctx, ph, { lunge, air: G.dg.air });
-    ctx.restore();
+      ctx.save();
+      ctx.translate(PX + DOG_GAP, dY);
+      ctx.scale(dl.s, dl.s);
+      ctx.rotate(G.dgAng);
+      const dog = drawDog(ctx, ph, { lunge });
+      ctx.restore();
 
-    ctx.save();
-    ctx.translate(PX, G.pw.y - camY);
-    ctx.rotate(G.pw.ang);
-    const sq = 1 - G.pw.squash * 0.06;
-    ctx.scale(1 / sq * 0.5 + 0.5, sq);
-    const wk = drawWalker(ctx, ph, {
-      air: G.pw.air,
-      lean: G.stumble > 0 ? Math.sin(G.stumble * 14) * 0.08 : 0
-    });
-    ctx.restore();
+      ctx.save();
+      ctx.translate(PX, wY);
+      ctx.scale(pl.s, pl.s);
+      ctx.rotate(G.pwAng);
+      const wk = drawWalker(ctx, ph, {
+        lean: G.stumble > 0 ? Math.sin(G.stumble * 14) * 0.08 : 0
+      });
+      ctx.restore();
 
-    // leash
-    const hx = PX + wk.handX, hy = G.pw.y - camY + wk.handY;
-    const cx = PX + DOG_GAP + dog.collarX, cy = G.dg.y - camY + dog.collarY;
-    const taut = lunge > 0 ? 1 : (G.pw.air || G.dg.air ? 0.6 : 0);
-    const sag = lerp(15, 2, taut);
-    ctx.strokeStyle = P.redDeep;
-    ctx.lineWidth = 2.4;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(hx, hy);
-    ctx.quadraticCurveTo((hx + cx) / 2, Math.max(hy, cy) + sag, cx, cy);
-    ctx.stroke();
-    ctx.globalAlpha = 1;
+      // leash — sags on an easy walk, tautens across paths or at a squirrel
+      const hx = PX + wk.handX * pl.s, hy = wY + wk.handY * pl.s;
+      const cx = PX + DOG_GAP + dog.collarX * dl.s, cy = dY + dog.collarY * dl.s;
+      const taut = lunge > 0 ? 1 : clamp(Math.abs(G.laneF - G.dogLaneF) * 1.4, 0, 0.7);
+      const sag = lerp(15, 2, taut);
+      ctx.strokeStyle = P.redDeep;
+      ctx.lineWidth = 2.4;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(hx, hy);
+      ctx.quadraticCurveTo((hx + cx) / 2, Math.max(hy, cy) + sag, cx, cy);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }});
   }
+  items.sort((a, b) => a.d - b.d);
+  for (const it of items) it.fn();
 
   /* --- sparks & popups --- */
   for (const s of G.sparks) {
@@ -1686,13 +1674,14 @@ function render() {
     ctx.strokeStyle = `rgba(246,231,187,${G.whistleFx * 1.4})`;
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.arc(PX + 20, G.pw.y - camY - 130, r, 0, TAU);
+    ctx.arc(PX + 20, yOf(G.worldX + PX, laneAt(G.laneF).off) - 130, r, 0, TAU);
     ctx.stroke();
   }
 
   /* --- squirrel-moment prompt --- */
   if (G.event) {
-    const ex = PX + DOG_GAP, ey = G.dg.y - camY - 92;
+    const ex = PX + DOG_GAP,
+          ey = yOf(G.worldX + PX + DOG_GAP, laneAt(G.dogLaneF).off) - 92;
     const frac = 1 - G.event.t / G.event.dur;
     ctx.strokeStyle = 'rgba(246,231,187,.9)';
     ctx.lineWidth = 3;
@@ -1791,9 +1780,6 @@ function dropShadow(x, y, r) {
 /* ============================================================
    MAIN LOOP
    ============================================================ */
-// let the title screen open on the walk already underway
-G.pw.y = pathH(PX); G.dg.y = pathH(PX + DOG_GAP);
-
 let last = performance.now();
 function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000);
@@ -1802,10 +1788,8 @@ function frame(now) {
     // gentle amble behind the masthead
     G.worldX += 60 * dt;
     G.speed = 60;
-    const gY = pathH(G.worldX + PX);
-    G.pw.y = gY; G.pw.ang = lerp(G.pw.ang, Math.atan(pathSlope(G.worldX + PX)) * 0.7, dt * 6);
-    G.dg.y = pathH(G.worldX + PX + DOG_GAP);
-    G.dg.ang = lerp(G.dg.ang, Math.atan(pathSlope(G.worldX + PX + DOG_GAP)) * 0.9, dt * 6);
+    G.pwAng = lerp(G.pwAng, Math.atan(pathSlope(G.worldX + PX)) * 0.7, dt * 6);
+    G.dgAng = lerp(G.dgAng, Math.atan(pathSlope(G.worldX + PX + DOG_GAP)) * 0.9, dt * 6);
     const camTarget = (pathH(G.worldX + PX + 130) - BASE_Y) * 0.82;
     G.cam.y = lerp(G.cam.y, camTarget, dt * 2);
   }

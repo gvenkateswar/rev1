@@ -106,6 +106,18 @@ var Sound = (function () {
     bossRoar:  function () { note({ freq: 110, to: 55, dur: 0.7, type: 'sawtooth', vol: 0.28 });
                              noise({ freq: 300, to: 80, dur: 0.7, vol: 0.25, filter: 'lowpass' }); },
     fire:      function () { noise({ freq: 1200, to: 400, dur: 0.18, vol: 0.16 }); },
+    charge:    function () { note({ freq: 90, to: 220, dur: 0.26, type: 'sawtooth', vol: 0.24, slide: 'linear' });
+                             noise({ freq: 400, to: 120, dur: 0.26, vol: 0.18, filter: 'lowpass' }); },
+    spear:     function () { note({ freq: 900, to: 260, dur: 0.14, type: 'square', vol: 0.16 });
+                             noise({ freq: 1800, to: 700, dur: 0.1, vol: 0.12 }); },
+    /* each stomp in a chain rings a step higher than the last */
+    chain:     function (n) { note({ freq: 523 * Math.pow(1.122, Math.min(n, 8) * 2),
+                             dur: 0.1, vol: 0.22, type: 'square' }); },
+    spring:    function () { note({ freq: 300, to: 1100, dur: 0.18, type: 'square', vol: 0.22, slide: 'linear' }); },
+    crumble:   function () { noise({ freq: 900, to: 200, dur: 0.3, vol: 0.24, filter: 'lowpass' }); },
+    checkpoint:function () { var s = [523, 784, 1047];
+                             for (var i = 0; i < s.length; i++)
+                               note({ freq: s[i], dur: 0.16, vol: 0.22, delay: i * 0.09, type: 'triangle' }); },
     pipe:      function () { note({ freq: 620, to: 130, dur: 0.34, type: 'square', vol: 0.22, slide: 'linear' });
                              noise({ freq: 700, to: 160, dur: 0.34, vol: 0.14, filter: 'lowpass' }); },
     pause:     function () { note({ freq: 660, dur: 0.08, vol: 0.18, type: 'square' });

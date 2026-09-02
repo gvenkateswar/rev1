@@ -22,9 +22,17 @@
  *   ~  water / molten rock (deadly)
  *   G  Ravana's ward (solid until the demon king falls)
  *   D  mouth of a stepwell (press down on it)   E  archway back up
+ *   J  lotus pad (springs you high)   z  ledge that gives way
+ *   k  checkpoint banner
  *   o  loose coin
- *   g  rakshasa   d  Maricha the golden deer   c  Kakasura the crow
+ *   g  rakshasa            d  Maricha, who bolts when you close
+ *   x  Viradha, who rears and charges
+ *   y  Khara, who holds ground and throws spears
+ *   c  Kakasura the crow, who stoops at anyone underneath
  *   R  Ravana     F  goal shrine               I  Sita
+ *
+ * Moving platforms are not tiles -- they are listed per level as
+ * { x, y, w, axis, range, speed, phase } in tile units.
  * ------------------------------------------------------------------ */
 
 var Levels = (function () {
@@ -107,8 +115,9 @@ var Levels = (function () {
     // rather than demanding it from the very edge.
     g.ground(0, 68);            // gap 68-69
     g.ground(70, 45);           // gap 115-116
-    g.ground(117, 46);          // gap 163-164
-    g.ground(165, 49);
+    g.ground(117, 45);          // then a ledge that gives way, 162-167
+    g.rect(162, 13, 6, 1, 'z');
+    g.ground(168, 46);
 
     g.put(16, 9, 'B?BMB');
     g.coins(17, 6, 3);
@@ -119,6 +128,7 @@ var Levels = (function () {
     g.pillar(42, 10);
     g.coins(46, 10, 3);
     g.set(50, 12, 'g');
+    g.set(48, 12, 'g');
     g.pillar(52, 11);
     g.coins(56, 10, 3);
     g.put(60, 9, 'BB?BB');
@@ -127,7 +137,10 @@ var Levels = (function () {
     g.coins(68, 9, 2);
 
     g.put(74, 9, 'BWB');            // the Kodanda, on the main road
-    g.set(78, 12, 'g');
+    g.set(78, 12, 'g');             // three in a row: dive in and chain them
+    g.set(81, 12, 'g');
+    g.set(84, 12, 'g');
+    g.set(90, 12, 'x');             // first charge, with room to run
     g.put(84, 9, 'B??B');
     g.put(84, 6, 'BBBB');
     g.coins(88, 7, 3);
@@ -137,7 +150,9 @@ var Levels = (function () {
     g.set(100, 12, 'g');
     g.rect(101, 8, 4, 1, '=');
     g.set(103, 4, '?');
+    g.set(106, 12, 'y');            // spears, to keep you moving
     g.pillar(109, 10);
+    g.set(112, 12, 'k');            // checkpoint
     g.coins(115, 9, 2);
 
     g.put(120, 9, 'BTB');
@@ -146,8 +161,9 @@ var Levels = (function () {
     g.set(128, 6, 'c');
     g.stair(134, 4, -1);
     g.coins(136, 10, 3);
+    g.set(138, 12, 'J');            // lotus pad up to the high road
     g.put(140, 9, 'B?BB?B');
-    g.set(147, 12, 'g');
+    g.set(147, 12, 'x');
     g.put(150, 9, 'BMB');
     g.set(150, 10, 'c');
     g.set(155, 12, 'g');
@@ -157,6 +173,7 @@ var Levels = (function () {
     g.set(168, 12, 'd');
     g.put(170, 9, 'B?B');
     g.set(174, 12, 'g');
+    g.set(178, 12, 'y');
     g.pillar(176, 10);
     g.put(180, 9, 'BB?BB');
     g.set(182, 5, '?');
@@ -168,6 +185,10 @@ var Levels = (function () {
       id: '1-1', name: 'DANDAKA FOREST', theme: 'forest', music: 'forest',
       time: 320, grid: g.rows(),
       blurb: 'Rama walks south through the great forest.',
+      movers: [
+        { x: 104, y: 5, w: 3, axis: 'v', range: 2.5, speed: 1.1 },
+        { x: 162, y: 10, w: 3, axis: 'h', range: 2.5, speed: 1.3, phase: 1.6 }
+      ],
       rooms: [{
         entry: 28, exitX: 78, startX: 2,
         grid: stepwell(function (r) {
@@ -195,16 +216,20 @@ var Levels = (function () {
     g.well(16, 11);                      // down to the stepwell
     g.stair(19, 3, 1);
 
-    g.rect(26, 11, 14, 1, '=');          // rope bridge
+    g.rect(26, 11, 14, 1, '=');          // rope bridge, rotten in the middle
+    g.rect(33, 11, 4, 1, 'z');
     g.coins(28, 10, 3);
     g.set(31, 8, 'c');
     g.coins(34, 10, 3);
     g.set(37, 8, 'c');
 
     g.put(44, 9, 'B?B?B');
+    g.set(43, 12, 'x');
     g.set(46, 12, 'd');
     g.pillar(52, 10);
+    g.set(49, 12, 'g');
     g.set(56, 12, 'g');
+    g.set(58, 12, 'y');
     g.coins(56, 10, 3);
     g.put(60, 9, 'BBBB');
     g.set(61, 8, 'c');
@@ -216,14 +241,16 @@ var Levels = (function () {
     g.coins(72, 9, 4);
 
     g.put(80, 9, 'BWB');                 // the Kodanda bow
+    g.set(78, 12, 'k');                  // checkpoint
     g.set(84, 12, 'g');
     g.set(86, 12, 'g');
+    g.set(88, 12, 'g');
     g.stair(90, 5, 1);
     g.rect(95, 8, 5, 1, 'S');
     g.coins(95, 7, 5);
     g.set(97, 5, 'c');
     g.stair(104, 5, -1);
-    g.set(107, 12, 'd');
+    g.set(105, 12, 'J');
 
     g.rect(110, 11, 5, 1, '=');
     g.coins(110, 10, 4);
@@ -232,8 +259,10 @@ var Levels = (function () {
     g.coins(117, 9, 4);
 
     g.put(126, 9, 'B?BTB');
+    g.set(124, 12, 'x');
     g.set(131, 12, 'g');
     g.pillar(134, 10);
+    g.set(128, 12, 'd');
     g.coins(137, 10, 4);
     g.coins(137, 11, 4);
     g.pillar(142, 11);
@@ -248,8 +277,10 @@ var Levels = (function () {
     g.coins(161, 10, 4);
 
     g.put(170, 9, 'BMB');
+    g.set(168, 12, 'y');
     g.set(174, 12, 'g');
     g.set(176, 12, 'd');
+    g.set(179, 12, 'g');
     g.rect(180, 10, 5, 1, '=');
     g.coins(180, 9, 5);
     g.set(186, 12, 'g');
@@ -261,6 +292,11 @@ var Levels = (function () {
       id: '1-2', name: 'KISHKINDHA HEIGHTS', theme: 'mountain', music: 'mountain',
       time: 340, grid: g.rows(),
       blurb: 'Across the monkey kingdom, down to the southern sea.',
+      movers: [
+        { x: 67, y: 10, w: 3, axis: 'h', range: 3.5, speed: 1.2 },
+        { x: 111, y: 9, w: 3, axis: 'v', range: 2, speed: 1.4, phase: 0.8 },
+        { x: 154, y: 10, w: 4, axis: 'h', range: 4, speed: 1.0, phase: 2.2 }
+      ],
       rooms: [{
         entry: 16, exitX: 60, startX: 2,
         grid: stepwell(function (r) {
@@ -285,6 +321,7 @@ var Levels = (function () {
     g.put(9, 9, 'BMB');
     g.set(13, 12, 'g');
     g.set(16, 12, 'd');
+    g.set(20, 12, 'x');
     g.coins(18, 10, 4);
     g.put(22, 9, 'B?B');
     g.set(26, 10, 'c');
@@ -297,6 +334,7 @@ var Levels = (function () {
     g.well(39, 11);                      // down to the stepwell
     g.put(42, 9, 'BWB');                 // bow, for anyone who missed it
     g.set(46, 12, 'g');
+    g.set(48, 12, 'y');
     g.set(50, 12, 'd');
     g.pillar(52, 10);
     g.coins(55, 10, 3);
@@ -311,6 +349,7 @@ var Levels = (function () {
     g.coins(72, 9, 4);
 
     g.put(80, 9, 'B?BTB');               // blessing before the hard run
+    g.set(78, 12, 'k');                  // checkpoint
     g.set(86, 12, 'g');
     g.stair(88, 5, 1);
     g.rect(93, 8, 5, 1, 'S');
@@ -318,7 +357,6 @@ var Levels = (function () {
     g.set(95, 5, 'c');
     g.stair(102, 5, -1);
     g.set(104, 12, 'g');
-    g.set(105, 12, 'd');
 
     g.rect(108, 11, 5, 1, '=');
     g.coins(108, 10, 5);
@@ -327,11 +365,15 @@ var Levels = (function () {
     g.set(112, 7, 'c');
 
     g.put(122, 9, 'BMB');
+    g.set(120, 12, 'J');
     g.set(126, 12, 'g');
     g.set(128, 12, 'd');
+    g.set(130, 12, 'g');
     g.pillar(132, 10);
     g.coins(135, 10, 4);
+    g.set(137, 12, 'y');
     g.set(140, 12, 'g');
+    g.set(144, 12, 'x');
     g.put(142, 9, 'BB?BB');
     g.set(144, 5, '?');
     g.set(148, 12, 'd');
@@ -342,7 +384,8 @@ var Levels = (function () {
     g.rect(152, 5, 16, 1, 'S');
     g.pillar(166, 11);
     g.put(156, 9, 'BWB');                // last chance at the bow
-    g.set(160, 12, 'g');
+    g.set(160, 12, 'x');
+    g.set(164, 12, 'g');
     g.set(163, 10, 'c');
 
     // Ravana's court
@@ -356,6 +399,10 @@ var Levels = (function () {
       id: '1-3', name: 'LANKA', theme: 'lanka', music: 'lanka',
       time: 400, grid: g.rows(),
       blurb: 'The island fortress. Ravana waits on his throne.',
+      movers: [
+        { x: 31, y: 10, w: 3, axis: 'h', range: 2.5, speed: 1.3 },
+        { x: 109, y: 9, w: 3, axis: 'v', range: 2, speed: 1.5, phase: 1.1 }
+      ],
       rooms: [{
         entry: 39, exitX: 84, startX: 2,
         grid: stepwell(function (r) {

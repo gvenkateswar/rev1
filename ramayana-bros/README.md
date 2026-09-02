@@ -71,12 +71,28 @@ Against him:
 | | |
 |---|---|
 | **Rakshasas** | forest demons that trudge back and forth. Stomp them. |
-| **Maricha** | the golden deer. Stomp him once and he curls up; kick the curled deer and he scythes through everything in his path — including Rama on the way back. |
-| **Kakasura** | crow demons that circle in the air. Stompable, but they sit exactly where you want to jump. |
+| **Viradha** | rears where you can see it coming, then charges. Wait for him to run himself into a wall, or meet him from above. |
+| **Khara** | holds his ground and throws spears down the road. Standing still is the one thing that will not work. |
+| **Maricha** | the golden deer, who bolts the moment you close — he is a lure, and chasing him is how you end up somewhere you did not mean to be. Corner him and he curls up; kick the curled deer and he scythes through everything in his path, including Rama on the way back. |
+| **Kakasura** | crow demons that circle in the air and stoop at anyone who walks underneath. |
 | **Ravana** | the ten-headed king of Lanka. Six hits — arrows, a stomp on the heads, or a kicked deer — and his ward over the ashoka grove falls. Then reach Sita. |
+
+**Stomps chain.** Land on a second demon before touching the ground and
+it pays 200, then 400, 800, 1000, and on up — eight without landing is an
+extra life. Each stage sets out rows of them for exactly that, which is
+the reason to dive into a group rather than pick round it.
 
 Coins are worth 200 and every hundred of them is an extra life; the clock
 pays out 50 a tick at the shrine that ends each stage.
+
+## The road itself
+
+| | |
+|---|---|
+| **Lotus pads** | spring Rama six tiles up, onto roads you cannot otherwise reach |
+| **Moving platforms** | slabs of temple stone that carry him across open water and up to high ledges |
+| **Crumbling ledges** | cracked stone that gives way a moment after it takes his weight — a rotten span of the Kishkindha rope bridge, and a whole crossing in Dandaka you have to take at a run |
+| **Checkpoint banners** | pass one and it catches light; die after that and you begin again from the banner rather than the start |
 
 ## The three kandas
 

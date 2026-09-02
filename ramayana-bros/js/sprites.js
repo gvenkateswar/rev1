@@ -44,7 +44,9 @@ var Sprites = (function () {
     wood:   ['#3a2410', '#5c3a18', '#8b5a2b', '#b8834a', '#d9a86e'],
     stone:  ['#3f3a44', '#6a6470', '#9a939f', '#c0b9c4', '#e4dee6'],
     sand:   ['#7a6a44', '#a8956a', '#cfc092', '#e8dcbc', '#faf2dc'],
-    flame:  ['#8a2000', '#d04a08', '#ff8a2b', '#ffc23d', '#fff0b0']
+    flame:  ['#8a2000', '#d04a08', '#ff8a2b', '#ffc23d', '#fff0b0'],
+    brute:  ['#3a0f0c', '#5e1c18', '#8f2f24', '#bb5340', '#dd8068'],
+    guard:  ['#14202e', '#263c52', '#3f6182', '#6a90b0', '#9cbcd6']
   };
 
   var INK = '#0b0812';                 // the keyline every character wears
@@ -314,6 +316,116 @@ var Sprites = (function () {
     var key = 'g' + (frame % 2) + (dir < 0 ? 1 : 0) + (squashed ? 's' : 'n');
     blit(ctx, stamp(key, 16, 16, true, function (c, ox, oy) {
       paintRakshasa(c, ox, oy, frame, dir, squashed);
+    }), x, y);
+  }
+
+  /* ============================ Viradha, the charger ============================ */
+
+  function paintCharger(c, ox, oy, frame, dir, squashed, winding) {
+    var r = pen(c, ox, oy, 18, dir < 0);
+    var B = R.brute;
+    if (squashed) {
+      r(1, 11, 16, 5, B[1]);
+      r(1, 11, 16, 1, B[2]);
+      r(2, 9, 14, 2, B[2]);
+      r(1, 9, 2, 2, R.bone[3]); r(15, 9, 2, 2, R.bone[3]);
+      r(4, 12, 3, 1, R.flame[3]); r(11, 12, 3, 1, R.flame[3]);
+      return;
+    }
+    var lift = winding ? 2 : 0;                 // rears back before it runs
+    // horns, swept forward
+    r(12, 2 - lift, 5, 2, R.bone[3]);
+    r(16, 1 - lift, 2, 2, R.bone[4]);
+    r(12, 5 - lift, 5, 2, R.bone[2]);
+    r(16, 5 - lift, 2, 2, R.bone[3]);
+    // low slung body
+    r(2, 5, 14, 9, B[2]);
+    r(1, 7, 16, 6, B[2]);
+    r(3, 5, 12, 1, B[3]);
+    r(1, 7, 1, 5, B[3]);
+    r(2, 6, 12, 1, B[4]);
+    r(16, 7, 1, 6, B[0]);
+    r(2, 12, 14, 2, B[1]);
+    r(3, 13, 12, 1, B[0]);
+    // head lowered to ram
+    r(10, 4 - lift, 7, 6, B[1]);
+    r(10, 4 - lift, 7, 1, B[3]);
+    r(11, 6 - lift, 3, 2, winding ? R.flame[4] : R.flame[3]);
+    r(12, 7 - lift, 1, 1, R.hair[0]);
+    r(10, 9 - lift, 6, 1, '#2a0a10');
+    r(11, 9 - lift, 1, 1, R.white[4]); r(14, 9 - lift, 1, 1, R.white[4]);
+    // legs
+    var f = frame % 2;
+    var lx = f ? 2 : 3, rx = f ? 11 : 10;
+    r(lx, 14, 5, 4, B[1]);
+    r(rx, 14, 5, 4, B[1]);
+    r(lx, 14, 5, 1, B[2]); r(rx, 14, 5, 1, B[2]);
+    r(lx, 17, 5, 1, B[0]); r(rx, 17, 5, 1, B[0]);
+    if (winding) { r(0, 8, 2, 2, R.flame[2]); r(0, 11, 2, 2, R.flame[3]); }
+  }
+
+  function drawCharger(ctx, x, y, frame, dir, squashed, winding) {
+    var key = 'x' + (frame % 2) + (dir < 0 ? 1 : 0) + (squashed ? 's' : (winding ? 'w' : 'n'));
+    blit(ctx, stamp(key, 18, 18, true, function (c, ox, oy) {
+      paintCharger(c, ox, oy, frame, dir, squashed, winding);
+    }), x, y);
+  }
+
+  /* ============================ Khara, the spearman ============================ */
+
+  function paintSpearman(c, ox, oy, frame, dir, winding) {
+    var r = pen(c, ox, oy, 16, dir < 0);
+    var G2 = R.guard;
+    // helmet with a crest
+    r(4, 0, 8, 4, G2[2]);
+    r(5, 0, 6, 1, G2[4]);
+    r(4, 3, 8, 1, G2[0]);
+    r(7, -1, 2, 2, R.red[2]);
+    // face in shadow under the brim
+    r(5, 4, 7, 4, R.demon[1]);
+    r(5, 4, 7, 1, R.demon[0]);
+    r(9, 5, 2, 2, R.flame[3]);
+    r(10, 6, 1, 1, R.hair[0]);
+    r(6, 7, 5, 1, '#160810');
+    // body
+    limb(r, 3, 8, 10, 8, G2);
+    r(3, 8, 10, 1, G2[3]);
+    r(4, 10, 8, 1, G2[4]);
+    r(3, 15, 10, 1, G2[0]);
+    r(5, 11, 6, 3, R.gold[2]);                 // breastplate boss
+    r(5, 11, 6, 1, R.gold[3]);
+    // arm and spear, cocked when winding up
+    var sx = winding ? 1 : 8, sy = winding ? 4 : 1;
+    limb(r, 12, 9, 3, 4, R.demon);
+    r(sx, sy, 2, 16, R.wood[2]);
+    r(sx, sy, 1, 16, R.wood[3]);
+    r(sx - 1, sy - 4, 4, 5, R.steel[3]);
+    r(sx, sy - 4, 2, 1, R.steel[4]);
+    r(sx - 1, sy + 1, 4, 1, R.steel[1]);
+    // legs
+    var f = frame % 2;
+    limb(r, 4, 16, 3, 6, G2);
+    limb(r, 9, 16, 3, 6, G2);
+    r(3 + (f ? 0 : 1), 21, 4, 1, G2[0]);
+    r(9, 21, 4, 1, G2[0]);
+  }
+
+  function drawSpearman(ctx, x, y, frame, dir, winding) {
+    var key = 'y' + (frame % 2) + (dir < 0 ? 1 : 0) + (winding ? 'w' : 'n');
+    blit(ctx, stamp(key, 16, 22, true, function (c, ox, oy) {
+      paintSpearman(c, ox, oy, frame, dir, winding);
+    }), x, y);
+  }
+
+  function drawSpear(ctx, x, y, dir) {
+    blit(ctx, stamp('sp' + (dir < 0 ? 1 : 0), 14, 6, true, function (c, ox, oy) {
+      var r = pen(c, ox, oy, 14, dir < 0);
+      r(0, 2, 10, 2, R.wood[2]);
+      r(0, 2, 10, 1, R.wood[3]);
+      r(9, 1, 5, 4, R.steel[3]);
+      r(9, 1, 5, 1, R.steel[4]);
+      r(9, 4, 5, 1, R.steel[1]);
+      r(1, 1, 2, 1, R.red[2]); r(1, 4, 2, 1, R.red[2]);
     }), x, y);
   }
 
@@ -827,6 +939,42 @@ var Sprites = (function () {
         }
         break;
 
+      case 'J': {
+        // lotus pad: springs Rama up when he lands on it
+        var squash = !!(nb & 4);
+        var top = squash ? 8 : 2;
+        r(1, top + 5, 14, 11 - top, R.sari[1]);
+        r(1, top + 5, 14, 1, R.sari[3]);
+        r(2, top, 12, 6, R.sari[2]);
+        r(3, top, 10, 1, R.sari[4]);
+        r(2, top + 5, 12, 1, R.sari[0]);
+        var pink = ['#8a2050', '#c03a72', '#e86a9c', '#ff9cc0', '#ffd0e0'];
+        r(5, top - 2, 6, 3, pink[2]);
+        r(3, top, 3, 2, pink[1]); r(10, top, 3, 2, pink[1]);
+        r(6, top - 3, 4, 2, pink[3]);
+        r(7, top - 2, 2, 1, R.gold[3]);
+        if (!squash) { r(1, 13, 14, 3, R.sari[0]); r(2, 15, 12, 1, R.hair[1]); }
+        break;
+      }
+      case 'z': {
+        // a ledge that is already coming apart
+        var shake = !!(nb & 4);
+        var o = shake ? ((ph & 1) ? 1 : -1) : 0;
+        r(o, 0, 16, 14, T.stone[2]);
+        r(o, 0, 16, 1, T.stone[4]);
+        r(o, 13, 16, 1, T.stone[0]);
+        r(o + 15, 0, 1, 14, T.stone[1]);
+        r(o + 3, 2, 1, 5, T.stone[0]); r(o + 4, 6, 1, 4, T.stone[0]);
+        r(o + 9, 1, 1, 4, T.stone[0]); r(o + 8, 5, 1, 6, T.stone[0]);
+        r(o + 12, 7, 1, 6, T.stone[0]);
+        r(o + 2, 3, 1, 3, T.stone[4]); r(o + 10, 2, 1, 3, T.stone[4]);
+        if (shake) {
+          r(o + 1, 14, 3, 2, T.stone[1]);
+          r(o + 7, 14, 2, 2, T.stone[1]);
+          r(o + 12, 14, 3, 2, T.stone[1]);
+        }
+        break;
+      }
       case '~':
         var deep = theme === 'lanka' ? ['#5e0f06', '#8e1f12', '#c8321e'] : ['#0f2f66', '#1e4f9c', '#2f6fd0'];
         var crest = theme === 'lanka' ? R.flame[2] : '#5fa0f0';
@@ -869,6 +1017,57 @@ var Sprites = (function () {
       r(0, 5, 6, 1, T.brick[0]);
       r(rot % 2 ? 1 : 4, 1, 1, 4, T.brick[1]);
     }), x, y);
+  }
+
+  /* A moving platform: a slab of temple stone on a chain of lotus. */
+  function drawMover(ctx, x, y, w, phase) {
+    var key = 'mv' + w + (phase & 3);
+    blit(ctx, stamp(key, w, 10, true, function (c, ox, oy) {
+      var r = pen(c, ox, oy, w, false);
+      r(0, 0, w, 7, R.sand[2]);
+      r(0, 0, w, 1, R.sand[4]);
+      r(0, 1, w, 1, R.sand[3]);
+      r(0, 6, w, 1, R.sand[0]);
+      r(0, 0, 1, 7, R.sand[3]);
+      r(w - 1, 0, 1, 7, R.sand[1]);
+      for (var i = 4; i < w - 4; i += 8) {
+        r(i, 2, 3, 3, R.gold[2]);
+        r(i, 2, 3, 1, R.gold[3]);
+      }
+      r(2, 7, 3, 3, R.sand[1]); r(w - 5, 7, 3, 3, R.sand[1]);
+      r(2, 9, 3, 1, R.sand[0]); r(w - 5, 9, 3, 1, R.sand[0]);
+    }), x, y);
+  }
+
+  /* Checkpoint banner, drawn standing on its tile. */
+  function drawBanner(ctx, x, y, lit, t) {
+    if (lit) {
+      var g = ctx.createRadialGradient(x + 8, y - 26, 2, x + 8, y - 26, 30);
+      g.addColorStop(0, 'rgba(255,208,66,0.30)');
+      g.addColorStop(1, 'rgba(255,150,40,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(x - 22, y - 56, 60, 60);
+    }
+    var wave = lit ? Math.round(Math.sin(t / 7) * 1.5) : 0;
+    blit(ctx, stamp('bn' + (lit ? 'l' + ((t >> 3) % 3) : 'd'), 16, 44, true, function (c, ox, oy) {
+      var r = pen(c, ox, oy, 16, false);
+      r(6, 40, 5, 4, R.sand[1]);
+      r(6, 40, 5, 1, R.sand[3]);
+      r(7, 2, 2, 40, R.wood[2]);
+      r(7, 2, 1, 40, R.wood[3]);
+      r(6, 0, 4, 3, lit ? R.gold[3] : R.steel[2]);
+      r(6, 0, 4, 1, lit ? R.gold[4] : R.steel[3]);
+      if (lit) {
+        r(9, 5 + wave, 7, 11, R.red[2]);
+        r(9, 5 + wave, 7, 1, R.red[3]);
+        r(9, 15 + wave, 7, 1, R.red[0]);
+        r(11, 8 + wave, 4, 2, R.gold[3]);
+        r(12, 11 + wave, 2, 2, R.gold[3]);
+      } else {
+        r(9, 6, 3, 12, R.steel[1]);
+        r(9, 6, 3, 1, R.steel[2]);
+      }
+    }), x, y - 44);
   }
 
   /* ============================ the goal shrine ============================ */
@@ -1205,6 +1404,9 @@ var Sprites = (function () {
     heroSize: heroSize,
     hero: drawHero,
     rakshasa: drawRakshasa,
+    charger: drawCharger,
+    spearman: drawSpearman,
+    spear: drawSpear,
     deer: drawDeer,
     shell: drawDeerShell,
     crow: drawCrow,
@@ -1217,6 +1419,8 @@ var Sprites = (function () {
     arrow: drawArrow,
     fireball: drawFireball,
     tile: drawTile,
+    mover: drawMover,
+    banner: drawBanner,
     chunk: drawChunk,
     shrine: drawShrine,
     background: background

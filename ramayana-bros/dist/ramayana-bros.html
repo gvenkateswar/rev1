@@ -236,6 +236,18 @@ var Sound = (function () {
     bossRoar:  function () { note({ freq: 110, to: 55, dur: 0.7, type: 'sawtooth', vol: 0.28 });
                              noise({ freq: 300, to: 80, dur: 0.7, vol: 0.25, filter: 'lowpass' }); },
     fire:      function () { noise({ freq: 1200, to: 400, dur: 0.18, vol: 0.16 }); },
+    charge:    function () { note({ freq: 90, to: 220, dur: 0.26, type: 'sawtooth', vol: 0.24, slide: 'linear' });
+                             noise({ freq: 400, to: 120, dur: 0.26, vol: 0.18, filter: 'lowpass' }); },
+    spear:     function () { note({ freq: 900, to: 260, dur: 0.14, type: 'square', vol: 0.16 });
+                             noise({ freq: 1800, to: 700, dur: 0.1, vol: 0.12 }); },
+    /* each stomp in a chain rings a step higher than the last */
+    chain:     function (n) { note({ freq: 523 * Math.pow(1.122, Math.min(n, 8) * 2),
+                             dur: 0.1, vol: 0.22, type: 'square' }); },
+    spring:    function () { note({ freq: 300, to: 1100, dur: 0.18, type: 'square', vol: 0.22, slide: 'linear' }); },
+    crumble:   function () { noise({ freq: 900, to: 200, dur: 0.3, vol: 0.24, filter: 'lowpass' }); },
+    checkpoint:function () { var s = [523, 784, 1047];
+                             for (var i = 0; i < s.length; i++)
+                               note({ freq: s[i], dur: 0.16, vol: 0.22, delay: i * 0.09, type: 'triangle' }); },
     pipe:      function () { note({ freq: 620, to: 130, dur: 0.34, type: 'square', vol: 0.22, slide: 'linear' });
                              noise({ freq: 700, to: 160, dur: 0.34, vol: 0.14, filter: 'lowpass' }); },
     pause:     function () { note({ freq: 660, dur: 0.08, vol: 0.18, type: 'square' });
@@ -395,7 +407,9 @@ var Sprites = (function () {
     wood:   ['#3a2410', '#5c3a18', '#8b5a2b', '#b8834a', '#d9a86e'],
     stone:  ['#3f3a44', '#6a6470', '#9a939f', '#c0b9c4', '#e4dee6'],
     sand:   ['#7a6a44', '#a8956a', '#cfc092', '#e8dcbc', '#faf2dc'],
-    flame:  ['#8a2000', '#d04a08', '#ff8a2b', '#ffc23d', '#fff0b0']
+    flame:  ['#8a2000', '#d04a08', '#ff8a2b', '#ffc23d', '#fff0b0'],
+    brute:  ['#3a0f0c', '#5e1c18', '#8f2f24', '#bb5340', '#dd8068'],
+    guard:  ['#14202e', '#263c52', '#3f6182', '#6a90b0', '#9cbcd6']
   };
 
   var INK = '#0b0812';                 // the keyline every character wears
@@ -665,6 +679,116 @@ var Sprites = (function () {
     var key = 'g' + (frame % 2) + (dir < 0 ? 1 : 0) + (squashed ? 's' : 'n');
     blit(ctx, stamp(key, 16, 16, true, function (c, ox, oy) {
       paintRakshasa(c, ox, oy, frame, dir, squashed);
+    }), x, y);
+  }
+
+  /* ============================ Viradha, the charger ============================ */
+
+  function paintCharger(c, ox, oy, frame, dir, squashed, winding) {
+    var r = pen(c, ox, oy, 18, dir < 0);
+    var B = R.brute;
+    if (squashed) {
+      r(1, 11, 16, 5, B[1]);
+      r(1, 11, 16, 1, B[2]);
+      r(2, 9, 14, 2, B[2]);
+      r(1, 9, 2, 2, R.bone[3]); r(15, 9, 2, 2, R.bone[3]);
+      r(4, 12, 3, 1, R.flame[3]); r(11, 12, 3, 1, R.flame[3]);
+      return;
+    }
+    var lift = winding ? 2 : 0;                 // rears back before it runs
+    // horns, swept forward
+    r(12, 2 - lift, 5, 2, R.bone[3]);
+    r(16, 1 - lift, 2, 2, R.bone[4]);
+    r(12, 5 - lift, 5, 2, R.bone[2]);
+    r(16, 5 - lift, 2, 2, R.bone[3]);
+    // low slung body
+    r(2, 5, 14, 9, B[2]);
+    r(1, 7, 16, 6, B[2]);
+    r(3, 5, 12, 1, B[3]);
+    r(1, 7, 1, 5, B[3]);
+    r(2, 6, 12, 1, B[4]);
+    r(16, 7, 1, 6, B[0]);
+    r(2, 12, 14, 2, B[1]);
+    r(3, 13, 12, 1, B[0]);
+    // head lowered to ram
+    r(10, 4 - lift, 7, 6, B[1]);
+    r(10, 4 - lift, 7, 1, B[3]);
+    r(11, 6 - lift, 3, 2, winding ? R.flame[4] : R.flame[3]);
+    r(12, 7 - lift, 1, 1, R.hair[0]);
+    r(10, 9 - lift, 6, 1, '#2a0a10');
+    r(11, 9 - lift, 1, 1, R.white[4]); r(14, 9 - lift, 1, 1, R.white[4]);
+    // legs
+    var f = frame % 2;
+    var lx = f ? 2 : 3, rx = f ? 11 : 10;
+    r(lx, 14, 5, 4, B[1]);
+    r(rx, 14, 5, 4, B[1]);
+    r(lx, 14, 5, 1, B[2]); r(rx, 14, 5, 1, B[2]);
+    r(lx, 17, 5, 1, B[0]); r(rx, 17, 5, 1, B[0]);
+    if (winding) { r(0, 8, 2, 2, R.flame[2]); r(0, 11, 2, 2, R.flame[3]); }
+  }
+
+  function drawCharger(ctx, x, y, frame, dir, squashed, winding) {
+    var key = 'x' + (frame % 2) + (dir < 0 ? 1 : 0) + (squashed ? 's' : (winding ? 'w' : 'n'));
+    blit(ctx, stamp(key, 18, 18, true, function (c, ox, oy) {
+      paintCharger(c, ox, oy, frame, dir, squashed, winding);
+    }), x, y);
+  }
+
+  /* ============================ Khara, the spearman ============================ */
+
+  function paintSpearman(c, ox, oy, frame, dir, winding) {
+    var r = pen(c, ox, oy, 16, dir < 0);
+    var G2 = R.guard;
+    // helmet with a crest
+    r(4, 0, 8, 4, G2[2]);
+    r(5, 0, 6, 1, G2[4]);
+    r(4, 3, 8, 1, G2[0]);
+    r(7, -1, 2, 2, R.red[2]);
+    // face in shadow under the brim
+    r(5, 4, 7, 4, R.demon[1]);
+    r(5, 4, 7, 1, R.demon[0]);
+    r(9, 5, 2, 2, R.flame[3]);
+    r(10, 6, 1, 1, R.hair[0]);
+    r(6, 7, 5, 1, '#160810');
+    // body
+    limb(r, 3, 8, 10, 8, G2);
+    r(3, 8, 10, 1, G2[3]);
+    r(4, 10, 8, 1, G2[4]);
+    r(3, 15, 10, 1, G2[0]);
+    r(5, 11, 6, 3, R.gold[2]);                 // breastplate boss
+    r(5, 11, 6, 1, R.gold[3]);
+    // arm and spear, cocked when winding up
+    var sx = winding ? 1 : 8, sy = winding ? 4 : 1;
+    limb(r, 12, 9, 3, 4, R.demon);
+    r(sx, sy, 2, 16, R.wood[2]);
+    r(sx, sy, 1, 16, R.wood[3]);
+    r(sx - 1, sy - 4, 4, 5, R.steel[3]);
+    r(sx, sy - 4, 2, 1, R.steel[4]);
+    r(sx - 1, sy + 1, 4, 1, R.steel[1]);
+    // legs
+    var f = frame % 2;
+    limb(r, 4, 16, 3, 6, G2);
+    limb(r, 9, 16, 3, 6, G2);
+    r(3 + (f ? 0 : 1), 21, 4, 1, G2[0]);
+    r(9, 21, 4, 1, G2[0]);
+  }
+
+  function drawSpearman(ctx, x, y, frame, dir, winding) {
+    var key = 'y' + (frame % 2) + (dir < 0 ? 1 : 0) + (winding ? 'w' : 'n');
+    blit(ctx, stamp(key, 16, 22, true, function (c, ox, oy) {
+      paintSpearman(c, ox, oy, frame, dir, winding);
+    }), x, y);
+  }
+
+  function drawSpear(ctx, x, y, dir) {
+    blit(ctx, stamp('sp' + (dir < 0 ? 1 : 0), 14, 6, true, function (c, ox, oy) {
+      var r = pen(c, ox, oy, 14, dir < 0);
+      r(0, 2, 10, 2, R.wood[2]);
+      r(0, 2, 10, 1, R.wood[3]);
+      r(9, 1, 5, 4, R.steel[3]);
+      r(9, 1, 5, 1, R.steel[4]);
+      r(9, 4, 5, 1, R.steel[1]);
+      r(1, 1, 2, 1, R.red[2]); r(1, 4, 2, 1, R.red[2]);
     }), x, y);
   }
 
@@ -1178,6 +1302,42 @@ var Sprites = (function () {
         }
         break;
 
+      case 'J': {
+        // lotus pad: springs Rama up when he lands on it
+        var squash = !!(nb & 4);
+        var top = squash ? 8 : 2;
+        r(1, top + 5, 14, 11 - top, R.sari[1]);
+        r(1, top + 5, 14, 1, R.sari[3]);
+        r(2, top, 12, 6, R.sari[2]);
+        r(3, top, 10, 1, R.sari[4]);
+        r(2, top + 5, 12, 1, R.sari[0]);
+        var pink = ['#8a2050', '#c03a72', '#e86a9c', '#ff9cc0', '#ffd0e0'];
+        r(5, top - 2, 6, 3, pink[2]);
+        r(3, top, 3, 2, pink[1]); r(10, top, 3, 2, pink[1]);
+        r(6, top - 3, 4, 2, pink[3]);
+        r(7, top - 2, 2, 1, R.gold[3]);
+        if (!squash) { r(1, 13, 14, 3, R.sari[0]); r(2, 15, 12, 1, R.hair[1]); }
+        break;
+      }
+      case 'z': {
+        // a ledge that is already coming apart
+        var shake = !!(nb & 4);
+        var o = shake ? ((ph & 1) ? 1 : -1) : 0;
+        r(o, 0, 16, 14, T.stone[2]);
+        r(o, 0, 16, 1, T.stone[4]);
+        r(o, 13, 16, 1, T.stone[0]);
+        r(o + 15, 0, 1, 14, T.stone[1]);
+        r(o + 3, 2, 1, 5, T.stone[0]); r(o + 4, 6, 1, 4, T.stone[0]);
+        r(o + 9, 1, 1, 4, T.stone[0]); r(o + 8, 5, 1, 6, T.stone[0]);
+        r(o + 12, 7, 1, 6, T.stone[0]);
+        r(o + 2, 3, 1, 3, T.stone[4]); r(o + 10, 2, 1, 3, T.stone[4]);
+        if (shake) {
+          r(o + 1, 14, 3, 2, T.stone[1]);
+          r(o + 7, 14, 2, 2, T.stone[1]);
+          r(o + 12, 14, 3, 2, T.stone[1]);
+        }
+        break;
+      }
       case '~':
         var deep = theme === 'lanka' ? ['#5e0f06', '#8e1f12', '#c8321e'] : ['#0f2f66', '#1e4f9c', '#2f6fd0'];
         var crest = theme === 'lanka' ? R.flame[2] : '#5fa0f0';
@@ -1220,6 +1380,57 @@ var Sprites = (function () {
       r(0, 5, 6, 1, T.brick[0]);
       r(rot % 2 ? 1 : 4, 1, 1, 4, T.brick[1]);
     }), x, y);
+  }
+
+  /* A moving platform: a slab of temple stone on a chain of lotus. */
+  function drawMover(ctx, x, y, w, phase) {
+    var key = 'mv' + w + (phase & 3);
+    blit(ctx, stamp(key, w, 10, true, function (c, ox, oy) {
+      var r = pen(c, ox, oy, w, false);
+      r(0, 0, w, 7, R.sand[2]);
+      r(0, 0, w, 1, R.sand[4]);
+      r(0, 1, w, 1, R.sand[3]);
+      r(0, 6, w, 1, R.sand[0]);
+      r(0, 0, 1, 7, R.sand[3]);
+      r(w - 1, 0, 1, 7, R.sand[1]);
+      for (var i = 4; i < w - 4; i += 8) {
+        r(i, 2, 3, 3, R.gold[2]);
+        r(i, 2, 3, 1, R.gold[3]);
+      }
+      r(2, 7, 3, 3, R.sand[1]); r(w - 5, 7, 3, 3, R.sand[1]);
+      r(2, 9, 3, 1, R.sand[0]); r(w - 5, 9, 3, 1, R.sand[0]);
+    }), x, y);
+  }
+
+  /* Checkpoint banner, drawn standing on its tile. */
+  function drawBanner(ctx, x, y, lit, t) {
+    if (lit) {
+      var g = ctx.createRadialGradient(x + 8, y - 26, 2, x + 8, y - 26, 30);
+      g.addColorStop(0, 'rgba(255,208,66,0.30)');
+      g.addColorStop(1, 'rgba(255,150,40,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(x - 22, y - 56, 60, 60);
+    }
+    var wave = lit ? Math.round(Math.sin(t / 7) * 1.5) : 0;
+    blit(ctx, stamp('bn' + (lit ? 'l' + ((t >> 3) % 3) : 'd'), 16, 44, true, function (c, ox, oy) {
+      var r = pen(c, ox, oy, 16, false);
+      r(6, 40, 5, 4, R.sand[1]);
+      r(6, 40, 5, 1, R.sand[3]);
+      r(7, 2, 2, 40, R.wood[2]);
+      r(7, 2, 1, 40, R.wood[3]);
+      r(6, 0, 4, 3, lit ? R.gold[3] : R.steel[2]);
+      r(6, 0, 4, 1, lit ? R.gold[4] : R.steel[3]);
+      if (lit) {
+        r(9, 5 + wave, 7, 11, R.red[2]);
+        r(9, 5 + wave, 7, 1, R.red[3]);
+        r(9, 15 + wave, 7, 1, R.red[0]);
+        r(11, 8 + wave, 4, 2, R.gold[3]);
+        r(12, 11 + wave, 2, 2, R.gold[3]);
+      } else {
+        r(9, 6, 3, 12, R.steel[1]);
+        r(9, 6, 3, 1, R.steel[2]);
+      }
+    }), x, y - 44);
   }
 
   /* ============================ the goal shrine ============================ */
@@ -1556,6 +1767,9 @@ var Sprites = (function () {
     heroSize: heroSize,
     hero: drawHero,
     rakshasa: drawRakshasa,
+    charger: drawCharger,
+    spearman: drawSpearman,
+    spear: drawSpear,
     deer: drawDeer,
     shell: drawDeerShell,
     crow: drawCrow,
@@ -1568,6 +1782,8 @@ var Sprites = (function () {
     arrow: drawArrow,
     fireball: drawFireball,
     tile: drawTile,
+    mover: drawMover,
+    banner: drawBanner,
     chunk: drawChunk,
     shrine: drawShrine,
     background: background
@@ -1599,9 +1815,17 @@ var Sprites = (function () {
  *   ~  water / molten rock (deadly)
  *   G  Ravana's ward (solid until the demon king falls)
  *   D  mouth of a stepwell (press down on it)   E  archway back up
+ *   J  lotus pad (springs you high)   z  ledge that gives way
+ *   k  checkpoint banner
  *   o  loose coin
- *   g  rakshasa   d  Maricha the golden deer   c  Kakasura the crow
+ *   g  rakshasa            d  Maricha, who bolts when you close
+ *   x  Viradha, who rears and charges
+ *   y  Khara, who holds ground and throws spears
+ *   c  Kakasura the crow, who stoops at anyone underneath
  *   R  Ravana     F  goal shrine               I  Sita
+ *
+ * Moving platforms are not tiles -- they are listed per level as
+ * { x, y, w, axis, range, speed, phase } in tile units.
  * ------------------------------------------------------------------ */
 
 var Levels = (function () {
@@ -1684,8 +1908,9 @@ var Levels = (function () {
     // rather than demanding it from the very edge.
     g.ground(0, 68);            // gap 68-69
     g.ground(70, 45);           // gap 115-116
-    g.ground(117, 46);          // gap 163-164
-    g.ground(165, 49);
+    g.ground(117, 45);          // then a ledge that gives way, 162-167
+    g.rect(162, 13, 6, 1, 'z');
+    g.ground(168, 46);
 
     g.put(16, 9, 'B?BMB');
     g.coins(17, 6, 3);
@@ -1696,6 +1921,7 @@ var Levels = (function () {
     g.pillar(42, 10);
     g.coins(46, 10, 3);
     g.set(50, 12, 'g');
+    g.set(48, 12, 'g');
     g.pillar(52, 11);
     g.coins(56, 10, 3);
     g.put(60, 9, 'BB?BB');
@@ -1704,7 +1930,10 @@ var Levels = (function () {
     g.coins(68, 9, 2);
 
     g.put(74, 9, 'BWB');            // the Kodanda, on the main road
-    g.set(78, 12, 'g');
+    g.set(78, 12, 'g');             // three in a row: dive in and chain them
+    g.set(81, 12, 'g');
+    g.set(84, 12, 'g');
+    g.set(90, 12, 'x');             // first charge, with room to run
     g.put(84, 9, 'B??B');
     g.put(84, 6, 'BBBB');
     g.coins(88, 7, 3);
@@ -1714,7 +1943,9 @@ var Levels = (function () {
     g.set(100, 12, 'g');
     g.rect(101, 8, 4, 1, '=');
     g.set(103, 4, '?');
+    g.set(106, 12, 'y');            // spears, to keep you moving
     g.pillar(109, 10);
+    g.set(112, 12, 'k');            // checkpoint
     g.coins(115, 9, 2);
 
     g.put(120, 9, 'BTB');
@@ -1723,8 +1954,9 @@ var Levels = (function () {
     g.set(128, 6, 'c');
     g.stair(134, 4, -1);
     g.coins(136, 10, 3);
+    g.set(138, 12, 'J');            // lotus pad up to the high road
     g.put(140, 9, 'B?BB?B');
-    g.set(147, 12, 'g');
+    g.set(147, 12, 'x');
     g.put(150, 9, 'BMB');
     g.set(150, 10, 'c');
     g.set(155, 12, 'g');
@@ -1734,6 +1966,7 @@ var Levels = (function () {
     g.set(168, 12, 'd');
     g.put(170, 9, 'B?B');
     g.set(174, 12, 'g');
+    g.set(178, 12, 'y');
     g.pillar(176, 10);
     g.put(180, 9, 'BB?BB');
     g.set(182, 5, '?');
@@ -1745,6 +1978,10 @@ var Levels = (function () {
       id: '1-1', name: 'DANDAKA FOREST', theme: 'forest', music: 'forest',
       time: 320, grid: g.rows(),
       blurb: 'Rama walks south through the great forest.',
+      movers: [
+        { x: 104, y: 5, w: 3, axis: 'v', range: 2.5, speed: 1.1 },
+        { x: 162, y: 10, w: 3, axis: 'h', range: 2.5, speed: 1.3, phase: 1.6 }
+      ],
       rooms: [{
         entry: 28, exitX: 78, startX: 2,
         grid: stepwell(function (r) {
@@ -1772,16 +2009,20 @@ var Levels = (function () {
     g.well(16, 11);                      // down to the stepwell
     g.stair(19, 3, 1);
 
-    g.rect(26, 11, 14, 1, '=');          // rope bridge
+    g.rect(26, 11, 14, 1, '=');          // rope bridge, rotten in the middle
+    g.rect(33, 11, 4, 1, 'z');
     g.coins(28, 10, 3);
     g.set(31, 8, 'c');
     g.coins(34, 10, 3);
     g.set(37, 8, 'c');
 
     g.put(44, 9, 'B?B?B');
+    g.set(43, 12, 'x');
     g.set(46, 12, 'd');
     g.pillar(52, 10);
+    g.set(49, 12, 'g');
     g.set(56, 12, 'g');
+    g.set(58, 12, 'y');
     g.coins(56, 10, 3);
     g.put(60, 9, 'BBBB');
     g.set(61, 8, 'c');
@@ -1793,14 +2034,16 @@ var Levels = (function () {
     g.coins(72, 9, 4);
 
     g.put(80, 9, 'BWB');                 // the Kodanda bow
+    g.set(78, 12, 'k');                  // checkpoint
     g.set(84, 12, 'g');
     g.set(86, 12, 'g');
+    g.set(88, 12, 'g');
     g.stair(90, 5, 1);
     g.rect(95, 8, 5, 1, 'S');
     g.coins(95, 7, 5);
     g.set(97, 5, 'c');
     g.stair(104, 5, -1);
-    g.set(107, 12, 'd');
+    g.set(105, 12, 'J');
 
     g.rect(110, 11, 5, 1, '=');
     g.coins(110, 10, 4);
@@ -1809,8 +2052,10 @@ var Levels = (function () {
     g.coins(117, 9, 4);
 
     g.put(126, 9, 'B?BTB');
+    g.set(124, 12, 'x');
     g.set(131, 12, 'g');
     g.pillar(134, 10);
+    g.set(128, 12, 'd');
     g.coins(137, 10, 4);
     g.coins(137, 11, 4);
     g.pillar(142, 11);
@@ -1825,8 +2070,10 @@ var Levels = (function () {
     g.coins(161, 10, 4);
 
     g.put(170, 9, 'BMB');
+    g.set(168, 12, 'y');
     g.set(174, 12, 'g');
     g.set(176, 12, 'd');
+    g.set(179, 12, 'g');
     g.rect(180, 10, 5, 1, '=');
     g.coins(180, 9, 5);
     g.set(186, 12, 'g');
@@ -1838,6 +2085,11 @@ var Levels = (function () {
       id: '1-2', name: 'KISHKINDHA HEIGHTS', theme: 'mountain', music: 'mountain',
       time: 340, grid: g.rows(),
       blurb: 'Across the monkey kingdom, down to the southern sea.',
+      movers: [
+        { x: 67, y: 10, w: 3, axis: 'h', range: 3.5, speed: 1.2 },
+        { x: 111, y: 9, w: 3, axis: 'v', range: 2, speed: 1.4, phase: 0.8 },
+        { x: 154, y: 10, w: 4, axis: 'h', range: 4, speed: 1.0, phase: 2.2 }
+      ],
       rooms: [{
         entry: 16, exitX: 60, startX: 2,
         grid: stepwell(function (r) {
@@ -1862,6 +2114,7 @@ var Levels = (function () {
     g.put(9, 9, 'BMB');
     g.set(13, 12, 'g');
     g.set(16, 12, 'd');
+    g.set(20, 12, 'x');
     g.coins(18, 10, 4);
     g.put(22, 9, 'B?B');
     g.set(26, 10, 'c');
@@ -1874,6 +2127,7 @@ var Levels = (function () {
     g.well(39, 11);                      // down to the stepwell
     g.put(42, 9, 'BWB');                 // bow, for anyone who missed it
     g.set(46, 12, 'g');
+    g.set(48, 12, 'y');
     g.set(50, 12, 'd');
     g.pillar(52, 10);
     g.coins(55, 10, 3);
@@ -1888,6 +2142,7 @@ var Levels = (function () {
     g.coins(72, 9, 4);
 
     g.put(80, 9, 'B?BTB');               // blessing before the hard run
+    g.set(78, 12, 'k');                  // checkpoint
     g.set(86, 12, 'g');
     g.stair(88, 5, 1);
     g.rect(93, 8, 5, 1, 'S');
@@ -1895,7 +2150,6 @@ var Levels = (function () {
     g.set(95, 5, 'c');
     g.stair(102, 5, -1);
     g.set(104, 12, 'g');
-    g.set(105, 12, 'd');
 
     g.rect(108, 11, 5, 1, '=');
     g.coins(108, 10, 5);
@@ -1904,11 +2158,15 @@ var Levels = (function () {
     g.set(112, 7, 'c');
 
     g.put(122, 9, 'BMB');
+    g.set(120, 12, 'J');
     g.set(126, 12, 'g');
     g.set(128, 12, 'd');
+    g.set(130, 12, 'g');
     g.pillar(132, 10);
     g.coins(135, 10, 4);
+    g.set(137, 12, 'y');
     g.set(140, 12, 'g');
+    g.set(144, 12, 'x');
     g.put(142, 9, 'BB?BB');
     g.set(144, 5, '?');
     g.set(148, 12, 'd');
@@ -1919,7 +2177,8 @@ var Levels = (function () {
     g.rect(152, 5, 16, 1, 'S');
     g.pillar(166, 11);
     g.put(156, 9, 'BWB');                // last chance at the bow
-    g.set(160, 12, 'g');
+    g.set(160, 12, 'x');
+    g.set(164, 12, 'g');
     g.set(163, 10, 'c');
 
     // Ravana's court
@@ -1933,6 +2192,10 @@ var Levels = (function () {
       id: '1-3', name: 'LANKA', theme: 'lanka', music: 'lanka',
       time: 400, grid: g.rows(),
       blurb: 'The island fortress. Ravana waits on his throne.',
+      movers: [
+        { x: 31, y: 10, w: 3, axis: 'h', range: 2.5, speed: 1.3 },
+        { x: 109, y: 9, w: 3, axis: 'v', range: 2, speed: 1.5, phase: 1.1 }
+      ],
       rooms: [{
         entry: 39, exitX: 84, startX: 2,
         grid: stepwell(function (r) {
@@ -2180,8 +2443,9 @@ var Levels = (function () {
     tiles: [], w: 0, theme: 'forest',
     player: null, enemies: [], items: [], shots: [], fx: [], bumps: [],
     camX: 0, camAim: 110, goal: null, sita: null, boss: null,
-    bossDefeated: false, surface: null,
-    lives: 3, score: 0, coins: 0, time: 0, timeAcc: 0,
+    bossDefeated: false, surface: null, checkpoint: null,
+    movers: [], crumbles: [], springs: {},
+    lives: 3, score: 0, coins: 0, time: 0, timeAcc: 0, combo: -1,
     shake: 0, hurry: false, best: 0, ending: 0
   };
 
@@ -2195,7 +2459,7 @@ var Levels = (function () {
 
   /* ============================ tiles ============================ */
 
-  var SOLIDS = '#SBUP?MWTpD';
+  var SOLIDS = '#SBUP?MWTpDJz';
 
   function tileChar(cx, cy) {
     if (cx < 0) return '#';                       // an invisible wall at the start
@@ -2215,20 +2479,89 @@ var Levels = (function () {
 
   /* Turns a grid of rows into the live scene: tiles, enemies and markers.
      Used for a whole level and for the stepwell rooms underneath it. */
-  function loadScene(rows, theme) {
+  function loadScene(rows, theme, movers) {
     G.theme = theme;
     G.w = rows[0].length;
     G.tiles = rows.map(function (r) { return r.split(''); });
     G.enemies = []; G.items = []; G.shots = []; G.fx = []; G.bumps = [];
     G.goal = null; G.sita = null; G.boss = null;
+    G.movers = []; G.crumbles = []; G.springs = {};
     G.camX = 0; G.camAim = LEAD_AHEAD;
+    var mv = movers || [];
+    for (var i = 0; i < mv.length; i++) {
+      var m = mv[i];
+      G.movers.push({
+        x0: m.x * TILE, y0: m.y * TILE, x: m.x * TILE, y: m.y * TILE,
+        w: (m.w || 3) * TILE, h: 8, axis: m.axis || 'h',
+        range: (m.range || 3) * TILE, speed: m.speed || 1.5,
+        phase: m.phase || 0, dx: 0, dy: 0
+      });
+    }
 
     for (var y = 0; y < ROWS; y++) {
       for (var x = 0; x < G.w; x++) {
         var ch = G.tiles[y][x];
-        if ('gdcR'.indexOf(ch) >= 0) { spawnEnemy(ch, x, y); setTile(x, y, ' '); }
+        if ('gdcRxy'.indexOf(ch) >= 0) { spawnEnemy(ch, x, y); setTile(x, y, ' '); }
         else if (ch === 'F') { G.goal = { x: x * TILE, y: (y + 1) * TILE }; setTile(x, y, ' '); }
         else if (ch === 'I') { G.sita = { x: x * TILE, y: (y + 1) * TILE - 22 }; setTile(x, y, ' '); }
+      }
+    }
+  }
+
+  /* ---------------- moving platforms ----------------
+   * Oscillate on a sine, so they ease at each end rather than snapping
+   * round. Rama is carried by whichever one he is standing on: the carry
+   * happens before his own physics, so riding one feels like ground. */
+
+  function updateMovers() {
+    for (var i = 0; i < G.movers.length; i++) {
+      var m = G.movers[i];
+      var px = m.x, py = m.y;
+      var a = Math.sin(G.t * 0.02 * m.speed * TEMPO + m.phase);
+      if (m.axis === 'v') m.y = m.y0 + a * m.range;
+      else m.x = m.x0 + a * m.range;
+      m.dx = m.x - px; m.dy = m.y - py;
+    }
+  }
+
+  function ridePlatforms(p, prevBottom) {
+    p.riding = null;
+    if (p.vy < 0) return;
+    for (var i = 0; i < G.movers.length; i++) {
+      var m = G.movers[i];
+      if (p.x + p.w <= m.x || p.x >= m.x + m.w) continue;
+      if (prevBottom > m.y + 7) continue;                 // came from below
+      if (p.y + p.h < m.y || p.y + p.h > m.y + 14) continue;
+      p.y = m.y - p.h; p.vy = 0; p.onGround = true; p.riding = m;
+      return;
+    }
+  }
+
+  /* A ledge that gives way a moment after it takes Rama's weight. */
+  function touchCrumble(cx, cy) {
+    for (var i = 0; i < G.crumbles.length; i++) {
+      if (G.crumbles[i].cx === cx && G.crumbles[i].cy === cy) return;
+    }
+    G.crumbles.push({ cx: cx, cy: cy, t: 0 });
+  }
+
+  function updateCrumbles() {
+    for (var i = G.crumbles.length - 1; i >= 0; i--) {
+      var c = G.crumbles[i];
+      c.t++;
+      if (c.t === 30) {
+        setTile(c.cx, c.cy, ' ');
+        Sound.fx.crumble();
+        for (var k = 0; k < 4; k++) {
+          G.fx.push({
+            kind: 'chunk', x: c.cx * TILE + (k % 2) * 8, y: c.cy * TILE + (k > 1 ? 8 : 0),
+            vx: (k % 2 ? 1 : -1) * TEMPO, vy: -1.2 * TEMPO, rot: k, life: 90
+          });
+        }
+      }
+      if (c.t > 250) {                       // grows back, but not under anyone
+        var box = { x: c.cx * TILE, y: c.cy * TILE, w: TILE, h: TILE };
+        if (!overlaps(box, G.player)) { setTile(c.cx, c.cy, 'z'); G.crumbles.splice(i, 1); }
       }
     }
   }
@@ -2239,7 +2572,7 @@ var Levels = (function () {
     G.surface = null;
     G.bossDefeated = false;
     G.time = L.time; G.timeAcc = 0; G.shake = 0; G.hurry = false;
-    loadScene(L.grid, L.theme);
+    loadScene(L.grid, L.theme, L.movers);
     G.player = makePlayer(2 * TILE, (ROWS - 3) * TILE - 15, G.player);
     Sound.music.play(L.music);
   }
@@ -2275,7 +2608,7 @@ var Levels = (function () {
       shots: G.shots, fx: G.fx, bumps: G.bumps, goal: G.goal, sita: G.sita,
       boss: G.boss, camX: G.camX, exitX: room.exitX
     };
-    loadScene(room.grid, 'cave');
+    loadScene(room.grid, 'cave', room.movers);
     p.x = room.startX * TILE;
     p.y = groundYAt(room.startX) - p.h;
     p.vx = 0; p.vy = 0;
@@ -2370,6 +2703,8 @@ var Levels = (function () {
       return;
     }
 
+    if (p.riding) { p.x += p.riding.dx; p.y += p.riding.dy; }
+
     var left = keys.left && !p.autoWalk;
     var right = (keys.right || p.autoWalk > 0);
     var run = keys.run;
@@ -2439,7 +2774,23 @@ var Levels = (function () {
     resolveX(p);
     p.y += p.vy;
     resolveY(p, prevBottom, true);
-    if (p.onGround) p.coyote = 6; else if (p.coyote > 0) p.coyote--;
+    ridePlatforms(p, prevBottom);
+
+    if (p.onGround) {
+      var fy = Math.floor((p.y + p.h) / TILE);
+      for (var fx = Math.floor(p.x / TILE); fx <= Math.floor((p.x + p.w - 1) / TILE); fx++) {
+        var fc = tileChar(fx, fy);
+        if (fc === 'J') {                     // lotus pad
+          p.vy = (keys.jump ? -9.2 : -7.4) * TEMPO;
+          p.jumping = keys.jump; p.onGround = false; p.coyote = 0;
+          G.springs[fx + ',' + fy] = 14;
+          Sound.fx.spring();
+        } else if (fc === 'z') {
+          touchCrumble(fx, fy);
+        }
+      }
+    }
+    if (p.onGround) { p.coyote = 6; G.combo = -1; } else if (p.coyote > 0) p.coyote--;
 
     if (p.headHit) { bumpBlock(p, p.headHit.x, p.headHit.y); p.headHit = null; }
 
@@ -2475,6 +2826,13 @@ var Levels = (function () {
         var ch = tileChar(x, y);
         if (ch === 'o') { setTile(x, y, ' '); takeCoin(x * TILE, y * TILE); }
         else if (ch === '~') { killPlayer(p); return; }
+        else if (ch === 'k') {
+          setTile(x, y, 'K');
+          G.checkpoint = { level: G.levelIndex, x: x * TILE };
+          G.score += 500;
+          popup(x * TILE, y * TILE, '500');
+          Sound.fx.checkpoint();
+        }
         else if (ch === 'E' && G.surface && !p.piping) {
           p.piping = { t: 0, going: 'up' };
           p.vx = 0; p.vy = 0;
@@ -2638,7 +2996,13 @@ var Levels = (function () {
     } else if (ch === 'c') {
       // a deliberately forgiving hitbox -- the wings are decoration
       e = { type: 'crow', w: 12, h: 8, sw: 16, sh: 14, ox: -2, oy: -3,
-            vx: -0.75 * TEMPO, vy: 0, gravity: false };
+            vx: -0.75 * TEMPO, vy: 0, gravity: false, dive: 0 };
+    } else if (ch === 'x') {
+      e = { type: 'charger', w: 15, h: 16, sw: 18, sh: 18, ox: -2, oy: -2,
+            vx: -ENEMY_SPEED * 0.7, vy: 0, gravity: true, wind: 0, rush: 0, blown: 0 };
+    } else if (ch === 'y') {
+      e = { type: 'spearman', w: 13, h: 20, sw: 16, sh: 22, ox: -2, oy: -2,
+            vx: -ENEMY_SPEED * 0.5, vy: 0, gravity: true, throwT: 60, wind: 0 };
     } else {
       e = { type: 'ravana', w: 28, h: 42, sw: 32, sh: 44, ox: -2, oy: -2,
             vx: -0.32 * TEMPO, vy: 0, gravity: true, hp: 6, flash: 0, fireT: 90, jumpT: 200 };
@@ -2654,12 +3018,14 @@ var Levels = (function () {
     return e;
   }
 
-  function flipEnemy(e, dir) {
+  function flipEnemy(e, dir, quiet) {
     if (e.type === 'ravana') return;
     e.dying = 1; e.vy = -3.6 * TEMPO; e.vx = 0.8 * TEMPO * dir; e.flip = true;
-    G.score += 200;
-    popup(e.x, e.y, '200');
-    Sound.fx.kick();
+    if (!quiet) {
+      G.score += 200;
+      popup(e.x, e.y, '200');
+      Sound.fx.kick();
+    }
   }
 
   function updateEnemy(e) {
@@ -2682,8 +3048,30 @@ var Levels = (function () {
     if (e.type === 'ravana') { updateRavana(e); return; }
 
     if (e.type === 'crow') {
-      // Kakasura circles the perch he was placed on rather than drifting
-      // off across the level, so a crow stays the obstacle it was drawn as
+      /* Kakasura circles the perch he was placed on, and stoops at anyone
+         who walks underneath -- a hovering obstacle you can simply run
+         beneath is no obstacle at all. */
+      var pl = G.player;
+      if (!e.dive && !pl.dead && Math.abs((pl.x + pl.w / 2) - (e.x + e.w / 2)) < 26 &&
+          pl.y > e.y + 20 && pl.y - e.y < 130) {
+        e.dive = 1; e.diveY = e.y;
+      }
+      if (e.dive === 1) {
+        e.vy = Math.min((e.vy || 0) + 0.22 * TEMPO2, 3.4 * TEMPO);
+        e.y += e.vy;
+        var below = Math.floor((e.y + e.h + 2) / TILE);
+        if (isSolid(Math.floor((e.x + e.w / 2) / TILE), below) || e.y > VH - 30) {
+          e.dive = 2; e.vy = 0;
+        }
+        e.frame = 0;
+        return;
+      }
+      if (e.dive === 2) {                       // labour back up to the perch
+        e.y -= 0.9 * TEMPO;
+        if (e.y <= e.diveY) { e.y = e.diveY; e.dive = 0; }
+        e.frame = Math.floor(G.t / 4) % 2;
+        return;
+      }
       e.x += e.vx;
       if (e.x < e.homeX - 44 || e.x > e.homeX + 44) { e.vx = -e.vx; e.x += e.vx * 2; }
       var cx = Math.floor((e.vx > 0 ? e.x + e.w : e.x) / TILE);
@@ -2693,6 +3081,69 @@ var Levels = (function () {
       e.frame = Math.floor(G.t / 7) % 2;
       e.y = e.baseY + Math.sin((G.t + e.homeX) / 26) * 12;
       return;
+    }
+
+    /* Viradha: paces, then spots Rama, rears where you can see it coming,
+       and charges. Running into a wall knocks the wind out of him. */
+    if (e.type === 'charger') {
+      var pc = G.player;
+      var gap = (pc.x + pc.w / 2) - (e.x + e.w / 2);
+      if (e.blown > 0) {
+        e.blown--; e.vx = 0;
+      } else if (e.rush > 0) {
+        e.rush--;
+        e.vx = ENEMY_SPEED * 2.9 * e.dir;
+        if (e.rush === 0) e.blown = 34;
+      } else if (e.wind > 0) {
+        e.wind--; e.vx = 0;
+        if (e.wind === 0) { e.rush = 90; Sound.fx.charge(); }
+      } else if (!pc.dead && Math.abs(gap) < 92 && Math.abs(pc.y - e.y) < 26) {
+        e.dir = gap > 0 ? 1 : -1;
+        e.wind = 26;
+        e.vx = 0;
+      } else {
+        e.vx = ENEMY_SPEED * 0.7 * e.dir;
+      }
+    }
+
+    /* Khara: holds his ground and throws. Forces you to keep moving. */
+    if (e.type === 'spearman') {
+      var ps = G.player;
+      var reach = (ps.x + ps.w / 2) - (e.x + e.w / 2);
+      if (e.wind > 0) {
+        e.wind--; e.vx = 0;
+        if (e.wind === 0) {
+          G.shots.push({
+            kind: 'spear', flat: true, x: e.x + (e.dir > 0 ? e.w : -12),
+            y: e.y + 6, w: 12, h: 5, vx: 2.9 * TEMPO * e.dir, vy: 0, life: 260
+          });
+          Sound.fx.spear();
+          e.throwT = 95 + Math.floor(Math.random() * 50);
+        }
+      } else if (!ps.dead && Math.abs(reach) < 150 && Math.abs(ps.y - e.y) < 30) {
+        e.dir = reach > 0 ? 1 : -1;
+        e.vx = 0;
+        if (--e.throwT <= 0) e.wind = 22;
+      } else {
+        e.vx = ENEMY_SPEED * 0.5 * e.dir;
+      }
+    }
+
+    /* Maricha is a lure, not a fighter: he bolts the moment Rama closes,
+       which is the whole point of the golden deer. */
+    if (e.type === 'deer' && !e.shell) {
+      var pd = G.player;
+      var near = (pd.x + pd.w / 2) - (e.x + e.w / 2);
+      if (!pd.dead && Math.abs(near) < 84) {
+        e.dir = near > 0 ? -1 : 1;
+        e.vx = ENEMY_SPEED * 1.9 * e.dir;
+        e.flee = 30;
+      } else if (e.flee > 0) {
+        e.flee--;
+        e.vx = ENEMY_SPEED * 1.9 * e.dir;
+      } else {
+        e.vx = ENEMY_SPEED * e.dir;
+      }
     }
 
     if (e.type === 'deer' && e.shell) {
@@ -2716,7 +3167,13 @@ var Levels = (function () {
     resolveX(e);
     if (e.bump) {
       if (e.shellMoving) { e.shellDir = -e.shellDir; Sound.fx.bump(); }
-      else { e.vx = Math.abs(e.hitVx || ENEMY_SPEED) * (e.bump > 0 ? -1 : 1); }
+      else if (e.type === 'charger' && e.rush > 0) {   // stopped dead by a wall
+        e.rush = 0; e.blown = 46; e.dir = -e.dir;
+        G.shake = 6; Sound.fx.bump();
+      } else {
+        e.dir = e.bump > 0 ? -1 : 1;
+        e.vx = Math.abs(e.hitVx || ENEMY_SPEED) * e.dir;
+      }
     }
     e.y += e.vy;
     resolveY(e, prevBottom, false);
@@ -2744,21 +3201,39 @@ var Levels = (function () {
     }
   }
 
+  /* Stomps chain while Rama stays off the ground, as in the original --
+     the reason to dive into a row of demons rather than walk around it. */
+  var COMBO = [100, 200, 400, 800, 1000, 2000, 4000, 8000];
+
+  function awardStomp(e) {
+    G.combo++;
+    if (G.combo < COMBO.length) {
+      G.score += COMBO[G.combo];
+      popup(e.x, e.y - 4, String(COMBO[G.combo]));
+      if (G.combo >= 3) Sound.fx.chain(G.combo);
+    } else {
+      G.lives++;
+      popup(e.x, e.y - 4, '1UP');
+      Sound.fx.oneUp();
+    }
+  }
+
   function stompEnemy(e, p) {
     p.vy = (keys.jump ? -4.6 : -3.4) * TEMPO;
-    if (e.type === 'rakshasa') {
-      e.squash = 30; e.h = 8; e.y += 6; e.oy = 0;
-      G.score += 100; popup(e.x, e.y, '100');
+    if (e.type === 'rakshasa' || e.type === 'charger') {
+      e.squash = 30; e.h = 8; e.y += e.sh - 10; e.oy = 0;
+      awardStomp(e);
       Sound.fx.stomp();
-    } else if (e.type === 'crow') {
-      flipEnemy(e, p.dir);
+    } else if (e.type === 'crow' || e.type === 'spearman') {
+      awardStomp(e);
+      flipEnemy(e, p.dir, true);
       Sound.fx.stomp();
     } else if (e.type === 'deer') {
       if (!e.shell) {
         e.shell = 1; e.shellMoving = false; e.wake = SHELL_WAKE;
         e.h = 13; e.sh = 14; e.oy = -1; e.y += 7;
-        e.vx = 0;
-        G.score += 100; popup(e.x, e.y, '100');
+        e.vx = 0; e.flee = 0;
+        awardStomp(e);
         Sound.fx.stomp();
       } else if (e.shellMoving) {
         e.shellMoving = false; e.wake = SHELL_WAKE; e.vx = 0;
@@ -2932,17 +3407,22 @@ var Levels = (function () {
   function updateShot(s) {
     s.life--;
     if (s.life <= 0) { s.remove = true; return; }
-    s.vy += (s.kind === 'arrow' ? 0.13 : 0.11) * TEMPO2;
-    if (s.vy > 5 * TEMPO) s.vy = 5 * TEMPO;
+    if (!s.flat) {
+      s.vy += (s.kind === 'arrow' ? 0.13 : 0.11) * TEMPO2;
+      if (s.vy > 5 * TEMPO) s.vy = 5 * TEMPO;
+    }
     var prevBottom = s.y + s.h;
     s.bump = 0;
     s.x += s.vx; resolveX(s);
     if (s.bump) {
-      if (s.kind === 'arrow') { s.remove = true; puff(s.x, s.y); }
+      if (s.kind === 'arrow' || s.flat) { s.remove = true; puff(s.x, s.y); }
       else s.vx = -s.hitVx;
     }
     s.y += s.vy; resolveY(s, prevBottom, false);
-    if (s.onGround) s.vy = (s.kind === 'arrow' ? -2.1 : -2.6) * TEMPO;
+    if (s.onGround) {
+      if (s.flat) { s.remove = true; puff(s.x, s.y); }
+      else s.vy = (s.kind === 'arrow' ? -2.1 : -2.6) * TEMPO;
+    }
     if (s.x < G.camX - 32 || s.x > G.camX + VW + 32 || s.y > VH + 20) s.remove = true;
 
     if (s.kind === 'arrow') {
@@ -2988,7 +3468,7 @@ var Levels = (function () {
 
   function startGame() {
     G.lives = 3; G.score = 0; G.coins = 0; G.levelIndex = 0;
-    G.player = null;
+    G.player = null; G.checkpoint = null;
     loadLevel(0);
     G.state = 'intro'; G.stateT = 0;
   }
@@ -3004,6 +3484,18 @@ var Levels = (function () {
     var keep = G.player;
     keep.big = false; keep.bow = false;
     loadLevel(G.levelIndex);
+    /* Back to the banner rather than the far end of the stage. */
+    if (G.checkpoint && G.checkpoint.level === G.levelIndex) {
+      var cx = Math.floor(G.checkpoint.x / TILE);
+      G.player.x = G.checkpoint.x;
+      G.player.y = groundYAt(cx) - G.player.h;
+      // relight the banner on its own row -- deriving the row from Rama's
+      // feet lands on the ground tile and punches a hole in the floor
+      for (var ry = 0; ry < ROWS; ry++) {
+        if (tileChar(cx, ry) === 'k') { setTile(cx, ry, 'K'); break; }
+      }
+      snapCamera(G.player);
+    }
     G.state = 'intro'; G.stateT = 0;
   }
 
@@ -3027,6 +3519,7 @@ var Levels = (function () {
 
   function nextLevel() {
     G.levelIndex++;
+    G.checkpoint = null;
     if (G.levelIndex >= Levels.list.length) { startWin(); return; }
     loadLevel(G.levelIndex);
     G.state = 'intro'; G.stateT = 0;
@@ -3036,6 +3529,9 @@ var Levels = (function () {
 
   function updatePlay() {
     var p = G.player;
+    updateMovers();
+    updateCrumbles();
+    for (var sk in G.springs) { if (--G.springs[sk] <= 0) delete G.springs[sk]; }
     updatePlayer(p);
     /* Dying, clearing the stage and winning all happen inside the call
        above, and the first of them swaps G.player and reloads the level.
@@ -3141,6 +3637,10 @@ var Levels = (function () {
       for (var x = x0; x <= x1; x++) {
         var ch = tileChar(x, y);
         if (ch === ' ' || ch === 'o') continue;
+        if (ch === 'k' || ch === 'K') {
+          Sprites.banner(ctx, x * TILE - Math.round(G.camX), y * TILE, ch === 'K', G.t);
+          continue;
+        }
         var px = x * TILE - Math.round(G.camX), py = y * TILE;
         if (ch === 'G') {
           if (G.bossDefeated) continue;
@@ -3159,6 +3659,12 @@ var Levels = (function () {
         }
         var above = tileChar(x, y - 1);
         var nb = (tileChar(x - 1, y) === ch ? 1 : 0) | (above === ch ? 2 : 0);
+        if (ch === 'J' && G.springs[x + ',' + y]) nb |= 4;
+        else if (ch === 'z') {
+          for (var q = 0; q < G.crumbles.length; q++) {
+            if (G.crumbles[q].cx === x && G.crumbles[q].cy === y) { nb |= 4; break; }
+          }
+        }
         // a stable per-tile variant, so a run of wall is not one stamp repeated
         Sprites.tile(ctx, px, py + bump, ch, G.theme, G.t,
                      above !== ch && !isSolidChar(above), nb, (x * 7 + y * 13) & 3);
@@ -3220,6 +3726,8 @@ var Levels = (function () {
       ctx.save();
       if (e.dying && e.flip) { ctx.translate(x + 8, y + 8); ctx.scale(1, -1); ctx.translate(-x - 8, -y - 8); }
       if (e.type === 'rakshasa') Sprites.rakshasa(ctx, x, y, e.frame, e.dir, e.squash > 0);
+      else if (e.type === 'charger') Sprites.charger(ctx, x, y, e.frame, e.dir, e.squash > 0, e.wind > 0);
+      else if (e.type === 'spearman') Sprites.spearman(ctx, x, y, e.frame, e.dir, e.wind > 0);
       else if (e.type === 'crow') Sprites.crow(ctx, x, y, e.frame, e.dir);
       else if (e.type === 'deer') {
         if (e.shell) Sprites.shell(ctx, x, y, Math.floor(G.t / 4), e.shellMoving || e.wake < 90);
@@ -3249,6 +3757,7 @@ var Levels = (function () {
       var s = G.shots[i];
       var x = Math.round(s.x - Math.round(G.camX)), y = Math.round(s.y);
       if (s.kind === 'arrow') Sprites.arrow(ctx, x, y, s.vx > 0 ? 1 : -1);
+      else if (s.kind === 'spear') Sprites.spear(ctx, x, y, s.vx > 0 ? 1 : -1);
       else Sprites.fireball(ctx, x, y, G.t);
     }
   }
@@ -3308,6 +3817,10 @@ var Levels = (function () {
     drawTiles();
     if (G.goal) Sprites.shrine(ctx, G.goal.x - Math.round(G.camX) - 16, G.goal.y, G.t, G.state === 'clear');
     if (G.sita) Sprites.sita(ctx, Math.round(G.sita.x - Math.round(G.camX)), Math.round(G.sita.y), G.t);
+    for (var mi = 0; mi < G.movers.length; mi++) {
+      var mv = G.movers[mi];
+      Sprites.mover(ctx, Math.round(mv.x - Math.round(G.camX)), Math.round(mv.y), mv.w, mi);
+    }
     drawItems();
     drawEnemies();
     drawShots();

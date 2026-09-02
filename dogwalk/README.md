@@ -24,3 +24,12 @@ sweep; when the viewfinder appears, hold your stride for the cover shot.
 Biscuits lift Biscuit's spirits, and high spirits multiply everything up to
 ×3. Three collisions end the walk, while the evening slides from golden hour
 into lamplight — statues, fountains, and fireflies included.
+
+## The season's wardrobe
+
+Each walk dresses you from the campaign rail — the vermilion boucle, the
+teal velvet suit, the rose or marigold corduroy suit, the tartan shirt
+dress, or the tipped navy cardigan — noted on the walk-home card. The
+park's other strollers wear the same collection (watch for the deep-red
+umbrellas), the iron railings give way in stretches to a stone balustrade
+along the boating lake, and a snug pub glows at the park's edge.

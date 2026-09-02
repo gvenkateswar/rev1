@@ -324,6 +324,7 @@ function trimAlpha(im){
     }
   }
   t.ax = n ? (sx/n)/t.width : 0.5;
+  t.hf = t.height / im.height;      // figure's fraction of the frame, resolution-independent
   return t;
 }
 for(const [k,f] of Object.entries(ASSET_FILES)){
@@ -332,7 +333,8 @@ for(const [k,f] of Object.entries(ASSET_FILES)){
     if(TRIM_KEYS.has(k)){ try{ IMGS[k] = trimAlpha(im); }catch(e){ IMGS[k] = im; } }
     else IMGS[k] = im;
   };
-  im.src = 'assets/'+f;
+  // a build may define ASSET_DATA to ship assets inline (e.g. the claude.ai artifact)
+  im.src = (typeof ASSET_DATA !== 'undefined' && ASSET_DATA[f]) ? ASSET_DATA[f] : 'assets/'+f;
 }
 const TEXPATS = {};
 function texPat(key){
@@ -1298,9 +1300,9 @@ function drawFigure(x, y, face, phase, opts){
     ctx.beginPath(); ctx.arc(0, 8, 22, 0, 7); ctx.fill();
     ctx.restore();
     ctx.scale(face, 1);
-    // constant world scale keeps pose proportions (a tucked jump draws shorter than idle)
-    const S = 0.069;
-    const dh = sprite.height*S, dw = sprite.width*S;
+    // scale by the figure's fraction of its frame, so pose proportions hold at any asset resolution
+    const hf = sprite.hf ?? 1;
+    const dh = 106*hf, dw = dh * sprite.width / sprite.height;
     const ax = sprite.ax ?? 0.5;
     ctx.drawImage(sprite, -dw*ax, -dh+2, dw, dh);
     ctx.restore();

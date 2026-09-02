@@ -279,7 +279,7 @@ function skyNow(t) {
 }
 
 /* ---------- terrain: the rolling promenade ---------- */
-const BASE_Y = 588;
+const BASE_Y = 540;
 function pathH(wx) {
   return BASE_Y
     + Math.sin(wx * 0.00160) * 40
@@ -423,9 +423,9 @@ const paveTile = layer(220, 220, (g, w, h) => {
     g.fillStyle = Math.random() < 0.5 ? 'rgba(35,30,24,.25)' : 'rgba(150,134,108,.18)';
     g.fillRect(rand(0, w), rand(0, h), rand(1, 3), rand(1, 3));
   }
-  g.strokeStyle = 'rgba(40,35,28,.4)'; g.lineWidth = 1.2;
-  for (let y = 18; y < h; y += 44) { g.beginPath(); g.moveTo(0, y); g.lineTo(w, y); g.stroke(); }
-  for (let i = 0; i < 6; i++) {
+  g.strokeStyle = 'rgba(40,35,28,.16)'; g.lineWidth = 1.2;
+  for (let y = 22; y < h; y += 66) { g.beginPath(); g.moveTo(0, y); g.lineTo(w, y); g.stroke(); }
+  for (let i = 0; i < 5; i++) {
     const x = rand(0, w);
     g.beginPath(); g.moveTo(x, rand(0, h)); g.lineTo(x, rand(0, h)); g.stroke();
   }
@@ -474,6 +474,9 @@ const AudioSys = {
   hit() { this.tone(120, 0.3, 'sawtooth', 0.09, 60); },
   bark() { this.tone(420, 0.08, 'square', 0.045, 300); },
   swish() { this.tone(480, 0.11, 'sine', 0.035, 320); },
+  bell() { this.tone(1720, 0.09, 'square', 0.03); setTimeout(() => this.tone(1720, 0.13, 'square', 0.026), 120); },
+  thud() { this.tone(180, 0.08, 'sine', 0.05, 90); },
+  shutter() { this.tone(2200, 0.03, 'square', 0.035); setTimeout(() => this.tone(1400, 0.05, 'square', 0.028), 45); },
   flutter() { this.tone(900, 0.05, 'triangle', 0.025, 1400); setTimeout(() => this.tone(1100, 0.05, 'triangle', 0.02, 1500), 60); }
 };
 
@@ -484,8 +487,8 @@ const PX = 300;         // walker's fixed screen x
 const DOG_GAP = 68;     // Biscuit trots this far ahead
 
 /* three invisible paths across the promenade's depth */
-const LANE_OFF = [12, 44, 78];      // vertical offset below the path's crest line
-const LANE_SC = [0.84, 0.92, 1.0];  // depth scale per path
+const LANE_OFF = [14, 76, 144];     // vertical offset below the path's crest line
+const LANE_SC = [0.80, 0.90, 1.0];  // depth scale per path
 function laneAt(f) {
   const i = clamp(Math.floor(f), 0, 1), t = clamp(f - i, 0, 1);
   return { off: lerp(LANE_OFF[i], LANE_OFF[i + 1], t), s: lerp(LANE_SC[i], LANE_SC[i + 1], t) };
@@ -501,10 +504,11 @@ const G = {
   lane: 1, laneF: 1, laneV: 0,      // walker's chosen path, spring-smoothed
   dogLaneF: 1, dogLaneV: 0,         // Biscuit drifts over a beat behind
   pwAng: 0, dgAng: 0,
-  obs: [], picks: [], pigeons: [], strollers: [], pops: [], sparks: [], fgLeaves: [],
-  squirrel: null, event: null,
+  obs: [], picks: [], pigeons: [], strollers: [], pops: [], sparks: [], fgLeaves: [], acorns: [],
+  squirrel: null, event: null, shot: null,
   spawnWx: 2000, pickWx: 1400, squirrelT: rand(8, 12), pigeonWx: 900, strollerFx: 500,
-  gustT: rand(6, 12), gust: 0,
+  bikeT: rand(11, 17), shotT: rand(26, 40),
+  gustT: rand(6, 12), gust: 0, gustNew: false,
   best: 0
 };
 try { G.best = +localStorage.getItem('biscuit-best') || 0; } catch (e) {}
@@ -597,10 +601,11 @@ function startGame() {
     iframes: 0, stumble: 0, shake: 0, whistleFx: 0,
     lane: 1, laneF: 1, laneV: 0, dogLaneF: 1, dogLaneV: 0,
     pwAng: 0, dgAng: 0,
-    obs: [], picks: [], pigeons: [], pops: [], sparks: [],
-    squirrel: null, event: null,
+    obs: [], picks: [], pigeons: [], pops: [], sparks: [], acorns: [],
+    squirrel: null, event: null, shot: null,
     spawnWx: 2200, pickWx: 1500, squirrelT: rand(8, 12), pigeonWx: 1000,
-    gustT: rand(6, 12), gust: 0
+    bikeT: rand(11, 17), shotT: rand(26, 40),
+    gustT: rand(6, 12), gust: 0, gustNew: false
   });
   G.cam.y = 0; G.cam.vy = 0;
   renderHearts();
@@ -659,8 +664,9 @@ function trySpawns() {
       G.picks.push({ type: 'biscuit', lane, wx: G.pickWx, ph: rand(0, TAU), got: false });
     } else {
       const n = 4 + (Math.random() * 3 | 0);
+      const run = { n, broken: false };   // collect the whole line for a clean sweep
       for (let i = 0; i < n; i++) {
-        G.picks.push({ type: 'leaf', lane, wx: G.pickWx + i * 52, ph: rand(0, TAU), got: false });
+        G.picks.push({ type: 'leaf', lane, wx: G.pickWx + i * 52, ph: rand(0, TAU), got: false, run });
       }
     }
     G.pickWx += rand(650, 1150);
@@ -727,11 +733,74 @@ function update(dt) {
 
   trySpawns();
 
+  /* --- a courier bicycle, announced by its bell --- */
+  G.bikeT -= dt;
+  if (G.bikeT <= 0) {
+    G.obs.push({ type: 'bike', lane: pickObsLane(), wx: G.worldX + W + 640, hit: false, ph: rand(0, TAU) });
+    AudioSys.bell();
+    G.bikeT = rand(13, 20);
+  }
+
+  /* --- gusts shake acorns out of the canopy --- */
+  if (G.gustNew) {
+    G.gustNew = false;
+    const n = 1 + (Math.random() * 2 | 0);
+    for (let i = 0; i < n; i++) {
+      G.acorns.push({
+        lane: (Math.random() * 3) | 0, wx: G.worldX + PX + rand(80, 560),
+        z: rand(300, 400), vz: rand(0, 60), state: 'fall', restT: 2
+      });
+    }
+  }
+  for (const a of G.acorns) {
+    if (a.state === 'fall') {
+      a.vz += 800 * dt;
+      a.z -= a.vz * dt;
+      if (a.z <= 0) {
+        a.z = 0; a.state = 'rest';
+        AudioSys.thud();
+        const nearW = Math.abs(G.laneF - a.lane) < 0.45 && Math.abs((pwx + 8) - a.wx) < 30;
+        const nearD = Math.abs(G.dogLaneF - a.lane) < 0.45 && Math.abs((dwx + 4) - a.wx) < 26;
+        if (nearW || nearD) {
+          G.spirits = clamp(G.spirits - 8, 0, 100);
+          G.slowT = Math.max(G.slowT, 0.5);
+          G.shake = Math.max(G.shake, 0.5);
+          G.pops.push({ x: PX + 40, y: pathH(pwx) - G.cam.y + laneAt(G.laneF).off - 170, t: 0, txt: 'bonk!' });
+        }
+      }
+    } else a.restT -= dt;
+  }
+  G.acorns = G.acorns.filter(a => (a.state === 'fall' || a.restT > 0) && a.wx > G.worldX - 60);
+
+  /* --- the cover shot: hold your stride for the photographer --- */
+  if (!G.shot) {
+    G.shotT -= dt;
+    if (G.shotT <= 0 && !G.event && G.iframes <= 0) {
+      G.shot = { t: 0, dur: 3.0, lane: G.lane, done: 0 };
+      G.shotT = rand(40, 60);
+    }
+  } else if (G.shot.done > 0) {
+    G.shot.done -= dt;
+    if (G.shot.done <= 0) G.shot = null;
+  } else {
+    const s = G.shot;
+    s.t += dt;
+    if (G.lane !== s.lane || G.event || G.iframes > 0) {
+      G.shot = null;    // the moment passes, no harm done
+    } else if (s.t >= s.dur) {
+      s.done = 0.5;
+      addScore(80, 'cover shot · +' + 80 * G.mult);
+      G.spirits = clamp(G.spirits + 10, 0, 100);
+      AudioSys.shutter();
+    }
+  }
+
   /* --- obstacles: dodge by path --- */
-  const HALF = { puddle: 44, branch: 42, hydrant: 18, planter: 24, walker: 30 };
+  const HALF = { puddle: 44, branch: 42, hydrant: 18, planter: 24, walker: 30, bike: 34 };
   for (const o of G.obs) {
     o.ph += dt * 4;
     if (o.type === 'walker') o.wx -= dt * 150;   // strolling toward you
+    else if (o.type === 'bike') o.wx -= dt * 430; // pedalling briskly
     if (!o.hit && G.iframes <= 0) {
       const half = HALF[o.type];
       const wHit = Math.abs(G.laneF - o.lane) < 0.42 && Math.abs((pwx + 8) - o.wx) < half + 28;
@@ -756,6 +825,13 @@ function update(dt) {
         } else {
           addScore(10, null);
           AudioSys.pickup();
+          if (k.run) {
+            k.run.n--;
+            if (k.run.n === 0 && !k.run.broken) {
+              addScore(30, 'clean sweep · +' + 30 * G.mult);
+              AudioSys.good();
+            }
+          }
         }
         const ky = pathH(k.wx) - G.cam.y + LANE_OFF[k.lane] - 26;
         for (let i = 0; i < 7; i++) {
@@ -763,6 +839,9 @@ function update(dt) {
         }
       }
     }
+  }
+  for (const k of G.picks) {
+    if (!k.got && k.wx <= G.worldX - 100 && k.run) k.run.broken = true;
   }
   G.picks = G.picks.filter(k => k.wx > G.worldX - 100 && !k.got);
 
@@ -834,7 +913,7 @@ function update(dt) {
 function updateAmbient(dt) {
   // wind gusts sweep the leaves along
   G.gustT -= dt;
-  if (G.gustT <= 0) { G.gust = 1.6; G.gustT = rand(7, 14); }
+  if (G.gustT <= 0) { G.gust = 1.6; G.gustT = rand(7, 14); G.gustNew = true; }
   G.gust = Math.max(0, G.gust - dt);
   const drift = (G.mode === 'play' && !G.paused ? G.speed * 0.35 : 20) + G.gust * 130;
   for (const l of G.fgLeaves) {
@@ -868,8 +947,10 @@ function takeHit(type) {
   renderHearts();
   G.pops.push({
     x: PX + 40, y: pathH(G.worldX + PX) - G.cam.y + laneAt(G.laneF).off - 175, t: 0,
-    txt: type === 'puddle' ? 'splash!' : type === 'walker' ? 'pardon!' : 'oof!'
+    txt: type === 'puddle' ? 'splash!' : type === 'walker' ? 'pardon!' :
+         type === 'bike' ? 'ring ring!' : 'oof!'
   });
+  if (G.shot && !(G.shot.done > 0)) G.shot = null;
   if (G.hearts <= 0) setTimeout(endGame, 500);
 }
 
@@ -1310,6 +1391,113 @@ function drawBiscuit(g, ph) {
   g.beginPath(); g.arc(-3, 0, 1, 0, TAU); g.arc(3, -1, 1, 0, TAU); g.fill();
   g.restore();
 }
+function drawBike(g, ph) {
+  // a courier pedalling toward you, scarf flying
+  g.save();
+  g.scale(-1, 1);
+  const spin = ph * 2.4;
+  g.strokeStyle = '#15171a'; g.lineCap = 'round';
+  for (const wx of [-17, 17]) {
+    g.lineWidth = 3;
+    g.beginPath(); g.arc(wx, -13, 13, 0, TAU); g.stroke();
+    g.save();
+    g.translate(wx, -13); g.rotate(spin);
+    g.lineWidth = 1.2;
+    for (let i = 0; i < 3; i++) {
+      g.rotate(Math.PI / 3);
+      g.beginPath(); g.moveTo(-12, 0); g.lineTo(12, 0); g.stroke();
+    }
+    g.restore();
+  }
+  // frame
+  g.strokeStyle = '#31473a'; g.lineWidth = 3.2;
+  g.beginPath();
+  g.moveTo(-17, -13); g.lineTo(-4, -32); g.lineTo(12, -31); g.lineTo(17, -13);
+  g.moveTo(-4, -32); g.lineTo(2, -14); g.lineTo(17, -13);
+  g.moveTo(-17, -13); g.lineTo(-12, -36);
+  g.moveTo(12, -31); g.lineTo(15, -40);
+  g.stroke();
+  // seat, handlebars, basket of blooms
+  g.fillStyle = '#241d16';
+  g.fillRect(-17, -39, 11, 3.4);
+  g.strokeStyle = '#241d16'; g.lineWidth = 2.6;
+  g.beginPath(); g.moveTo(15, -40); g.lineTo(20, -41); g.stroke();
+  g.fillStyle = '#8a6234';
+  g.fillRect(19, -40, 12, 9);
+  g.fillStyle = '#c05a2e';
+  g.beginPath(); g.arc(22, -41, 2.2, 0, TAU); g.arc(26, -42.4, 2.2, 0, TAU); g.arc(29.4, -40.6, 2, 0, TAU); g.fill();
+  // rider: camel coat leaning to the bars
+  const pedX = 2 + Math.cos(spin) * 6, pedY = -14 + Math.sin(spin) * 6;
+  g.strokeStyle = P.navy; g.lineWidth = 6.6;
+  g.beginPath(); g.moveTo(-11, -37); g.quadraticCurveTo(-4, -26, pedX, pedY); g.stroke();
+  g.strokeStyle = P.camel; g.lineWidth = 9;
+  g.beginPath(); g.moveTo(-12, -38); g.quadraticCurveTo(0, -50, 12, -46); g.stroke();
+  g.strokeStyle = P.camelDark; g.lineWidth = 5;
+  g.beginPath(); g.moveTo(2, -47); g.quadraticCurveTo(10, -44, 17, -41); g.stroke();
+  // head with cap, red scarf streaming behind
+  g.fillStyle = '#c99772';
+  g.beginPath(); g.arc(15, -54, 6.4, 0, TAU); g.fill();
+  g.fillStyle = '#241d16';
+  g.beginPath(); g.arc(15, -56, 6.6, Math.PI * 0.95, Math.PI * 2.05); g.fill();
+  g.strokeStyle = P.red; g.lineWidth = 3.4;
+  g.beginPath();
+  g.moveTo(11, -51);
+  g.quadraticCurveTo(-2, -52 + Math.sin(ph * 5) * 2.4, -14, -47 + Math.sin(ph * 5 + 1) * 3.4);
+  g.stroke();
+  g.restore();
+}
+function drawStatue(g) {
+  // a bronze figure gone green, a bird on her arm
+  g.fillStyle = '#45443a';
+  g.fillRect(-20, -10, 40, 10);
+  g.fillRect(-14, -36, 28, 26);
+  g.fillStyle = '#38372e';
+  g.fillRect(-14, -36, 28, 3);
+  g.fillStyle = '#33372c';
+  g.beginPath();
+  g.moveTo(-9, -36);
+  g.quadraticCurveTo(-12, -60, -5, -74);
+  g.lineTo(3, -74);
+  g.quadraticCurveTo(10, -58, 8, -36);
+  g.closePath(); g.fill();
+  g.beginPath(); g.arc(-1, -79, 6, 0, TAU); g.fill();
+  g.strokeStyle = '#33372c'; g.lineWidth = 4; g.lineCap = 'round';
+  g.beginPath(); g.moveTo(2, -66); g.lineTo(18, -72); g.stroke();
+  // verdigris
+  g.fillStyle = 'rgba(96,130,100,.3)';
+  g.beginPath(); g.ellipse(-3, -56, 4, 9, 0.3, 0, TAU); g.fill();
+  g.beginPath(); g.arc(-3, -81, 2.6, 0, TAU); g.fill();
+  // the bird
+  g.fillStyle = '#4d4d56';
+  g.beginPath(); g.ellipse(20, -75, 3.4, 2.4, -0.2, 0, TAU); g.fill();
+  g.beginPath(); g.moveTo(23, -76); g.lineTo(26, -75.4); g.lineTo(23, -74.4); g.closePath(); g.fill();
+}
+function drawFountain(g, t) {
+  g.fillStyle = '#4e4c42';
+  g.beginPath(); g.ellipse(0, -5, 44, 10, 0, 0, TAU); g.fill();
+  g.fillStyle = '#3a382f';
+  g.beginPath(); g.ellipse(0, -8, 38, 8, 0, 0, TAU); g.fill();
+  g.fillStyle = '#1e2a24';
+  g.beginPath(); g.ellipse(0, -9, 33, 6.2, 0, 0, TAU); g.fill();
+  g.fillStyle = '#4e4c42';
+  g.fillRect(-5, -36, 10, 28);
+  g.beginPath(); g.ellipse(0, -36, 13, 4, 0, 0, TAU); g.fill();
+  // the jet, shimmering
+  const shim = 0.45 + 0.2 * Math.sin(t * 4);
+  g.strokeStyle = `rgba(214,228,220,${shim})`;
+  g.lineWidth = 1.6; g.lineCap = 'round';
+  for (const dir of [-1, 1]) {
+    g.beginPath();
+    g.moveTo(0, -40);
+    g.quadraticCurveTo(dir * 11, -52, dir * 17, -12);
+    g.stroke();
+  }
+  g.beginPath(); g.moveTo(0, -40); g.lineTo(0, -48 + Math.sin(t * 6) * 2); g.stroke();
+  // glints on the water
+  g.fillStyle = `rgba(232,220,180,${shim * 0.5})`;
+  g.beginPath(); g.ellipse(-12, -10, 6, 1.4, 0, 0, TAU); g.fill();
+  g.beginPath(); g.ellipse(14, -8.4, 5, 1.2, 0, 0, TAU); g.fill();
+}
 function drawBench(g) {
   g.fillStyle = '#1d3524';
   g.fillRect(-62, -34, 7, 34); g.fillRect(56, -34, 7, 34);
@@ -1454,9 +1642,28 @@ function render() {
     ctx.save();
     ctx.translate(sx, base);
     ctx.scale(0.86, 0.86);
-    if (i % 2 === 0) drawBench(ctx); else drawLamp(ctx, sky.lamp);
+    const kr = hash(i * 2.13);
+    if (i % 2 === 1) drawLamp(ctx, sky.lamp);
+    else if (kr < 0.5) drawBench(ctx);
+    else if (kr < 0.8) drawStatue(ctx);
+    else drawFountain(ctx, t);
     ctx.restore();
   }
+  // fireflies rise off the lawn once the lamps are lit
+  const ffA = clamp((sky.lamp - 0.55) * 2.2, 0, 1);
+  if (ffA > 0) {
+    for (let i = 0; i < 14; i++) {
+      const fx = (hash(i + 40) * 1600 + t * (8 + hash(i + 50) * 14)) % (W + 60) - 30;
+      const fy = 462 + hash(i + 60) * 120 - fCam + Math.sin(t * (0.8 + hash(i + 70)) + i) * 9;
+      const tw = Math.sin(t * (1.6 + hash(i + 80) * 2) + i * 2.2);
+      if (tw <= 0.1) continue;
+      ctx.fillStyle = `rgba(232,220,140,${0.12 * ffA * tw})`;
+      ctx.beginPath(); ctx.arc(fx, fy, 4.4, 0, TAU); ctx.fill();
+      ctx.fillStyle = `rgba(244,236,180,${0.75 * ffA * tw})`;
+      ctx.beginPath(); ctx.arc(fx, fy, 1.2, 0, TAU); ctx.fill();
+    }
+  }
+
   // ambling strollers
   for (const s of G.strollers) {
     const sx = s.fx - fWX;
@@ -1498,7 +1705,7 @@ function render() {
   ctx.beginPath();
   ctx.moveTo(pts[0][0], pts[0][1]);
   for (const [x, y] of pts) ctx.lineTo(x, y);
-  for (let i = pts.length - 1; i >= 0; i--) ctx.lineTo(pts[i][0], pts[i][1] + 94);
+  for (let i = pts.length - 1; i >= 0; i--) ctx.lineTo(pts[i][0], pts[i][1] + 168);
   ctx.closePath();
   ctx.save();
   ctx.clip();
@@ -1527,7 +1734,7 @@ function render() {
     if (h1 < 0.55) continue;
     const wx = ci * cell + hash(ci + 0.5) * cell;
     const sx = wx - G.worldX;
-    const sy = pathH(wx) - camY + 3 + hash(ci + 0.7) * 86;
+    const sy = pathH(wx) - camY + 3 + hash(ci + 0.7) * 160;
     ctx.save();
     ctx.translate(sx, sy);
     ctx.rotate(hash(ci + 0.3) * TAU);
@@ -1571,6 +1778,7 @@ function render() {
       else if (o.type === 'branch') drawBranch(ctx);
       else if (o.type === 'hydrant') drawHydrant(ctx);
       else if (o.type === 'planter') drawPlanter(ctx, o.ph);
+      else if (o.type === 'bike') drawBike(ctx, o.ph);
       else drawPoodleWalker(ctx, o.ph);
       ctx.restore();
     }});
@@ -1595,6 +1803,25 @@ function render() {
       ctx.translate(sx, yOf(b.wx, LANE_OFF[b.lane]) + b.yOff);
       ctx.scale(LANE_SC[b.lane], LANE_SC[b.lane]);
       drawPigeon(ctx, b);
+      ctx.restore();
+    }});
+  }
+  for (const a of G.acorns) {
+    const sx = a.wx - G.worldX;
+    if (sx < -40 || sx > W + 40) continue;
+    items.push({ d: a.lane, fn: () => {
+      const gy = yOf(a.wx, LANE_OFF[a.lane]);
+      const p = clamp(1 - a.z / 400, 0, 1);
+      ctx.fillStyle = `rgba(14,16,11,${0.12 + p * 0.26})`;
+      ctx.beginPath(); ctx.ellipse(sx, gy + 2, 4 + p * 5, (4 + p * 5) * 0.3, 0, 0, TAU); ctx.fill();
+      ctx.save();
+      ctx.translate(sx, gy - a.z - 5);
+      ctx.rotate(a.z * 0.02);
+      ctx.fillStyle = '#7a5a34';
+      ctx.beginPath(); ctx.ellipse(0, 2, 4, 5, 0, 0, TAU); ctx.fill();
+      ctx.fillStyle = '#4c3a22';
+      ctx.beginPath(); ctx.arc(0, -2.4, 4.2, Math.PI, 0); ctx.fill();
+      ctx.fillRect(-1, -8, 2, 3.4);
       ctx.restore();
     }});
   }
@@ -1654,6 +1881,27 @@ function render() {
   }
   items.sort((a, b) => a.d - b.d);
   for (const it of items) it.fn();
+
+  /* --- an approaching bicycle announces itself at the screen's edge --- */
+  for (const o of G.obs) {
+    if (o.type !== 'bike') continue;
+    const sx = o.wx - G.worldX;
+    if (sx <= W + 30) continue;
+    const wy = yOf(G.worldX + W - 70, LANE_OFF[o.lane]) - 44;
+    const pulse = 0.45 + 0.45 * Math.sin(t * 9);
+    ctx.fillStyle = `rgba(243,239,230,${pulse})`;
+    for (let k = 0; k < 2; k++) {
+      ctx.beginPath();
+      ctx.moveTo(W - 28 - k * 14, wy - 8);
+      ctx.lineTo(W - 40 - k * 14, wy);
+      ctx.lineTo(W - 28 - k * 14, wy + 8);
+      ctx.closePath(); ctx.fill();
+    }
+    ctx.font = 'italic 400 12px Jost, sans-serif';
+    ctx.textAlign = 'right';
+    ctx.fillText('bicycle', W - 26, wy + 26);
+    ctx.textAlign = 'center';
+  }
 
   /* --- sparks & popups --- */
   for (const s of G.sparks) {
@@ -1754,6 +2002,37 @@ function render() {
     }
   }
   ctx.globalAlpha = 1;
+
+  /* --- the cover shot: a viewfinder settles over the walk --- */
+  if (G.shot) {
+    const s = G.shot;
+    const a = s.done > 0 ? clamp(s.done * 2, 0, 1) : Math.min(1, s.t * 2.5);
+    ctx.strokeStyle = `rgba(243,239,230,${0.85 * a})`;
+    ctx.lineWidth = 2;
+    const inX = 104, inY = 74, L = 34;
+    for (const [cx2, cy2, dx2, dy2] of [
+      [inX, inY, 1, 1], [W - inX, inY, -1, 1],
+      [inX, H - inY, 1, -1], [W - inX, H - inY, -1, -1]
+    ]) {
+      ctx.beginPath();
+      ctx.moveTo(cx2 + dx2 * L, cy2); ctx.lineTo(cx2, cy2); ctx.lineTo(cx2, cy2 + dy2 * L);
+      ctx.stroke();
+    }
+    if (s.done > 0) {
+      ctx.fillStyle = `rgba(246,240,225,${s.done * 1.6})`;
+      ctx.fillRect(0, 0, W, H);
+    } else {
+      ctx.fillStyle = `rgba(243,239,230,${0.9 * a})`;
+      ctx.font = 'italic 400 15px Jost, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('hold your stride', W / 2, inY + 34);
+      const pw2 = (s.t / s.dur) * 150;
+      ctx.fillStyle = `rgba(232,200,122,${0.9 * a})`;
+      ctx.fillRect(W / 2 - 75, inY + 46, pw2, 1.6);
+      ctx.fillStyle = `rgba(232,200,122,${0.25 * a})`;
+      ctx.fillRect(W / 2 - 75, inY + 46, 150, 1.6);
+    }
+  }
 
   /* --- pause veil --- */
   if (G.paused && G.mode === 'play') {

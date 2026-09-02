@@ -76,7 +76,7 @@
     <div class="eyebrow">A 2.5D Chronicle · 1010–1025 CE</div>
     <h1>CHOLA<small>Tides of Bronze</small></h1>
     <div class="rule"></div>
-    <p class="story">You are <b>Ilamaran</b>, a hooded blade of the Chola navy. From the shadow of
+    <p class="story">You are <b>Ilamaran</b>, a warrior of the Chola navy. From the shadow of
     Rajaraja's great temple at <b>Thanjavur</b>, through the ship-crowded harbor of
     <b>Nagapattinam</b>, to Emperor Rajendra's expedition against <b>Srivijaya</b> — run, climb,
     and slip between the near and far paths of the world.</p>
@@ -1238,7 +1238,7 @@ function drawBird(b){
 
 // figures ---------------------------------------------------------
 function drawFigure(x, y, face, phase, opts){
-  const {skin, cloth, sashC, isGuard, hooded, attackT=0, vy=0, onGround=true, hurt=false, vx=0} = opts;
+  const {skin, cloth, sashC, isGuard, attackT=0, vy=0, onGround=true, hurt=false, vx=0} = opts;
   // painted sprite path: pose picked from the asset slots, procedural rig as fallback
   const poseKey = isGuard
     ? (Math.sin(phase) > 0 ? 'guard_walk_a' : 'guard_walk_b')
@@ -1282,7 +1282,6 @@ function drawFigure(x, y, face, phase, opts){
 
   ctx.rotate(lean);
   ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-  const darker = shade(cloth,-24);
 
   // trailing sash behind the body, two layered tails
   const flow = airborne ? clamp(-vy*0.03,-16,18) : Math.sin(time*6)*3 + run*11;
@@ -1311,8 +1310,7 @@ function drawFigure(x, y, face, phase, opts){
     const hx = 0, hy = -25;
     const kx = hx + Math.sin(hipA)*13, ky = hy + Math.cos(hipA)*13;
     const fx = kx + Math.sin(hipA - kneeB)*13, fy = ky + Math.cos(hipA-kneeB)*13;
-    const legC = isGuard? skin : cloth;
-    ctx.strokeStyle = s<0 ? shade(legC,-30) : legC;
+    ctx.strokeStyle = s<0 ? shade(skin,-30) : skin;
     ctx.lineWidth = 7;
     ctx.beginPath(); ctx.moveTo(hx,hy); ctx.lineTo(kx,ky); ctx.lineTo(fx,fy); ctx.stroke();
     ctx.lineWidth = 4.5;
@@ -1331,13 +1329,24 @@ function drawFigure(x, y, face, phase, opts){
   ctx.closePath(); ctx.fill();
   ctx.fillStyle = 'rgba(0,0,0,0.18)';              // core shadow on the back of the skirt
   ctx.beginPath(); ctx.moveTo(-8,-42); ctx.lineTo(-2,-42); ctx.lineTo(-4,-19); ctx.lineTo(-11,-18); ctx.closePath(); ctx.fill();
+  if(!isGuard){
+    // pleated veshti: fold lines, gold hem stripe, crimson waistband
+    ctx.strokeStyle = 'rgba(120,95,60,0.4)'; ctx.lineWidth = 1.2;
+    for(const px of [-4,1,6]){
+      ctx.beginPath(); ctx.moveTo(px,-40); ctx.lineTo(px+2,-20+hem*0.4); ctx.stroke();
+    }
+    ctx.strokeStyle = '#C99A3F'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(-10,-19); ctx.quadraticCurveTo(0,-15+hem, 11,-21); ctx.stroke();
+    ctx.fillStyle = sashC;
+    ctx.fillRect(-9,-44, 19, 4.5);
+  }
   if(isGuard){                                     // lamellar rows
     ctx.strokeStyle = 'rgba(0,0,0,0.3)'; ctx.lineWidth = 1.2;
     for(let ry=-38; ry<-22; ry+=4.5){ ctx.beginPath(); ctx.moveTo(-8,ry); ctx.lineTo(11,ry); ctx.stroke(); }
   }
 
-  // torso volume, shoulders wider than the waist
-  ctx.fillStyle = cloth;
+  // torso volume, shoulders wider than the waist — bare bronze chest for the hero
+  ctx.fillStyle = isGuard ? cloth : skin;
   ctx.beginPath();
   ctx.moveTo(-7,-42);
   ctx.quadraticCurveTo(-9,-52, -6,-56);
@@ -1350,15 +1359,16 @@ function drawFigure(x, y, face, phase, opts){
   ctx.strokeStyle = sashC; ctx.lineWidth = 3.4;    // chest strap
   ctx.beginPath(); ctx.moveTo(-6,-55); ctx.lineTo(8,-45); ctx.stroke();
 
-  // arms
+  // arms — bare and bronze-skinned
   const swing = airborne ? 0.9 : Math.sin(phase)*0.8;
-  ctx.strokeStyle = darker; ctx.lineWidth = 6;
+  ctx.strokeStyle = shade(skin,-28); ctx.lineWidth = 6;
   arm(0,-53, -swing*0.8 - 0.3, 0.6);
-  ctx.strokeStyle = isGuard? skin : cloth; ctx.lineWidth = 6;
+  ctx.strokeStyle = skin; ctx.lineWidth = 6;
   if(attackT > 0){
     const t = 1 - attackT/0.28;
     const a = lerp(-1.9, 0.9, Math.min(1, t*1.6));
     arm(2,-53, a, 0.25);
+    if(!isGuard){ ctx.fillStyle='#C99A3F'; ctx.beginPath(); ctx.arc(2+Math.sin(a)*6, -53+Math.cos(a)*6, 2.2, 0, 7); ctx.fill(); }
     const sxp = 2 + Math.sin(a)*12 + Math.sin(a+0.25)*11;
     const syp = -53 + Math.cos(a)*12 + Math.cos(a+0.25)*11;
     ctx.save();
@@ -1377,10 +1387,16 @@ function drawFigure(x, y, face, phase, opts){
     }
   } else {
     arm(2,-53, swing*0.8+0.35, 0.5);
-    if(!isGuard){                                  // sheathed on the back
-      ctx.save(); ctx.translate(-5,-58); ctx.rotate(2.5);
-      ctx.fillStyle = '#B9B9B2'; ctx.fillRect(-1.4, 0, 2.8, 27);
-      ctx.fillStyle = '#7A5326'; ctx.fillRect(-3.6, -2, 7.4, 3.4);
+    if(!isGuard){
+      // gold armlet on the sword arm
+      ctx.fillStyle='#C99A3F';
+      const aa = swing*0.8+0.35;
+      ctx.beginPath(); ctx.arc(2+Math.sin(aa)*6, -53+Math.cos(aa)*6, 2.2, 0, 7); ctx.fill();
+      // curved sword in a wooden scabbard at the left hip
+      ctx.save(); ctx.translate(-7,-38); ctx.rotate(2.05);
+      ctx.fillStyle = '#6B4E33'; ctx.fillRect(-1.8, 0, 3.6, 24);
+      ctx.fillStyle = '#C99A3F'; ctx.fillRect(-2.6, -1, 5.2, 3);
+      ctx.fillRect(-2.2, 19, 4.4, 2.2);
       ctx.restore();
     }
   }
@@ -1396,28 +1412,22 @@ function drawFigure(x, y, face, phase, opts){
   ctx.beginPath(); ctx.arc(4,-62, 7.2, 0, 7); ctx.fill();
   ctx.fillStyle = skin;
   ctx.beginPath(); ctx.arc(5.5,-62, 5.2, -1.5, 1.3); ctx.fill();
-  if(hooded){
-    ctx.fillStyle = cloth;
-    ctx.beginPath();
-    ctx.moveTo(-7,-56);
-    ctx.quadraticCurveTo(-10,-72, 2,-74);
-    ctx.quadraticCurveTo(14,-73, 13,-60);
-    ctx.lineTo(10,-55);
-    ctx.quadraticCurveTo(9,-68, 0,-67);
-    ctx.quadraticCurveTo(-5,-64, -3,-55);
-    ctx.closePath(); ctx.fill();
-    ctx.beginPath();                               // hood point trailing back
-    ctx.moveTo(-6,-70); ctx.quadraticCurveTo(-13,-66, -12,-58); ctx.lineTo(-7,-58); ctx.closePath(); ctx.fill();
-    ctx.fillStyle = sashC; ctx.fillRect(6,-70, 7, 2.2);
-  } else if(isGuard){
+  if(isGuard){
     ctx.fillStyle = '#8C2F22';
     ctx.beginPath(); ctx.arc(4,-64, 7.6, Math.PI*0.95, Math.PI*2.05); ctx.fill();
     ctx.fillRect(-3,-66, 15, 3);
     ctx.fillStyle = '#C99A3F'; ctx.fillRect(2,-73, 4, 6);
   } else {
-    ctx.fillStyle = '#E9DFC6';
-    ctx.beginPath(); ctx.arc(4,-64.5, 7.6, Math.PI*0.95, Math.PI*2.06); ctx.fill();
-    ctx.fillStyle = '#C99A3F'; ctx.fillRect(1,-71, 7, 2.6);
+    // warrior's topknot (kudumi), gold headband, hoop earring
+    ctx.fillStyle = '#241A12';
+    ctx.beginPath(); ctx.arc(2,-67.5, 5.8, Math.PI*0.9, Math.PI*2.1); ctx.fill();
+    ctx.beginPath(); ctx.arc(-1,-72.5, 3.6, 0, 7); ctx.fill();
+    ctx.fillStyle = '#C99A3F';
+    ctx.fillRect(-2.8,-70.6, 3.6, 1.7);
+    ctx.strokeStyle = '#C99A3F'; ctx.lineWidth = 1.6;
+    ctx.beginPath(); ctx.arc(4,-62, 7.5, -2.75, -0.35); ctx.stroke();
+    ctx.fillStyle = '#C99A3F';
+    ctx.beginPath(); ctx.arc(8.5,-57, 1.7, 0, 7); ctx.fill();
   }
   ctx.strokeStyle = 'rgba(255,240,200,0.4)'; ctx.lineWidth = 1.3;
   ctx.beginPath(); ctx.arc(4,-62, 7.2, -2.4, -0.7); ctx.stroke();
@@ -1490,13 +1500,13 @@ function drawLaneContents(l){
     if(player.shiftFx > 0){
       ctx.globalAlpha = 0.5;
       drawFigure(player.x, player.y, player.face, player.runPhase, {
-        skin:'#8A5A3B', cloth:'#2E2724', sashC:'#B5342A', hooded:true,
+        skin:'#8A5A3B', cloth:'#EDE2C4', sashC:'#B5342A',
         vx:player.vx, vy:player.vy, onGround:player.onGround,
       });
       ctx.globalAlpha = 1;
     }
     drawFigure(player.x, player.y, player.face, player.runPhase, {
-      skin:'#8A5A3B', cloth:'#2E2724', sashC:'#B5342A', hooded:true,
+      skin:'#8A5A3B', cloth:'#EDE2C4', sashC:'#B5342A',
       attackT:player.attackT, vx:player.vx, vy:player.vy,
       onGround:player.onGround, hurt:player.hurtT>0,
     });

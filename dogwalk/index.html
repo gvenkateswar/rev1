@@ -432,6 +432,45 @@ const paveTile = layer(220, 220, (g, w, h) => {
 });
 const pavePat = ctx.createPattern(paveTile, 'repeat');
 
+/* blurred foreground trunk, for trees slipping past close to the camera */
+const trunkSpr = layer(220, 820, (g, w, h) => {
+  const cx = 110;
+  g.fillStyle = '#0c110c';
+  g.beginPath();
+  g.moveTo(cx - 34, h);
+  g.quadraticCurveTo(cx - 40, h * 0.55, cx - 20, h * 0.25);
+  g.quadraticCurveTo(cx - 14, h * 0.1, cx - 18, -20);
+  g.lineTo(cx + 16, -20);
+  g.quadraticCurveTo(cx + 10, h * 0.2, cx + 22, h * 0.5);
+  g.quadraticCurveTo(cx + 34, h * 0.8, cx + 30, h);
+  g.closePath(); g.fill();
+  g.strokeStyle = '#0c110c'; g.lineCap = 'round';
+  g.lineWidth = 16;
+  g.beginPath(); g.moveTo(cx - 16, h * 0.3); g.quadraticCurveTo(cx - 70, h * 0.24, cx - 102, h * 0.16); g.stroke();
+  g.lineWidth = 11;
+  g.beginPath(); g.moveTo(cx + 8, h * 0.18); g.quadraticCurveTo(cx + 60, h * 0.12, cx + 94, h * 0.1); g.stroke();
+  // moss on the shaded side, a whisper of rim light on the other
+  g.fillStyle = 'rgba(58,78,48,.4)';
+  g.beginPath(); g.ellipse(cx - 24, h * 0.42, 7, 26, 0.1, 0, TAU); g.fill();
+  g.beginPath(); g.ellipse(cx - 18, h * 0.68, 6, 20, -0.1, 0, TAU); g.fill();
+  g.fillStyle = 'rgba(216,169,78,.12)';
+  g.beginPath(); g.ellipse(cx + 24, h * 0.5, 3, 60, 0.04, 0, TAU); g.fill();
+  // leaves clinging to the branches
+  for (const [lx, ly, c] of [
+    [cx - 88, h * 0.15, '#1c2c16'], [cx - 66, h * 0.21, '#1c2c16'],
+    [cx - 78, h * 0.19, '#7a4426'], [cx + 78, h * 0.09, '#1c2c16'],
+    [cx + 60, h * 0.12, '#8a5a30'], [cx + 88, h * 0.12, '#1c2c16']
+  ]) {
+    g.fillStyle = c;
+    g.beginPath(); g.ellipse(lx, ly, 16, 10, 0.3, 0, TAU); g.fill();
+  }
+  try {
+    g.filter = 'blur(3px)'; g.globalAlpha = 0.85;
+    g.drawImage(g.canvas, 0, 0, w, h);
+    g.filter = 'none'; g.globalAlpha = 1;
+  } catch (e) {}
+});
+
 /* film grain tile */
 const grain = layer(160, 160, (g, w, h) => {
   const id = g.getImageData(0, 0, w * dpr, h * dpr);
@@ -991,6 +1030,12 @@ function drawWalker(g, ph, opts) {
     g.moveTo(2, -68);
     g.quadraticCurveTo(kx * 0.7 + 2, -40, footX + 2, -12 - lift);
     g.stroke();
+    // sunlit wale on the corduroy
+    g.strokeStyle = 'rgba(255,240,210,.12)'; g.lineWidth = 2;
+    g.beginPath();
+    g.moveTo(-2, -68);
+    g.quadraticCurveTo(kx * 0.7 - 2, -40, footX - 2, -12 - lift);
+    g.stroke();
     // leopard flat
     g.save();
     g.translate(footX + 4, -5 - lift);
@@ -1028,6 +1073,13 @@ function drawWalker(g, ph, opts) {
   }
   g.fillStyle = '#2c1712';
   [-80, -95, -110].forEach(by => { g.beginPath(); g.arc(9, by, 2.1, 0, TAU); g.fill(); });
+  // low sun catches the jacket's leading edge
+  g.strokeStyle = 'rgba(246,231,187,.24)'; g.lineWidth = 2;
+  g.beginPath();
+  g.moveTo(13, -72);
+  g.quadraticCurveTo(16, -92, 15, -110);
+  g.quadraticCurveTo(14, -124, 6, -129);
+  g.stroke();
   g.fillStyle = jacketD;
   g.beginPath();
   g.moveTo(-4, -128); g.lineTo(6, -130); g.lineTo(2, -120); g.closePath(); g.fill();
@@ -1051,6 +1103,16 @@ function drawWalker(g, ph, opts) {
   g.quadraticCurveTo(6, -148, 13, -148);
   g.closePath();
   g.fill();
+  // a warm highlight through the hair
+  g.strokeStyle = 'rgba(216,169,78,.45)'; g.lineWidth = 2; g.lineCap = 'round';
+  g.beginPath();
+  g.moveTo(9, -149);
+  g.quadraticCurveTo(0, -153, -6, -149);
+  g.stroke();
+  g.beginPath();
+  g.moveTo(-9, -140);
+  g.quadraticCurveTo(-12, -128, -9, -118);
+  g.stroke();
   g.fillStyle = '#241812';
   g.beginPath(); g.arc(8.6, -143, 1.15, 0, TAU); g.fill();
   g.strokeStyle = P.gold; g.lineWidth = 1.4;
@@ -1111,6 +1173,14 @@ function drawDog(g, ph, opts) {
   }
   g.fillStyle = 'rgba(185,130,71,.35)';
   g.beginPath(); g.ellipse(-8, -21, 8, 5, -0.2, 0, TAU); g.fill();
+  // belly shade and a sunlit line along the back
+  g.fillStyle = 'rgba(120,105,80,.22)';
+  g.beginPath(); g.ellipse(-2, -9, 16, 4, 0.04, 0, TAU); g.fill();
+  g.strokeStyle = 'rgba(246,231,187,.34)'; g.lineWidth = 1.8; g.lineCap = 'round';
+  g.beginPath();
+  g.moveTo(-19, -24);
+  g.quadraticCurveTo(0, -30.5, 14, -28);
+  g.stroke();
 
   g.strokeStyle = P.cream; g.lineWidth = 5;
   [0, 2].forEach(i => {
@@ -1285,13 +1355,23 @@ function drawPigeon(g, b) {
 }
 
 /* props on the path */
+let curSky = { hor: 'rgb(143,101,48)', lamp: 0.3, glow: 0.2, night: 0 };
 function drawPuddle(g) {
-  g.fillStyle = 'rgba(34,41,38,.88)';
+  const t = G.t;
+  g.fillStyle = 'rgba(28,34,32,.9)';
   g.beginPath(); g.ellipse(0, 0, 46, 10, 0, 0, TAU); g.fill();
-  g.fillStyle = 'rgba(120,140,110,.3)';
-  g.beginPath(); g.ellipse(-6, -1, 33, 6, 0, 0, TAU); g.fill();
-  g.fillStyle = 'rgba(246,231,187,.45)';
-  g.beginPath(); g.ellipse(10, -2, 12, 1.8, 0, 0, TAU); g.fill();
+  // the puddle carries the hour's sky
+  g.save();
+  g.globalAlpha = 0.3;
+  g.fillStyle = curSky.hor;
+  g.beginPath(); g.ellipse(-4, -1, 33, 6.2, 0, 0, TAU); g.fill();
+  g.restore();
+  // shimmering glints, brighter once the lamps are lit
+  const gl = 0.3 + curSky.lamp * 0.35;
+  g.fillStyle = `rgba(246,231,187,${gl})`;
+  g.beginPath(); g.ellipse(9 + Math.sin(t * 2) * 4, -2, 11, 1.6, 0, 0, TAU); g.fill();
+  g.fillStyle = `rgba(246,231,187,${gl * 0.5})`;
+  g.beginPath(); g.ellipse(-16 + Math.sin(t * 2.7 + 1) * 3, 1.4, 7, 1.1, 0, 0, TAU); g.fill();
   g.strokeStyle = 'rgba(20,26,20,.5)'; g.lineWidth = 1.6;
   g.beginPath(); g.ellipse(0, 0, 46, 10, 0, 0, TAU); g.stroke();
 }
@@ -1531,6 +1611,7 @@ function drawLamp(g, glowA) {
 function render() {
   const t = G.t;
   const sky = skyNow(G.dayT);
+  curSky = sky;
   const camY = G.cam.y;
 
   ctx.clearRect(0, 0, W, H);
@@ -1677,6 +1758,15 @@ function render() {
     ctx.restore();
   }
   ctx.globalAlpha = 1;
+  // a low mist gathers on the lawn as the light goes
+  const mistA = 0.03 + sky.night * 0.3;
+  const mist = ctx.createLinearGradient(0, 464 - fCam, 0, 566 - fCam);
+  mist.addColorStop(0, 'rgba(152,160,142,0)');
+  mist.addColorStop(0.55, `rgba(152,160,142,${mistA})`);
+  mist.addColorStop(1, 'rgba(152,160,142,0)');
+  ctx.fillStyle = mist;
+  ctx.fillRect(0, 458 - fCam, W, 116);
+
   // soft shade at the foot of the hedge line
   const hedgeShade = ctx.createLinearGradient(0, 400 - fCam, 0, 500 - fCam);
   hedgeShade.addColorStop(0, 'rgba(10,14,9,0)');
@@ -1718,8 +1808,14 @@ function render() {
   ctx.fillStyle = 'rgba(20,17,13,.25)';
   ctx.fillRect(0, 0, W, H);
   ctx.restore();
-  // warm rim light along the path's edge
-  ctx.strokeStyle = `rgba(232,200,122,${0.14 + sky.lamp * 0.1})`;
+  // a shadowed curb face, then warm rim light along the path's edge
+  ctx.strokeStyle = 'rgba(24,20,15,.4)';
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(pts[0][0], pts[0][1] + 4);
+  for (const [x, y] of pts) ctx.lineTo(x, y + 4);
+  ctx.stroke();
+  ctx.strokeStyle = `rgba(232,200,122,${0.16 + sky.lamp * 0.1})`;
   ctx.lineWidth = 1.6;
   ctx.beginPath();
   ctx.moveTo(pts[0][0], pts[0][1]);
@@ -1903,6 +1999,23 @@ function render() {
     ctx.textAlign = 'center';
   }
 
+  /* --- a near tree slips past now and then --- */
+  const gWX = G.worldX * 1.5;
+  const TSTEP = 3400;
+  for (let ti = Math.floor((gWX - 400) / TSTEP); ti * TSTEP < gWX + W + 400; ti++) {
+    if (hash(ti * 1.7) < 0.35) continue;
+    const fx = ti * TSTEP + hash(ti) * 1400;
+    const sx = fx - gWX;
+    if (sx < -260 || sx > W + 260) continue;
+    ctx.save();
+    ctx.translate(sx, 0);
+    if (hash(ti + 0.4) < 0.5) ctx.scale(-1, 1);
+    ctx.globalAlpha = 0.94;
+    ctx.drawImage(trunkSpr, -160, -30, 320, H + 80);
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+
   /* --- sparks & popups --- */
   for (const s of G.sparks) {
     ctx.fillStyle = `rgba(246,231,187,${1 - s.t / 0.7})`;
@@ -1953,6 +2066,18 @@ function render() {
   const canY = -34 - camY * 0.18;
   ctx.drawImage(canopy, off, canY, 1600, CANOPY_H);
   ctx.drawImage(canopy, off + 1600, canY, 1600, CANOPY_H);
+
+  /* --- dust motes drifting through the low light --- */
+  if (sky.glow > 0.07) {
+    for (let i = 0; i < 12; i++) {
+      const mx = (hash(i + 90) * 1400 + t * (4 + hash(i + 91) * 7)) % (W + 100) - 50;
+      const my = 60 + hash(i + 92) * 300 + Math.sin(t * 0.5 + i) * 22;
+      const al = (0.2 + 0.3 * Math.sin(t * (1 + hash(i + 93)) + i * 1.7)) * sky.glow * 2.4;
+      if (al <= 0.02) continue;
+      ctx.fillStyle = `rgba(246,231,187,${Math.min(0.45, al)})`;
+      ctx.beginPath(); ctx.arc(mx, my, 1.4 + hash(i + 94) * 1.6, 0, TAU); ctx.fill();
+    }
+  }
 
   /* --- drifting foreground leaves --- */
   for (const l of G.fgLeaves) {
@@ -2049,11 +2174,22 @@ function render() {
 }
 
 function dropShadow(x, y, r) {
+  // long soft golden-hour shadow stretching away from the low sun
   if (r <= 0) return;
-  ctx.fillStyle = 'rgba(14,16,11,.35)';
+  const len = r * 2.4;
+  ctx.save();
+  ctx.translate(x, y + 4);
+  ctx.scale(1, 0.24);
+  const g = ctx.createLinearGradient(r * 0.4, 0, -len, 0);
+  g.addColorStop(0, 'rgba(14,16,11,.34)');
+  g.addColorStop(1, 'rgba(14,16,11,0)');
+  ctx.fillStyle = g;
   ctx.beginPath();
-  ctx.ellipse(x, y + 4, r, r * 0.2, 0, 0, TAU);
+  ctx.ellipse(-len / 2 + r * 0.4, 0, len / 2 + r * 0.5, r, 0, 0, TAU);
   ctx.fill();
+  ctx.fillStyle = 'rgba(14,16,11,.3)';
+  ctx.beginPath(); ctx.ellipse(0, 0, r * 0.8, r * 0.72, 0, 0, TAU); ctx.fill();
+  ctx.restore();
 }
 
 /* ============================================================

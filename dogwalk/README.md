@@ -46,4 +46,9 @@ along the boating lake, and a snug pub glows at the park's edge.
 - **A necessary pause** — now and then Biscuit needs a moment (watch for
   the thought bubble; his spirits sink until it's dealt with). Whistle
   near a hydrant and a very convenient shrub takes care of the rest
+- **A warm cocoa** — when you're down a heart, a steaming takeaway cup
+  appears somewhere ahead; drinking it mends one heart (at full hearts
+  it's worth +100)
+- **Cover shots heal** — completing the hold-your-stride viewfinder moment
+  also mends a heart when you're hurt
 - The walk also gets properly brisk the longer you last

@@ -33,3 +33,17 @@ dress, or the tipped navy cardigan — noted on the walk-home card. The
 park's other strollers wear the same collection (watch for the deep-red
 umbrellas), the iron railings give way in stretches to a stone balustrade
 along the boating lake, and a snug pub glows at the park's edge.
+
+## Kit and moments
+
+- **The tartan mac** (glowing hanger pickup) — for 7 seconds nothing breaks
+  your stride: obstacles brush aside for points instead of costing hearts
+- **The silver whistle** (golden whistle pickup) — for 8 seconds nearby
+  leaves and biscuits curve through the air to Biscuit
+- **A lost ball** — walk into it, and after a beat she throws it long;
+  Biscuit sprints off the leash to fetch, and bringing it back is worth a
+  big bonus while his tail goes like a metronome
+- **A necessary pause** — now and then Biscuit needs a moment (watch for
+  the thought bubble; his spirits sink until it's dealt with). Whistle
+  near a hydrant and a very convenient shrub takes care of the rest
+- The walk also gets properly brisk the longer you last

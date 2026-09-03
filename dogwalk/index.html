@@ -584,6 +584,9 @@ const AudioSys = {
   bark() { this.tone(420, 0.08, 'square', 0.045, 300); },
   swish() { this.tone(480, 0.11, 'sine', 0.035, 320); },
   bell() { this.tone(1720, 0.09, 'square', 0.03); setTimeout(() => this.tone(1720, 0.13, 'square', 0.026), 120); },
+  macOn() { [523, 659, 784, 1046].forEach((f, i) => setTimeout(() => this.tone(f, 0.18, 'triangle', 0.05), i * 90)); },
+  magnetOn() { this.tone(392, 0.16, 'sine', 0.05, 588); setTimeout(() => this.tone(588, 0.22, 'sine', 0.045, 784), 130); },
+  bounce() { this.tone(300, 0.1, 'sine', 0.06, 170); },
   thud() { this.tone(180, 0.08, 'sine', 0.05, 90); },
   shutter() { this.tone(2200, 0.03, 'square', 0.035); setTimeout(() => this.tone(1400, 0.05, 'square', 0.028), 45); },
   flutter() { this.tone(900, 0.05, 'triangle', 0.025, 1400); setTimeout(() => this.tone(1100, 0.05, 'triangle', 0.02, 1500), 60); }
@@ -641,6 +644,9 @@ const G = {
   bikeT: rand(11, 17), shotT: rand(26, 40),
   gustT: rand(6, 12), gust: 0, gustNew: false,
   outfit: OUTFITS[0],
+  powers: [], powerT: rand(12, 20), macT: 0, magnetT: 0,
+  ball: null, ballT: rand(28, 42), fetch: null, dogGap: 68,
+  need: false, needT: rand(40, 60), needHydT: 0, reliefT: 0,
   best: 0
 };
 try { G.best = +localStorage.getItem('biscuit-best') || 0; } catch (e) {}
@@ -697,6 +703,20 @@ function whistle() {
     G.spirits = clamp(G.spirits + 16, 0, 100);
     setTimeout(() => AudioSys.good(), 160);
     if (G.squirrel) G.squirrel.flee = true;
+    return;
+  }
+  if (G.need && G.reliefT <= 0 && !G.fetch) {
+    // a hydrant in whistling distance answers the call
+    const dwx2 = G.worldX + PX + G.dogGap;
+    const hyd = G.obs.find(o => o.type === 'hydrant' && Math.abs(o.wx - dwx2) < 280);
+    if (hyd) {
+      G.need = false;
+      G.reliefT = 1.9;
+      G.pops.push({
+        x: PX + G.dogGap, y: pathH(dwx2) - G.cam.y + laneAt(G.dogLaneF).off - 120,
+        t: 0, txt: 'a necessary pause'
+      });
+    }
   }
 }
 window.addEventListener('keydown', e => {
@@ -764,7 +784,10 @@ function startGame() {
     spawnWx: 2200, pickWx: 1500, squirrelT: rand(8, 12), pigeonWx: 1000,
     bikeT: rand(11, 17), shotT: rand(26, 40),
     gustT: rand(6, 12), gust: 0, gustNew: false,
-    outfit: OUTFITS[(Math.random() * OUTFITS.length) | 0]
+    outfit: OUTFITS[(Math.random() * OUTFITS.length) | 0],
+    powers: [], powerT: rand(12, 20), macT: 0, magnetT: 0,
+    ball: null, ballT: rand(28, 42), fetch: null, dogGap: 68,
+    need: false, needT: rand(40, 60), needHydT: 0, reliefT: 0
   });
   G.cam.y = 0; G.cam.vy = 0;
   renderHearts();
@@ -854,9 +877,10 @@ function update(dt) {
   const pwx = G.worldX + PX;
   const slope = pathSlope(pwx);
   G.slowT = Math.max(0, G.slowT - dt);
-  const base = Math.min(620, 300 + G.worldX / 95);
+  const base = Math.min(690, 300 + G.worldX / 82);
   let target = base * clamp(1 + slope * 1.2, 0.88, 1.14);
   if (G.slowT > 0) target *= 0.55;
+  if (G.reliefT > 0) target *= 0.15;   // everyone waits politely
   G.speed = lerp(G.speed, target, Math.min(1, dt * 2.2));
   G.worldX += G.speed * dt;
 
@@ -868,11 +892,12 @@ function update(dt) {
   /* --- gliding between paths: a soft spring, Biscuit a beat behind --- */
   G.laneV += (G.lane - G.laneF) * 74 * dt - G.laneV * 15.5 * dt;
   G.laneF += G.laneV * dt;
-  G.dogLaneV += (G.laneF - G.dogLaneF) * 46 * dt - G.dogLaneV * 12 * dt;
+  const dogLaneTarget = (G.fetch && G.ball) ? G.ball.lane : G.laneF;
+  G.dogLaneV += (dogLaneTarget - G.dogLaneF) * 46 * dt - G.dogLaneV * 12 * dt;
   G.dogLaneF += G.dogLaneV * dt;
 
   /* --- posture: tilt with the slope, bank into a path change --- */
-  const dwx = G.worldX + PX + DOG_GAP;
+  const dwx = G.worldX + PX + G.dogGap;
   G.pwAng = lerp(G.pwAng,
     Math.atan(slope) * 0.7 + clamp(G.laneV * 0.05, -0.1, 0.1),
     Math.min(1, dt * 7));
@@ -921,7 +946,7 @@ function update(dt) {
         AudioSys.thud();
         const nearW = Math.abs(G.laneF - a.lane) < 0.45 && Math.abs((pwx + 8) - a.wx) < 30;
         const nearD = Math.abs(G.dogLaneF - a.lane) < 0.45 && Math.abs((dwx + 4) - a.wx) < 26;
-        if (nearW || nearD) {
+        if ((nearW || nearD) && G.macT <= 0) {
           G.spirits = clamp(G.spirits - 8, 0, 100);
           G.slowT = Math.max(G.slowT, 0.5);
           G.shake = Math.max(G.shake, 0.5);
@@ -955,6 +980,149 @@ function update(dt) {
     }
   }
 
+  /* --- kit found along the walk: the tartan mac, the silver whistle --- */
+  G.macT = Math.max(0, G.macT - dt);
+  G.magnetT = Math.max(0, G.magnetT - dt);
+  G.powerT -= dt;
+  if (G.powerT <= 0) {
+    G.powers.push({
+      type: Math.random() < 0.5 ? 'mac' : 'whistle',
+      lane: (Math.random() * 3) | 0, wx: G.worldX + W + 220, ph: rand(0, TAU)
+    });
+    G.powerT = rand(20, 32);
+  }
+  for (const pw of G.powers) {
+    pw.ph += dt * 4;
+    const nearW = Math.abs(G.laneF - pw.lane) < 0.5 && Math.abs((pwx + 10) - pw.wx) < 46;
+    const nearD = Math.abs(G.dogLaneF - pw.lane) < 0.5 && Math.abs((dwx + 6) - pw.wx) < 46;
+    if (!pw.got && (nearW || nearD)) {
+      pw.got = true;
+      if (pw.type === 'mac') {
+        G.macT = 7;
+        G.pops.push({ x: PX + 40, y: pathH(pwx) - G.cam.y + laneAt(G.laneF).off - 180, t: 0, txt: 'the tartan mac!' });
+        AudioSys.macOn();
+      } else {
+        G.magnetT = 8;
+        G.pops.push({ x: PX + 40, y: pathH(pwx) - G.cam.y + laneAt(G.laneF).off - 180, t: 0, txt: 'the silver whistle!' });
+        AudioSys.magnetOn();
+      }
+    }
+  }
+  G.powers = G.powers.filter(pw => pw.wx > G.worldX - 80 && !pw.got);
+  if (G.macT > 0 && Math.random() < dt * 26) {
+    G.sparks.push({
+      x: PX + rand(-26, 8), y: pathH(pwx) - G.cam.y + laneAt(G.laneF).off - rand(16, 150),
+      vx: rand(-90, -40), vy: rand(-30, 30), t: 0
+    });
+  }
+  // the silver whistle draws the golden leaves to Biscuit
+  if (G.magnetT > 0) {
+    for (const k of G.picks) {
+      if (k.got) continue;
+      const dx = k.wx - dwx;
+      if (dx > -60 && dx < 470) {
+        k.wx -= dx * Math.min(1, dt * 4.5);
+        k.lane += (G.dogLaneF - k.lane) * Math.min(1, dt * 6);
+      }
+    }
+  }
+
+  /* --- a lost ball, and a game of fetch --- */
+  if (!G.ball && !G.fetch) {
+    G.ballT -= dt;
+    if (G.ballT <= 0 && !G.event && G.reliefT <= 0) {
+      G.ball = { state: 'rolling', lane: (Math.random() * 3) | 0, wx: G.worldX + W + 80, rot: 0 };
+      G.ballT = rand(38, 58);
+    }
+  }
+  if (G.ball) {
+    const b = G.ball;
+    if (b.state === 'rolling') {
+      b.wx -= dt * G.speed * 0.35;
+      b.rot -= dt * 9;
+      if (Math.abs(G.laneF - b.lane) < 0.45 && Math.abs((pwx + 6) - b.wx) < 40) {
+        b.state = 'carried'; b.carryT = 1.3;
+        G.pops.push({ x: PX + 40, y: pathH(pwx) - G.cam.y + laneAt(G.laneF).off - 175, t: 0, txt: 'a ball!' });
+        AudioSys.bounce();
+      } else if (b.wx < G.worldX - 60) G.ball = null;
+    } else if (b.state === 'carried') {
+      b.carryT -= dt;
+      b.lane = G.lane;
+      if (b.carryT <= 0) {
+        b.state = 'thrown'; b.t = 0; b.from = pwx + 24;
+        G.fetch = { phase: 'chase' };
+        AudioSys.swish();
+        AudioSys.bark();
+      }
+    } else if (b.state === 'thrown') {
+      b.t += dt;
+      const p = Math.min(1, b.t / 0.85);
+      b.wx = b.from + 560 * p;
+      b.arc = Math.sin(p * Math.PI) * 120;
+      b.rot -= dt * 14;
+      if (p >= 1) { b.state = 'ground'; b.arc = 0; AudioSys.bounce(); }
+    }
+  }
+  if (G.fetch) {
+    const b = G.ball;
+    if (G.fetch.phase === 'chase' && b) {
+      const target = clamp(b.wx - G.worldX - PX, 68, 660);
+      G.dogGap += (target - G.dogGap) * Math.min(1, dt * 3.2);
+      if (b.state === 'ground' && Math.abs((G.worldX + PX + G.dogGap + 18) - b.wx) < 28) {
+        G.fetch.phase = 'return';
+        AudioSys.bounce();
+      }
+    } else {
+      G.dogGap += (DOG_GAP - G.dogGap) * Math.min(1, dt * 2.6);
+      if (G.ball) { G.ball.wx = G.worldX + PX + G.dogGap + 28; G.ball.arc = 16; }
+      if (G.dogGap < DOG_GAP + 8) {
+        G.ball = null; G.fetch = null;
+        addScore(60, 'good catch · +' + 60 * G.mult);
+        G.spirits = clamp(G.spirits + 22, 0, 100);
+        AudioSys.good();
+      }
+    }
+  } else {
+    G.dogGap += (DOG_GAP - G.dogGap) * Math.min(1, dt * 4);
+  }
+
+  /* --- when a dog's got to go, a dog's got to go --- */
+  if (G.reliefT > 0) {
+    G.reliefT -= dt;
+    if (Math.random() < dt * 12) {
+      G.sparks.push({
+        x: PX + G.dogGap + rand(-18, 18), y: pathH(dwx) - G.cam.y + laneAt(G.dogLaneF).off - rand(30, 60),
+        vx: rand(-20, 20), vy: rand(-60, -20), t: 0
+      });
+    }
+    if (G.reliefT <= 0) {
+      G.reliefT = 0;
+      addScore(40, 'much better · +' + 40 * G.mult);
+      G.spirits = clamp(G.spirits + 25, 0, 100);
+      AudioSys.good();
+    }
+  } else if (!G.need) {
+    G.needT -= dt;
+    if (G.needT <= 0 && !G.fetch) {
+      G.need = true; G.needHydT = 0;
+      G.needT = rand(55, 80);
+      AudioSys.bark();
+    }
+  }
+  if (G.need) {
+    G.spirits = clamp(G.spirits - dt * 2.2, 0, 100);   // an anxious dog, until relieved
+    G.needHydT -= dt;
+    const hydAhead = G.obs.some(o => o.type === 'hydrant' && o.wx > dwx - 80 && o.wx < dwx + 1100);
+    if (!hydAhead && G.needHydT <= 0) {
+      G.obs.push({
+        type: 'hydrant', lane: pickObsLane(),
+        wx: Math.max(G.spawnWx - 220, G.worldX + W + 280),
+        hit: false, ph: rand(0, TAU), v: strollerVariant()
+      });
+      G.needHydT = 5;
+    }
+  }
+
   /* --- obstacles: dodge by path --- */
   const HALF = { puddle: 44, branch: 42, hydrant: 18, planter: 24, walker: 30, bike: 34 };
   for (const o of G.obs) {
@@ -964,8 +1132,21 @@ function update(dt) {
     if (!o.hit && G.iframes <= 0) {
       const half = HALF[o.type];
       const wHit = Math.abs(G.laneF - o.lane) < 0.42 && Math.abs((pwx + 8) - o.wx) < half + 28;
-      const dHit = Math.abs(G.dogLaneF - o.lane) < 0.42 && Math.abs((dwx + 4) - o.wx) < half + 22;
-      if (wHit || dHit) { o.hit = true; takeHit(o.type); }
+      const dHit = !G.fetch && Math.abs(G.dogLaneF - o.lane) < 0.42 && Math.abs((dwx + 4) - o.wx) < half + 22;
+      if (wHit || dHit) {
+        o.hit = true;
+        if (G.macT > 0) {
+          // in the tartan mac, nothing breaks your stride
+          addScore(5, 'stride on · +' + 5 * G.mult);
+          AudioSys.swish();
+          for (let i = 0; i < 6; i++) {
+            G.sparks.push({
+              x: o.wx - G.worldX, y: pathH(o.wx) - G.cam.y + laneAt(o.lane).off - 30,
+              vx: rand(-80, 80), vy: rand(-140, -40), t: 0
+            });
+          }
+        } else takeHit(o.type);
+      }
     }
   }
   G.obs = G.obs.filter(o => o.wx > G.worldX - 200);
@@ -993,7 +1174,7 @@ function update(dt) {
             }
           }
         }
-        const ky = pathH(k.wx) - G.cam.y + LANE_OFF[k.lane] - 26;
+        const ky = pathH(k.wx) - G.cam.y + laneAt(k.lane).off - 26;
         for (let i = 0; i < 7; i++) {
           G.sparks.push({ x: k.wx - G.worldX, y: ky, vx: rand(-50, 60), vy: rand(-120, -20), t: 0 });
         }
@@ -1036,7 +1217,7 @@ function update(dt) {
     } else {
       q.wx -= dt * 330;   // bounding toward you
       const dist = q.wx - dwx;
-      if (!q.seen && dist < 330 && dist > 40) {
+      if (!q.seen && dist < 330 && dist > 40 && !G.fetch && G.reliefT <= 0) {
         q.seen = true;
         G.event = { t: 0, dur: 1.25, lane: q.lane };
         AudioSys.bark();
@@ -1053,7 +1234,7 @@ function update(dt) {
       G.stumble = 0.5;
       G.lane = ev.lane;              // dragged toward the squirrel's path
       const dy = pathH(dwx) - G.cam.y + laneAt(G.dogLaneF).off - 110;
-      G.pops.push({ x: PX + DOG_GAP, y: dy, t: 0, txt: 'SQUIRREL!' });
+      G.pops.push({ x: PX + G.dogGap, y: dy, t: 0, txt: 'SQUIRREL!' });
       AudioSys.bark(); setTimeout(() => AudioSys.bark(), 130);
     }
   }
@@ -1119,7 +1300,12 @@ function takeHit(type) {
    ============================================================ */
 function drawWalker(g, ph, opts) {
   const o = opts || {};
-  const O = G.outfit || OUTFITS[0];
+  const baseO = G.outfit || OUTFITS[0];
+  const O = G.macT > 0
+    ? { dress: baseO.dress, trouser: baseO.trouser, trouserD: baseO.trouserD,
+        skirt: baseO.skirt, belt: baseO.belt,
+        jacket: '#b58a52', jacketD: '#84603a', mac: true }
+    : baseO;
   const jacket = O.jacket, jacketD = O.jacketD;
   const trouser = O.trouser || O.jacket, trouserD = O.trouserD || O.jacketD;
   const bob = o.air ? 0 : Math.abs(Math.sin(ph)) * 2.4;
@@ -1283,6 +1469,17 @@ function drawWalker(g, ph, opts) {
     g.beginPath(); g.moveTo(-14, -71); g.quadraticCurveTo(0, -65.5, 12, -71); g.stroke();
     g.beginPath(); g.moveTo(6, -128); g.quadraticCurveTo(11, -100, 9, -73); g.stroke();
   }
+  if (O.mac) {
+    // the tartan mac: plaid lapels and a cinched belt
+    g.strokeStyle = '#26324a'; g.lineWidth = 2.6;
+    g.beginPath(); g.moveTo(-3, -127); g.lineTo(3, -112); g.lineTo(8, -126); g.stroke();
+    g.strokeStyle = 'rgba(178,58,38,.8)'; g.lineWidth = 1.2;
+    g.beginPath(); g.moveTo(-1.4, -126); g.lineTo(3.6, -114); g.stroke();
+    g.fillStyle = '#84603a';
+    g.fillRect(-16, -98, 32, 4.6);
+    g.fillStyle = P.gold;
+    g.beginPath(); g.arc(5, -95.6, 2.2, 0, TAU); g.fill();
+  }
   g.fillStyle = O.goldButtons ? P.gold : '#2c1712';
   [-80, -95, -110].forEach(by => { g.beginPath(); g.arc(9, by, 2.1, 0, TAU); g.fill(); });
   // low sun catches the jacket's leading edge
@@ -1338,6 +1535,13 @@ function drawWalker(g, ph, opts) {
   g.stroke();
   g.fillStyle = P.skin;
   g.beginPath(); g.arc(29, -91, 4.4, 0, TAU); g.fill();
+  if (G.ball && G.ball.state === 'carried') {
+    g.save();
+    g.translate(32, -96);
+    g.scale(0.9, 0.9);
+    drawBall(g, 0);
+    g.restore();
+  }
 
   g.restore();
   return { handX: 29, handY: -91 - bob };
@@ -1345,7 +1549,7 @@ function drawWalker(g, ph, opts) {
 
 function drawDog(g, ph, opts) {
   const o = opts || {};
-  const trot = ph * 2;
+  const trot = ph * (o.sprint ? 3.4 : 2);
   const bob = o.air ? 0 : Math.abs(Math.sin(trot)) * 2;
   const lunge = o.lunge || 0;
   g.save();
@@ -1421,7 +1625,7 @@ function drawDog(g, ph, opts) {
   g.quadraticCurveTo(hx + 4, hy - 2, hx + 1, hy + 0);
   g.quadraticCurveTo(hx - 5, hy + 1, hx - 8, hy - 6);
   g.closePath(); g.fill();
-  const flap = (o.air ? 3 : Math.sin(trot) * 1.6) + lunge * 2;
+  const flap = (o.air ? 3 : Math.sin(trot) * 1.6) + lunge * 2 + (o.sprint ? 2.4 : 0);
   g.beginPath();
   g.moveTo(hx - 4, hy - 9);
   g.quadraticCurveTo(hx - 9, hy - 13 - flap, hx - 12, hy - 5 - flap * 0.4);
@@ -1438,6 +1642,14 @@ function drawDog(g, ph, opts) {
   g.beginPath(); g.arc(hx - 2, hy + 4, 8.4, -0.5, 1.5); g.stroke();
   g.fillStyle = P.gold;
   g.beginPath(); g.arc(hx + 2, hy + 11.4, 1.8, 0, TAU); g.fill();
+  if (o.ball) {
+    // trotting it proudly home
+    g.save();
+    g.translate(hx + 13, hy + 5);
+    g.scale(0.8, 0.8);
+    drawBall(g, 0);
+    g.restore();
+  }
 
   g.restore();
   return { collarX: 14, collarY: -25 - bob };
@@ -1819,6 +2031,75 @@ function drawFountain(g, t) {
   g.fillStyle = `rgba(232,220,180,${shim * 0.5})`;
   g.beginPath(); g.ellipse(-12, -10, 6, 1.4, 0, 0, TAU); g.fill();
   g.beginPath(); g.ellipse(14, -8.4, 5, 1.2, 0, 0, TAU); g.fill();
+}
+function drawMacPickup(g, ph) {
+  g.save();
+  g.translate(0, -32 + Math.sin(ph) * 4);
+  const glow = g.createRadialGradient(0, 2, 3, 0, 2, 30);
+  glow.addColorStop(0, 'rgba(232,200,122,.55)');
+  glow.addColorStop(1, 'rgba(232,200,122,0)');
+  g.fillStyle = glow;
+  g.beginPath(); g.arc(0, 2, 30, 0, TAU); g.fill();
+  // a little trench on a golden hanger
+  g.strokeStyle = P.gold; g.lineWidth = 2; g.lineCap = 'round';
+  g.beginPath(); g.arc(0, -17, 3.4, Math.PI * 0.2, Math.PI * 1.5); g.stroke();
+  g.beginPath(); g.moveTo(-11, -8); g.lineTo(0, -13.6); g.lineTo(11, -8); g.stroke();
+  g.fillStyle = '#b58a52';
+  g.beginPath();
+  g.moveTo(-11, -8); g.lineTo(11, -8); g.lineTo(15, 17); g.lineTo(-15, 17);
+  g.closePath(); g.fill();
+  g.strokeStyle = '#26324a'; g.lineWidth = 1.5;
+  g.beginPath(); g.moveTo(-4, -8); g.lineTo(0, 2); g.lineTo(4, -8); g.stroke();
+  g.strokeStyle = 'rgba(178,58,38,.8)'; g.lineWidth = 1;
+  g.beginPath(); g.moveTo(-2.6, -8); g.lineTo(1.2, 1); g.stroke();
+  g.fillStyle = '#84603a';
+  g.fillRect(-14, 3, 28, 3.2);
+  g.restore();
+}
+function drawWhistlePickup(g, ph) {
+  g.save();
+  g.translate(0, -30 + Math.sin(ph) * 4);
+  const glow = g.createRadialGradient(0, 0, 3, 0, 0, 26);
+  glow.addColorStop(0, 'rgba(216,169,78,.6)');
+  glow.addColorStop(1, 'rgba(216,169,78,0)');
+  g.fillStyle = glow;
+  g.beginPath(); g.arc(0, 0, 26, 0, TAU); g.fill();
+  g.rotate(-0.4 + Math.sin(ph * 0.7) * 0.1);
+  g.strokeStyle = P.gold; g.lineWidth = 1.8;
+  g.beginPath(); g.arc(-13, -1, 3.4, 0, TAU); g.stroke();
+  g.fillStyle = P.gold;
+  g.fillRect(-10, -4.4, 17, 8.8);
+  g.beginPath(); g.arc(9, 3, 7.4, 0, TAU); g.fill();
+  g.fillStyle = 'rgba(60,40,10,.55)';
+  g.beginPath(); g.arc(9, 3, 3, 0, TAU); g.fill();
+  g.fillStyle = 'rgba(255,245,220,.6)';
+  g.fillRect(-8, -3, 12, 1.6);
+  g.restore();
+}
+function drawBall(g, rot) {
+  g.save();
+  g.rotate(rot || 0);
+  g.fillStyle = '#c93b22';
+  g.beginPath(); g.arc(0, 0, 9, 0, TAU); g.fill();
+  g.strokeStyle = 'rgba(243,239,230,.9)'; g.lineWidth = 2.2;
+  g.beginPath(); g.arc(0, -3.4, 8, 0.5, Math.PI - 0.5); g.stroke();
+  g.fillStyle = 'rgba(255,255,255,.4)';
+  g.beginPath(); g.arc(-3, -3.6, 2.2, 0, TAU); g.fill();
+  g.restore();
+}
+function drawBush(g) {
+  // a very convenient shrub
+  g.fillStyle = '#24391d';
+  g.beginPath();
+  g.arc(-19, -15, 17, 0, TAU); g.arc(0, -25, 20, 0, TAU);
+  g.arc(19, -14, 16, 0, TAU); g.arc(0, -10, 23, 0, TAU);
+  g.fill();
+  g.fillStyle = 'rgba(70,102,52,.7)';
+  g.beginPath(); g.arc(-8, -28, 8, 0, TAU); g.arc(13, -22, 7, 0, TAU); g.fill();
+  g.fillStyle = '#c05a2e';
+  g.beginPath();
+  g.arc(-14, -25, 2.2, 0, TAU); g.arc(6, -34, 2.2, 0, TAU); g.arc(17, -21, 2, 0, TAU);
+  g.fill();
 }
 function drawPub(g, t, lampA) {
   // a snug public house at the park's edge
@@ -2268,7 +2549,7 @@ function render() {
   if (G.mode !== 'over') {
     const pl = laneAt(G.laneF), dl = laneAt(G.dogLaneF);
     dropShadow(PX + 8, yOf(G.worldX + PX, pl.off), 32 * pl.s);
-    dropShadow(PX + DOG_GAP + 4, yOf(G.worldX + PX + DOG_GAP, dl.off), 24 * dl.s);
+    dropShadow(PX + G.dogGap + 4, yOf(G.worldX + PX + G.dogGap, dl.off), 24 * dl.s);
   }
 
   const items = [];
@@ -2293,9 +2574,10 @@ function render() {
     const sx = k.wx - G.worldX;
     if (sx < -60 || sx > W + 60) continue;
     items.push({ d: k.lane, fn: () => {
+      const kl = laneAt(k.lane);
       ctx.save();
-      ctx.translate(sx, yOf(k.wx, LANE_OFF[k.lane]) - 26);
-      ctx.scale(LANE_SC[k.lane], LANE_SC[k.lane]);
+      ctx.translate(sx, yOf(k.wx, kl.off) - 26);
+      ctx.scale(kl.s, kl.s);
       if (k.type === 'biscuit') drawBiscuit(ctx, k.ph);
       else drawLeafPickup(ctx, k.ph);
       ctx.restore();
@@ -2311,6 +2593,33 @@ function render() {
       drawPigeon(ctx, b);
       ctx.restore();
     }});
+  }
+  for (const pw of G.powers) {
+    const sx = pw.wx - G.worldX;
+    if (sx < -60 || sx > W + 60) continue;
+    items.push({ d: pw.lane, fn: () => {
+      ctx.save();
+      ctx.translate(sx, yOf(pw.wx, LANE_OFF[pw.lane]));
+      ctx.scale(LANE_SC[pw.lane], LANE_SC[pw.lane]);
+      if (pw.type === 'mac') drawMacPickup(ctx, pw.ph);
+      else drawWhistlePickup(ctx, pw.ph);
+      ctx.restore();
+    }});
+  }
+  if (G.ball && G.ball.state !== 'carried') {
+    const b = G.ball;
+    const sx = b.wx - G.worldX;
+    if (sx > -40 && sx < W + 100) {
+      items.push({ d: b.lane, fn: () => {
+        const bl = laneAt(b.lane);
+        if (!b.arc) dropShadow(sx, yOf(b.wx, bl.off), 9 * bl.s);
+        ctx.save();
+        ctx.translate(sx, yOf(b.wx, bl.off) - 9 - (b.arc || 0));
+        ctx.scale(bl.s, bl.s);
+        drawBall(ctx, b.rot);
+        ctx.restore();
+      }});
+    }
   }
   for (const a of G.acorns) {
     const sx = a.wx - G.worldX;
@@ -2352,15 +2661,54 @@ function render() {
       const lunge = G.event ? clamp(G.event.t / G.event.dur, 0, 1) * 0.9 : 0;
       const pl = laneAt(G.laneF), dl = laneAt(G.dogLaneF);
       const wY = yOf(G.worldX + PX, pl.off);
-      const dY = yOf(G.worldX + PX + DOG_GAP, dl.off);
+      const dY = yOf(G.worldX + PX + G.dogGap, dl.off);
 
-      ctx.save();
-      ctx.translate(PX + DOG_GAP, dY);
-      ctx.scale(dl.s, dl.s);
-      ctx.rotate(G.dgAng);
-      const dog = drawDog(ctx, ph, { lunge });
-      ctx.restore();
+      let dog = null;
+      if (G.reliefT > 0) {
+        // Biscuit is behind the shrub, thank you for asking
+        ctx.save();
+        ctx.translate(PX + G.dogGap + 4, dY);
+        ctx.scale(dl.s, dl.s);
+        drawBush(ctx);
+        ctx.restore();
+      } else {
+        ctx.save();
+        ctx.translate(PX + G.dogGap, dY);
+        ctx.scale(dl.s, dl.s);
+        ctx.rotate(G.dgAng);
+        dog = drawDog(ctx, ph, {
+          lunge,
+          sprint: !!G.fetch,
+          ball: G.fetch && G.fetch.phase === 'return'
+        });
+        ctx.restore();
+      }
+      if (G.magnetT > 0 && G.reliefT <= 0) {
+        const rr = (t * 90) % 54;
+        ctx.strokeStyle = `rgba(216,169,78,${0.5 * (1 - rr / 54)})`;
+        ctx.lineWidth = 1.6;
+        ctx.beginPath(); ctx.arc(PX + G.dogGap + 8, dY - 26 * dl.s, 16 + rr, 0, TAU); ctx.stroke();
+      }
+      if (G.need && G.reliefT <= 0) {
+        // the thought bubble every dog owner knows
+        const bx2 = PX + G.dogGap + 8, by2 = dY - (70 + Math.sin(t * 5) * 3) * dl.s;
+        ctx.fillStyle = 'rgba(243,239,230,.92)';
+        ctx.beginPath(); ctx.ellipse(bx2, by2, 17, 13, 0, 0, TAU); ctx.fill();
+        ctx.beginPath(); ctx.arc(bx2 - 9, by2 + 15, 2.6, 0, TAU); ctx.fill();
+        ctx.fillStyle = P.redDeep;
+        ctx.fillRect(bx2 - 3, by2 - 3, 6, 8);
+        ctx.beginPath(); ctx.arc(bx2, by2 - 3, 3, Math.PI, 0); ctx.fill();
+        ctx.fillRect(bx2 - 5.4, by2 + 4, 10.8, 2);
+      }
 
+      if (G.macT > 0) {
+        const ga = 0.2 + 0.08 * Math.sin(t * 6);
+        const gg = ctx.createRadialGradient(PX, wY - 80, 8, PX, wY - 80, 96);
+        gg.addColorStop(0, `rgba(232,200,122,${ga})`);
+        gg.addColorStop(1, 'rgba(232,200,122,0)');
+        ctx.fillStyle = gg;
+        ctx.beginPath(); ctx.arc(PX, wY - 80, 96, 0, TAU); ctx.fill();
+      }
       ctx.save();
       ctx.translate(PX, wY);
       ctx.scale(pl.s, pl.s);
@@ -2370,18 +2718,21 @@ function render() {
       });
       ctx.restore();
 
-      // leash — sags on an easy walk, tautens across paths or at a squirrel
-      const hx = PX + wk.handX * pl.s, hy = wY + wk.handY * pl.s;
-      const cx = PX + DOG_GAP + dog.collarX * dl.s, cy = dY + dog.collarY * dl.s;
-      const taut = lunge > 0 ? 1 : clamp(Math.abs(G.laneF - G.dogLaneF) * 1.4, 0, 0.7);
-      const sag = lerp(15, 2, taut);
-      ctx.strokeStyle = P.redDeep;
-      ctx.lineWidth = 2.4;
-      ctx.lineCap = 'round';
-      ctx.beginPath();
-      ctx.moveTo(hx, hy);
-      ctx.quadraticCurveTo((hx + cx) / 2, Math.max(hy, cy) + sag, cx, cy);
-      ctx.stroke();
+      // leash — sags on an easy walk, tautens across paths or at a squirrel;
+      // unclipped for fetch, and politely slack during a pause
+      if (dog && !G.fetch) {
+        const hx = PX + wk.handX * pl.s, hy = wY + wk.handY * pl.s;
+        const cx = PX + G.dogGap + dog.collarX * dl.s, cy = dY + dog.collarY * dl.s;
+        const taut = lunge > 0 ? 1 : clamp(Math.abs(G.laneF - G.dogLaneF) * 1.4, 0, 0.7);
+        const sag = lerp(15, 2, taut);
+        ctx.strokeStyle = P.redDeep;
+        ctx.lineWidth = 2.4;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(hx, hy);
+        ctx.quadraticCurveTo((hx + cx) / 2, Math.max(hy, cy) + sag, cx, cy);
+        ctx.stroke();
+      }
       ctx.globalAlpha = 1;
     }});
   }
@@ -2451,8 +2802,8 @@ function render() {
 
   /* --- squirrel-moment prompt --- */
   if (G.event) {
-    const ex = PX + DOG_GAP,
-          ey = yOf(G.worldX + PX + DOG_GAP, laneAt(G.dogLaneF).off) - 92;
+    const ex = PX + G.dogGap,
+          ey = yOf(G.worldX + PX + G.dogGap, laneAt(G.dogLaneF).off) - 92;
     const frac = 1 - G.event.t / G.event.dur;
     ctx.strokeStyle = 'rgba(246,231,187,.9)';
     ctx.lineWidth = 3;
@@ -2469,6 +2820,22 @@ function render() {
     ctx.font = '400 11px Jost, sans-serif';
     ctx.fillStyle = 'rgba(243,239,230,.9)';
     ctx.fillText('W H I S T L E', ex, ey - 32);
+  }
+
+  /* --- kit in effect --- */
+  if (G.mode === 'play') {
+    let chipY = H - 24;
+    ctx.textAlign = 'center';
+    ctx.font = '500 11px Jost, sans-serif';
+    if (G.macT > 0) {
+      ctx.fillStyle = `rgba(232,200,122,${G.macT < 1.5 ? 0.4 + 0.55 * Math.abs(Math.sin(t * 8)) : 0.95})`;
+      ctx.fillText('T H E   T A R T A N   M A C   ·   ' + Math.ceil(G.macT), W / 2, chipY);
+      chipY -= 18;
+    }
+    if (G.magnetT > 0) {
+      ctx.fillStyle = `rgba(239,227,204,${G.magnetT < 1.5 ? 0.35 + 0.5 * Math.abs(Math.sin(t * 8)) : 0.85})`;
+      ctx.fillText('T H E   S I L V E R   W H I S T L E   ·   ' + Math.ceil(G.magnetT), W / 2, chipY);
+    }
   }
 
   /* --- canopy framing the top --- */
@@ -2616,7 +2983,7 @@ function frame(now) {
     G.worldX += 60 * dt;
     G.speed = 60;
     G.pwAng = lerp(G.pwAng, Math.atan(pathSlope(G.worldX + PX)) * 0.7, dt * 6);
-    G.dgAng = lerp(G.dgAng, Math.atan(pathSlope(G.worldX + PX + DOG_GAP)) * 0.9, dt * 6);
+    G.dgAng = lerp(G.dgAng, Math.atan(pathSlope(G.worldX + PX + G.dogGap)) * 0.9, dt * 6);
     const camTarget = (pathH(G.worldX + PX + 130) - BASE_Y) * 0.82;
     G.cam.y = lerp(G.cam.y, camTarget, dt * 2);
   }
